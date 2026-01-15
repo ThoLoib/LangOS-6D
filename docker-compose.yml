@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  my-service:
+    image: your-image-name  # Replace with your image name
+    build: .  # Optional if you want to build the image from the Dockerfile in the current directory
+    volumes:
+      - ./output_images:/app/output_images  # Mount the output folder
+    ports:
+      - "11434:11434"  # Expose ports if needed
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
