@@ -9,6 +9,7 @@ OSCAR operates in two main stages:
 1. **Text-based Filtering:** Uses **CLIP** to compare a language prompt against auto-generated descriptions of the 3D database.
 2. **Image-based Refinement:** Uses **DINOv2** features to compare the query image against pre-rendered views of the candidate models to find the best geometric and visual match.
 
+![OSCAR Framework Overview](OSCAR_Overview-1.png)
 ---
 
 ## 🚀 Getting Started
@@ -100,6 +101,7 @@ If you find OSCAR useful in your research, please cite:
   year={2026}
 }
 ```
+
 
 
 
