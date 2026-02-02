@@ -7,13 +7,13 @@ ENV OLLAMA_HOST=0.0.0.0:11434
 
 # Install Python 3.11 and system dependencies
 RUN apt-get update && apt-get install --no-install-recommends -y \
-    python3.11 python3.11-dev python3-pip \
-    curl wget unzip git ca-certificates \
-    libxrender1 libxxf86vm1 libxfixes3 libxi6 libxkbcommon0 \
-    libgl1 libglib2.0-0 \ 
+    python3.11 python3.11-dev curl \
+    wget unzip git ca-certificates \
+    zstd libxrender1 libxxf86vm1 libxfixes3 libxi6 libxkbcommon0 \
+    libgl1 libglib2.0-0 \
  && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
- && ln -sf /usr/bin/pip3 /usr/bin/pip \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 # Install pip explicitly
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
@@ -49,4 +49,5 @@ RUN chmod +x start.sh
 
 # Default command
 CMD ["/app/start.sh"]
+
 
