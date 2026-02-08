@@ -2,64 +2,59 @@
 
 ## 2026-02-06
 
-**Goal**
+Goal
 - Document the repository state after resetting main and creating the thesis scaffold.
 
-**Changes (Chronological)**
+Changes
 - Reset main to a clean scaffold and removed OSCAR baseline files from this branch.
-- Added README.md describing the thesis goal, research questions, approach, and branching strategy.
-- Created placeholder directories with .gitkeep: docs/, experiments/, esults/, scripts/, data/, 
-otes/, src/, ssets/.
-- Recorded documentation files for handoff, log, and decisions.
+- Added README with thesis goal, research questions, approach, and branching strategy.
+- Created placeholder directories with gitkeep files.
+- Added AI documentation files.
 
-**Files Touched (Why)**
-- README.md to document project goals, research questions, and branch strategy.
-- docs/.gitkeep to keep the docs/ folder in git.
-- experiments/.gitkeep to keep the experiments/ folder in git.
-- esults/.gitkeep to keep the esults/ folder in git.
-- scripts/.gitkeep to keep the scripts/ folder in git.
-- data/.gitkeep to keep the data/ folder in git.
-- 
-otes/.gitkeep to keep the 
-otes/ folder in git.
-- src/.gitkeep to keep the src/ folder in git.
-- ssets/.gitkeep to keep the ssets/ folder in git.
-- AI_HANDOFF.md to summarize the project status and next steps.
-- docs/AI_LOG.md to log session work.
-- docs/DECISIONS.md to record inferred decisions.
+Commands Run
+- Unknown or not found in repository evidence.
 
-**Commands Run**
-- Unknown / not found in repository evidence.
+## 2026-02-06 GPU and docs update
 
-**Notable Decisions + Rationale**
-- Keep main as a clean scaffold and use oscar for the baseline, enabling ablation branches to cleanly diverge from baseline.
-- Use placeholder folders to define repo structure early.
+Goal
+- Record GPU related compose decision and align AI docs.
 
-**TODOs / Follow-ups**
-- Add a .gitignore for datasets and experiment artifacts.
-- Document reproduction steps for OSCAR in experiments/ or docs/.
-- Add initial scripts or code structure to src/ and scripts/.
+Changes
+- Documented GPU support intent for OSCAR docker compose setup.
+- Updated AI docs to include this status.
 
-## 2026-02-06 (Update)
+Commands Run
+- Unknown or not found in repository evidence.
 
-**Goal**
-- Update AI docs after enabling GPU support in the OSCAR Docker compose configuration.
+## 2026-02-08 YCB-V and GSO repro setup
 
-**Changes (Chronological)**
-- Observed an uncommitted change on oscar that adds GPU device reservations to docker-compose.yml.
-- Updated AI documentation to reflect the stashed compose change and baseline run commands from oscar/Readme.md.
+Goal
+- Move reproduction work to exp/oscar-repro, set up local YCB-V plus GSO data layout, and fix git tracking behavior for large files.
 
-**Files Touched (Why)**
-- docker-compose.yml (stashed on oscar) to enable GPU access for the oscar service.
-- AI_HANDOFF.md to reflect the stashed compose change and baseline commands.
-- docs/AI_LOG.md to record this update.
-- docs/DECISIONS.md to capture the GPU enablement decision.
+Changes
+- Prepared YCB-V test folder under eval/datasets/ycbv_gso/test from downloaded archives.
+- Downloaded GSO assets and extracted to per object folders under home tholoi thesis datasets gso extracted_by_zip.
+- Populated local OSCAR paths for GSO models and images, and prepared object_images/ycbv_gso.
+- Aborted an oversized push that contained dataset history.
+- Reset local branch tip to origin exp/oscar-repro and recommitted only gitignore.
+- Pushed b70f4063 to origin exp/oscar-repro.
 
-**Commands Run**
-- Unknown / not found in repository evidence.
+Files Touched
+- gitignore on exp/oscar-repro to exclude eval datasets, object_database, object_images, and local artifacts.
+- Local runtime directories populated but not committed:
+  - eval/datasets/ycbv_gso/test
+  - object_database/gso/models_orig
+  - object_images/gso
+  - object_images/ycbv_gso
 
-**Notable Decisions + Rationale**
-- Enable GPU support in Docker compose so the OSCAR container can access NVIDIA GPUs.
+Commands Run
+- Verified from terminal transcript:
+  - git reset --mixed origin/exp/oscar-repro
+  - git add .gitignore
+  - git commit -m Add gitignore for datasets/assets
+  - git push origin exp/oscar-repro
 
-**TODOs / Follow-ups**
-- Decide whether to apply and commit the docker-compose.yml GPU change on oscar or main.
+TODOs
+- Finalize and verify eval/datasets/ycbv_gso/test/id_to_label.json for current references.
+- Verify YCB-V reference images in object_images/ycbv_gso before running retrieval.
+- Run and document first successful object_retrieval/i2i_bbox_dino.py execution.
