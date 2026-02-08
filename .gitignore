@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+
+# OS/Editor artifacts
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# Large datasets and generated assets
+/eval/datasets/
+/object_database/
+/object_images/
+
+# Optional local outputs
+/results/
+
+# Keep empty directory placeholders if needed
+!/eval/datasets/.gitkeep
+!/object_database/.gitkeep
+!/object_images/.gitkeep
+!/results/.gitkeep
