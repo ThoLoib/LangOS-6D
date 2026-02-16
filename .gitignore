@@ -14,6 +14,11 @@ Thumbs.db
 /eval/datasets/
 /object_database/
 /object_images/
+rendering/blender-*/
+blender-*/
+*.zip
+*.tar
+*.tar.gz
 
 # Optional local outputs
 /results/
