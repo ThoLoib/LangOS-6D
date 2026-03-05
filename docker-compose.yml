@@ -6,8 +6,16 @@ services:
     build: . 
     volumes:
       - .:/app
+      - ../ULIP:/ulip
     ports:
       - "11434:11434"  # Expose ports if needed
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 

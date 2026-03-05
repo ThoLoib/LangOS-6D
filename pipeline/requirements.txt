@@ -1,0 +1,50 @@
+# =============================================================================
+# OSCAR+ Pipeline – Dependencies
+# =============================================================================
+# Basis-Abhängigkeiten für die modulare Pipeline.
+#
+# Installation:
+#   pip install -r pipeline/requirements.txt
+#
+# Hinweis: Einige Modelle erfordern zusätzliche Setup-Schritte,
+# siehe die jeweiligen Modul-Dokumentationen.
+# =============================================================================
+
+# --- Core ---
+numpy>=1.24.0
+Pillow>=9.0
+torch>=2.0.0
+torchvision>=0.15.0
+tqdm>=4.60.0
+
+# --- Schritt 1: Objekt-Lokalisierung ---
+# LangSAM (GroundingDINO + SAM): https://github.com/luca-medeiros/lang-segment-anything
+lang-sam>=0.1.0
+
+# --- Schritt 2: Punktwolkenerzeugung ---
+# Open3D: http://www.open3d.org/
+open3d>=0.17.0
+
+# --- Schritt 3: CLIP Retrieval ---
+# CLIP: https://github.com/openai/CLIP
+# Installation: pip install git+https://github.com/openai/CLIP.git
+# clip  (installiert über git)
+
+# --- Schritt 4: DINOv2 Re-Ranking ---
+# DINOv2 via Hugging Face Transformers
+transformers>=4.30.0
+
+# --- Schritt 5: Shape Matching ---
+# Trimesh für Mesh-Verarbeitung: https://trimsh.org/
+trimesh>=4.0.0
+
+# --- Schritt 5: ULIP-2 (manuelles Setup nötig) ---
+# ULIP-2: https://github.com/salesforce/ULIP
+# Erfordert Klonen des Repos + Checkpoint-Download
+
+# --- Schritt 8: Pose Estimation (ICP via Open3D, bereits oben) ---
+# FoundationPose: https://github.com/NVlabs/FoundationPose (manuell)
+# MegaPose:       https://github.com/megapose6d/megapose6d (manuell)
+
+# --- Utility ---
+scikit-learn>=1.0.0
