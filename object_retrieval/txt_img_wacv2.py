@@ -323,7 +323,7 @@ def compute_map_at_k(results, ks=[1, 3, 5, 10], save_topk_file="topk_rankings.js
             y_score_dict[label].append(sim_dict.get(label, 0.0))
 
         # Sort all labels by similarity for this query
-        sorted_labels = sorted(similarities.items(), key=lambda x: x[1], reverse=True)
+        sorted_labels = sorted(similarities, key=lambda x: x["score"], reverse=True)
         
         # Save top-10
         top10 = [{"label": p["label"], "score": p["score"], "path": p["path"]} for p in sorted_instances[:10]]

@@ -16,20 +16,56 @@ import argparse
 ## solve the division problem
 #from decimal import Decimal, getcontext
 #getcontext().prec = 28  # Set the precision for the decimal calculations.
- 
-object_folder = '../object_database/modelnet10_output'
-object_images = '../object_images/modelnet10/' 
-allowed_exts = ['.glb', '.obj'] #, '.gltf', '.obj']
+
+# ============================================================
+# DATASET CONFIGURATION — change these 3 lines per dataset
+# ============================================================
+# --- YCBV + GSO (329 objects) ---
+object_folder = '../object_database/ycbv_gso'
+object_images = '../object_images/ycbv_gso/'
+use_folder_name = True   # True = use parent-folder as model_name (YCBV/GSO)
+                        # False = use filename as model_name (MI3DOR / HouseCat6D)
+
+# --- HouseCat6D (393 objects) ---
+#object_folder = '../object_database/housecat6d'
+#object_images = '../object_images/housecat6d/'
+#use_folder_name = False
+
+# --- MI3DOR (already rendered) ---
+# object_folder = '../object_database/MI3DOR/model/test'
+# object_images = '../object_images/MI3DOR/'
+# use_folder_name = False
+# ============================================================
+
+allowed_exts = ['.glb', '.obj']
+skip_patterns = ['textured_simple']  # skip low-quality mesh variants
 
 model_files = []
+seen_names = set()
 
-# Iterate through all files in object_folder
-for fname in os.listdir(object_folder):
-    file_path = os.path.join(object_folder, fname)
-    ext = os.path.splitext(fname)[1].lower()
-    if os.path.isfile(file_path) and ext in allowed_exts:
-        model_name = os.path.splitext(fname)[0]  # e.g., "bed_0001"
-        model_files.append((model_name, file_path))
+# Recursively walk all subfolders
+for root, _, files in os.walk(object_folder):
+    for fname in files:
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in allowed_exts:
+            continue
+        if any(pat in fname for pat in skip_patterns):
+            continue
+
+        file_path = os.path.join(root, fname)
+
+        if use_folder_name:
+            # Derive model_name from the top-level subfolder (e.g. "004_sugar_box", "Elephant")
+            rel_path = os.path.relpath(root, object_folder)
+            model_name = rel_path.split(os.sep)[0]
+        else:
+            # Derive model_name from the filename (e.g. "bottle-85_alcool", "airplane_0001")
+            model_name = os.path.splitext(fname)[0]
+
+        # Avoid duplicates (e.g. YCBV textured.obj + GSO model.obj in same parent)
+        if model_name not in seen_names:
+            seen_names.add(model_name)
+            model_files.append((model_name, file_path))
 
 # Check for corresponding folders in object_images
 missing_folders = []
@@ -281,18 +317,24 @@ def clear_scene():
 # Create new folder structure
 os.makedirs(object_images, exist_ok=True)
 
-for model_id, filename in missing_folders:
+for model_id, filename in model_files:
     #camera = create_camera()  #
     # Create a folder for each model
     model_dir = os.path.join(object_images, model_id)
     os.makedirs(model_dir, exist_ok=True)
 
-    # Copy the model file into it
-    src = filename
-    dst = os.path.join(model_dir, os.path.basename(filename))
+    # Use the folder-based model_id as the consistent name for all outputs
+    model_name = model_id
+    bg_path = os.path.join(model_dir, f"{model_name}_bg.png")
+    view_paths = [os.path.join(model_dir, f"{model_name}_{i}.png") for i in range(8)]
+    matrix_paths = [os.path.join(model_dir, f"{model_name}_view{i}_CamMatrix.npy") for i in range(8)]
 
+    # Resume support: skip fully completed objects
+    if os.path.exists(bg_path) and all(os.path.exists(p) for p in view_paths + matrix_paths):
+        print(f"Skip completed model '{model_id}'")
+        continue
 
-    print(f"📁 Created folder for '{model_id}'")
+    print(f"Processing folder for '{model_id}'")
 
     model_path = filename
  #   clear_scene()
@@ -321,19 +363,26 @@ for model_id, filename in missing_folders:
     elevation_factor = 0.2
 
     camera = bpy.context.scene.camera
-    name = filename.split('/')[-1].split('.')[0]
+    name = model_name
     for camera_opt in range(-1, 8):
+        image_path = os.path.join(model_dir, f"{model_name}_bg.png") if camera_opt == -1 else os.path.join(model_dir, f"{model_name}_{camera_opt}.png")
+        RT_path = os.path.join(model_dir, f"{model_name}_view{camera_opt}_CamMatrix.npy") if camera_opt >= 0 else None
+
+        # Resume support: for final views, render only if image or matrix is missing
+        if camera_opt >= 0 and os.path.exists(image_path) and os.path.exists(RT_path):
+            continue
         # use transparent background to adjust camera distance
         if camera_opt == -1:
             bpy.context.scene.render.image_settings.color_mode = 'RGBA'
             bpy.context.scene.render.film_transparent = True
             camera.location = Vector((distance * ratio, - distance * ratio, distance * elevation_factor * ratio))
         elif camera_opt == 0:
-            img_path = os.path.join(model_dir, '%s_bg.png'%(filename.split('/')[-1].split('.')[0]))
-            img = Image.open(img_path)
-            img_array = np.array(img)
-            if np.sum(img_array<10) > 1020000:
-                print(name, 'WARNING: rendered image may contain too much white space')
+            img_path = os.path.join(model_dir, f"{model_name}_bg.png")
+            if os.path.exists(img_path):
+                img = Image.open(img_path)
+                img_array = np.array(img)
+                if np.sum(img_array < 10) > 1020000:
+                    print(name, 'WARNING: rendered image may contain too much white space')
 
             # change to white background to render the final 8 views
             bpy.context.scene.world.node_tree.nodes["Background"].inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
@@ -382,30 +431,15 @@ for model_id, filename in missing_folders:
         bpy.context.scene.render.resolution_x = 512
         bpy.context.scene.render.resolution_y = 512
 
-        if camera_opt == -1:
-            file_path = os.path.join(model_dir, '%s_bg.png'%(filename.split('/')[-1].split('.')[0]))
-            bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path):
-               continue
-        else:
-            file_path = os.path.join(model_dir, '%s_%d.png'%(filename.split('/')[-1].split('.')[0], camera_opt))
-            bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path):
-               continue
+        bpy.context.scene.render.filepath = image_path
+        if camera_opt == -1 and os.path.exists(image_path):
+            continue
 
         bpy.ops.render.render(write_still=True)
 
-        if camera_opt>=0:
+        if camera_opt >= 0:
             RT = get_3x4_RT_matrix_from_blender(camera)
-            
-            model_name = os.path.splitext(os.path.basename(filename))[0]
-            RT_path = os.path.join(model_dir, f"{model_name}_view{camera_opt}_CamMatrix.npy")
             os.makedirs(model_dir, exist_ok=True)
-            np.save(RT_path, RT)
-
-
-            if os.path.exists(RT_path):
-                continue
             np.save(RT_path, RT)
 
 bpy.ops.wm.quit_blender()

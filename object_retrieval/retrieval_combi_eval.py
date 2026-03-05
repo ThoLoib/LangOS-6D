@@ -9,12 +9,18 @@ from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
 
 # ---------------- CONFIG ----------------
-ref_dir = "../object_images/housecat6d"
-bop_root = "../eval/datasets/housecat6d/test/"
-desc_file = "../object_database/housecat6d/descriptions_attributes.json"
+# --- YCBV_GSO ---
+ref_dir = "../object_images/ycbv_gso"
+bop_root = "../eval/datasets/ycbv_gso/test/"
+desc_file = "../object_database/ycbv_gso/descriptions_attributes.json"
 id_to_label_file = os.path.join(bop_root, "id_to_label.json")
 
-result_folder = "results_topk_eval_hcat6D"
+# --- HouseCat6D (uncomment to switch) ---
+# ref_dir = "../object_images/housecat6d"
+# bop_root = "../eval/datasets/housecat6d/test/"
+# desc_file = "../object_database/housecat6d/descriptions_attributes.json"
+
+result_folder = "results_topk_eval_ycbv_gso"
 crops_folder = os.path.join(result_folder, "crops")
 os.makedirs(result_folder, exist_ok=True)
 
