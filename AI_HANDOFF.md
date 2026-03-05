@@ -2,29 +2,46 @@
 
 **Project Goal**
 - Reproduce OSCAR baseline experiments reliably.
-- Use OSCAR as benchmark baseline for later thesis extensions with shape aware retrieval.
+- Use OSCAR as benchmark baseline for later thesis extensions with shape-aware retrieval.
 - Keep baseline and experiment branches clearly separated.
 
 **Current Status**
-- main is still the scaffold branch with docs commits ab5bf7c4 and 7a41373e.
-- Reproduction work is happening on exp/oscar-repro.
-- exp/oscar-repro includes gitignore to exclude large datasets and generated assets with commit b70f4063 pushed.
-- Local YCB-V test data exists at eval/datasets/ycbv_gso/test.
-- Local GSO data was downloaded and extracted to per object folders under home tholoi thesis datasets gso extracted_by_zip.
-- Local runtime folders were prepared under object_database gso models_orig, object_images gso, object_images ycbv_gso.
-- On main these data folders are local untracked files and are not committed.
+- main is the scaffold branch with AI docs.
+- exp/oscar-repro: OSCAR baseline reproduction — pushed d3098bdd. All retrieval scripts configured and evaluated.
+- exp/ulip2: next experiment branch — shape-aware retrieval extensions.
+- oscar: clean upstream mirror of pullover00/OSCAR.
+- All large data (models, renderings, eval scenes, descriptions) is local-only and gitignored.
+
+**Data Layout (local, not committed)**
+- eval/datasets/ycbv_gso/test/ — 12 BOP scenes with rgb, mask_visib, scene_gt.json, scene_gt_info.json, id_to_label.json (1051 entries)
+- eval/datasets/mi3dor/image/test/ — MI3DOR test images (21 categories, 500 per category)
+- object_database/ycbv_gso/ — 1051 3D models (21 YCBV + 1030 GSO) + descriptions_attributes.json
+- object_database/MI3DOR/ — 3848 3D models + descriptions_attributes.json (only 10/21 categories)
+- object_database/housecat6d/ — 194 3D models + descriptions_attributes.json
+- object_database/descriptions_tessa/ — pre-generated descriptions from repo owner (ycbv_gso, MI3DOR, housecat6d, ycbv)
+- object_images/ycbv_gso/ — 1050 rendered objects (8 views + bg + cam matrices each)
+- object_images/MI3DOR/ — 3848 rendered objects
+- object_images/housecat6d/ — 194 rendered objects
 
 **How to Run + Test**
-- Baseline container startup from oscar Readme:
+- Docker container startup:
   - docker compose build
   - docker compose run --rm -it oscar bash
-- YCB-V plus GSO retrieval script:
-  - cd object_retrieval
-  - python i2i_bbox_dino.py
-- Script expects paths:
-  - ../object_images/ycbv_gso
-  - ../eval/datasets/ycbv_gso/test
-  - ../eval/datasets/ycbv_gso/test/id_to_label.json
+- Full OSCAR pipeline (YCBV_GSO):
+  - cd /app/object_retrieval
+  - python retrieval_combi_eval.py
+  - Result: results_topk_eval_ycbv_gso/accuracy_summary_topk_15.json
+- Full OSCAR pipeline (MI3DOR):
+  - python retrieval_mi3dor_eval.py
+  - Result: results_mi3dor_f20/metrics_summary_topk_15.json
+- DINOv2-only baseline (YCBV_GSO):
+  - python i2i_bbox_dino.py or python txt_img_wacv2.py
+
+**Baseline Results (exp/oscar-repro)**
+- YCBV_GSO full pipeline: 75.95% top-1 accuracy (GT masks, threshold=0.37, topk=15)
+  - Paper reports ~60% for YCBV_GSO; difference is GT masks vs GroundedSAM
+- MI3DOR full pipeline: NN=77.95% (paper: 89.4%)
+  - Gap caused by incomplete descriptions: only 10/21 categories have descriptions
 
 **Key Constraints / Invariants**
 - Keep oscar as clean upstream mirror.
@@ -33,11 +50,12 @@
 - id_to_label.json must align with BOP object IDs used in annotations.
 
 **Next 3 Tasks**
-1. Finalize eval/datasets/ycbv_gso/test/id_to_label.json and verify mapping against current reference folders.
-2. Verify object_images/ycbv_gso contains both YCB-V and GSO references and run python object_retrieval/i2i_bbox_dino.py.
-3. Commit only reproducibility scripts and config notes on exp/oscar-repro and never data.
+1. Begin shape-aware retrieval experiments on exp/ulip2.
+2. Generate missing MI3DOR descriptions for remaining 11 categories (or obtain from repo owner).
+3. Obtain HouseCat6D BOP test scenes for evaluation.
 
 **Open Questions / Risks**
-- object_images/ycbv was missing earlier and source of YCB-V reference images still needs confirmation.
-- GSO extraction layout is fragile and must stay per object to keep helper scripts working.
-- Branch switches while data is local and untracked can cause confusion if paths change on another branch.
+- MI3DOR descriptions incomplete (10/21 categories) — affects MI3DOR eval accuracy significantly.
+- HouseCat6D eval scenes not available — cannot evaluate HouseCat6D retrieval yet.
+- GSO extraction layout is fragile — must stay per-object folder to keep scripts working.
+- Branch switches are safe for data since data is gitignored and untracked.
