@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   oscar:
-    image: oscar_img  
+    image: tholoi/oscar-plus
     build: . 
     volumes:
       - .:/app
