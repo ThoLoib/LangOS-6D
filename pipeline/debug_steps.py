@@ -799,29 +799,44 @@ def run_debug(args) -> None:
 
     # ── SCHRITT 1 ──────────────────────────────────────────────────────────
     logger.info("\n─── Schritt 1: Lokalisierung ───")
-    extracted = OSCARPlusPipeline._extract_object_name_heuristic(args.prompt)
-    # Versuche Ollama (stumm)
+
+    # Primär: LLM-Extraktion (gleiche Logik wie Vollpipeline)
+    elements = OSCARPlusPipeline._extract_prompt_elements_heuristic(args.prompt)
     try:
         import ollama
-        client = ollama.Client(host="http://localhost:11434")
+        client = ollama.Client(host=config.ollama_host)
         resp = client.chat(
             model=config.ollama_model,
             messages=[
                 {"role": "system",
-                 "content": "Reply with ONLY the object name from the grasping instruction. No extra words."},
-                {"role": "user", "content": args.prompt},
+                 "content": (
+                     "You extract object properties from a grasping instruction "
+                     "(German or English). Reply ONLY in this exact format – "
+                     "use an empty string when the attribute is not mentioned:\n"
+                     "object: <noun phrase>\n"
+                     "color: <color or empty>\n"
+                     "shape: <shape descriptor or empty>\n"
+                     "material: <material or empty>"
+                 )},
+                {"role": "user", "content": f"Instruction: {args.prompt}"},
             ],
-            options={"temperature": 0, "num_predict": 20},
+            options={"temperature": 0, "num_predict": 40},
         )
-        extracted_llm = resp["message"]["content"].strip().lower()
-        if extracted_llm:
-            extracted = extracted_llm
-            logger.info("  Ollama: '%s'", extracted)
+        parsed = OSCARPlusPipeline._parse_ollama_elements(
+            resp["message"]["content"].strip()
+        )
+        if parsed:
+            elements = parsed
+            logger.info("  Ollama: object='%s' color='%s' shape='%s' material='%s'",
+                        elements.object_name, elements.color,
+                        elements.shape, elements.material)
     except Exception as e:
-        logger.info("  Ollama nicht verfügbar (%s) → Heuristik: '%s'", e, extracted)
+        logger.info("  Ollama nicht verfügbar (%s) → Heuristik", e)
 
-    logger.info("  Prompt:     '%s'", args.prompt)
-    logger.info("  Extrahiert: '%s'", extracted)
+    extracted = elements.detection_phrase  # Farbe + Objektname für GroundingDINO
+    logger.info("  Prompt:            '%s'", args.prompt)
+    logger.info("  Detektions-Phrase: '%s'", extracted)
+    logger.info("  CLIP visual_query: '%s'", elements.visual_query)
 
     localizer = ObjectLocalizer(config)
     loc = localizer.localize(rgb_image, extracted)

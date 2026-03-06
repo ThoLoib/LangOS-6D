@@ -7,12 +7,23 @@ services:
     volumes:
       - .:/app
       - ../ULIP:/ulip
+      - hf_cache:/root/.cache/huggingface   # HuggingFace-Modelle cached (kein Re-Download)
     ports:
       - "11434:11434"  # Expose ports if needed
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"  # Linux: host-IP als host.docker.internal verfügbar machen
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf_cache:   # Persistenter Cache für HuggingFace-Modelle (GroundingDINO, SAM, DINOv2 ...)
     deploy:
       resources:
         reservations:
