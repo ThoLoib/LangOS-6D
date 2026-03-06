@@ -11,6 +11,8 @@ services:
       - "11434:11434"  # Expose ports if needed
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux: host-IP als host.docker.internal verfügbar machen
     deploy:
       resources:
         reservations:

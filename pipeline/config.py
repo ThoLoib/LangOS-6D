@@ -114,7 +114,7 @@ class PipelineConfig:
     # -------------------------------------------------------------------------
     # Ollama: https://ollama.com/
     # Installiert im Docker-Container; Python-Client in requirements.txt
-    ollama_host: str = "http://localhost:11434"   # Ollama-Serveradresse
+    ollama_host: str = "http://host.docker.internal:11434"  # Ollama auf dem Host (Windows/Mac); im Container erreichbar via extra_hosts
     ollama_model: str = "mistral-small3.1"       # Modell für Prompt-Parsing (im Dockerfile gepullt)
     ollama_timeout: float = 5.0                  # Sekunden bis Timeout (Fallback auf Heuristik)
 
