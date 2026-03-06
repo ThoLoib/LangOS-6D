@@ -204,13 +204,19 @@ class CLIPRetriever:
         roi_image,
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
+        text_query: Optional[str] = None,
+        text_query_weight: float = 0.3,
     ) -> CLIPRetrievalResult:
         """Findet die Top-K semantisch ähnlichsten CAD-Modelle.
 
         Args:
-            roi_image: PIL.Image des segmentierten Objekts (Schritt 1).
-            top_k: Anzahl der Kandidaten (überschreibt Config).
-            threshold: Minimale Similarity (optional, alternative zu top_k).
+            roi_image:          PIL.Image des segmentierten Objekts (Schritt 1).
+            top_k:              Anzahl der Kandidaten (überschreibt Config).
+            threshold:          Minimale Similarity (optional, alternative zu top_k).
+            text_query:         Optionaler Text-Query (z.B. "yellow mustard bottle").
+                                Falls angegeben, wird Image- und Text-Ähnlichkeit gemischt:
+                                ``score = (1-w)·img_sim + w·text_sim``
+            text_query_weight:  Gewicht des Text-Querys (default: 0.3).
 
         Returns:
             CLIPRetrievalResult mit sortierten Kandidaten.
@@ -225,8 +231,23 @@ class CLIPRetriever:
         # --- Image Embedding ---
         query_emb = self.encode_image(roi_image)  # (1, D)
 
-        # --- Cosine Similarity ---
-        sims = (query_emb @ self._desc_embeddings.T).squeeze(0)  # (M,)
+        # --- Cosine Similarity: Bild vs. Beschreibungen ---
+        img_sims = (query_emb @ self._desc_embeddings.T).squeeze(0)  # (M,)
+
+        # --- Optional: Text-Query mischen ---
+        if text_query:
+            import clip
+            tokens = clip.tokenize([text_query], truncate=True).to(self.device)
+            with torch.no_grad():
+                txt_emb = self.model.encode_text(tokens)
+            txt_emb = F.normalize(txt_emb, p=2, dim=1)  # (1, D)
+            txt_sims = (txt_emb @ self._desc_embeddings.T).squeeze(0)  # (M,)
+            sims = (1.0 - text_query_weight) * img_sims + text_query_weight * txt_sims
+            logger.debug(
+                "CLIP text_query=%r (w=%.2f) gemischt.", text_query, text_query_weight
+            )
+        else:
+            sims = img_sims
 
         # --- Top-K oder Threshold-basierte Filterung ---
         if threshold is not None:

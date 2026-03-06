@@ -30,6 +30,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
@@ -58,6 +59,43 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("pipeline")
+
+
+# =============================================================================
+# Datenstruktur für extrahierte Prompt-Elemente
+# =============================================================================
+
+@dataclass
+class PromptElements:
+    """Vom Nutzer-Prompt extrahierte Such- und Detektionselemente.
+
+    Attributes:
+        object_name:      Kernobjektname (Nomen).  z.B. "mustard bottle"
+        color:            Farbe, wenn erwähnt.      z.B. "yellow"
+        shape:            Form-Deskriptor.          z.B. "cylindrical"
+        material:         Material.                 z.B. "plastic"
+        detection_phrase: Volles Adjektiv+Nomen für GroundingDINO.
+                          z.B. "yellow mustard bottle"
+        visual_query:     Angereicherter Text für CLIP-Text-Retrieval.
+                          z.B. "yellow plastic mustard bottle"
+    """
+    object_name: str
+    color: str = ""
+    shape: str = ""
+    material: str = ""
+    detection_phrase: str = ""   # wird in __post_init__ gesetzt wenn leer
+    visual_query: str = ""       # wird in __post_init__ gesetzt wenn leer
+
+    def __post_init__(self):
+        attrs = " ".join(x for x in [self.color, self.shape, self.material,
+                                      self.object_name] if x)
+        if not self.detection_phrase:
+            # Kurze Phrase für GroundingDINO: Farbe + Objektname
+            self.detection_phrase = " ".join(
+                x for x in [self.color, self.object_name] if x
+            )
+        if not self.visual_query:
+            self.visual_query = attrs
 
 
 # =============================================================================
@@ -227,12 +265,17 @@ class OSCARPlusPipeline:
             logger.info("─" * 40)
             logger.info("Schritt 1: Objektlokalisierung")
 
-            # Prompt bereinigen: Aus "greife nach der Mayonnaisetube"
-            # das Zielobjekt extrahieren (vereinfacht: den Prompt direkt nutzen)
-            detection_prompt = self._extract_object_name(prompt)
-            logger.info(f"  Detektions-Prompt: '{detection_prompt}'")
+            # Prompt analysieren: Objekt + visuelle Attribute extrahieren
+            prompt_elements = self._extract_prompt_elements(prompt)
+            results["prompt_elements"] = prompt_elements
+            logger.info(f"  Objekt:   '{prompt_elements.object_name}'")
+            logger.info(f"  Farbe:    '{prompt_elements.color}'")
+            logger.info(f"  Form:     '{prompt_elements.shape}'")
+            logger.info(f"  Material: '{prompt_elements.material}'")
+            logger.info(f"  Detektions-Phrase: '{prompt_elements.detection_phrase}'")
+            logger.info(f"  CLIP-Query:        '{prompt_elements.visual_query}'")
 
-            loc_result = self.localizer.localize(rgb_image, detection_prompt)
+            loc_result = self.localizer.localize(rgb_image, prompt_elements.detection_phrase)
             results["localization"] = loc_result
             timings["step1_localization"] = time.time() - t0
 
@@ -300,7 +343,11 @@ class OSCARPlusPipeline:
                 self.clip_retriever.load_descriptions()
 
             loc = results["localization"]
-            clip_result = self.clip_retriever.retrieve(loc.roi_image)
+            elements = results.get("prompt_elements")
+            visual_query = elements.visual_query if elements else None
+            clip_result = self.clip_retriever.retrieve(
+                loc.roi_image, text_query=visual_query
+            )
             results["clip_retrieval"] = clip_result
             timings["step3_clip"] = time.time() - t0
 
@@ -505,42 +552,39 @@ class OSCARPlusPipeline:
 
         return results
 
-    def _extract_object_name(self, prompt: str) -> str:
-        """Extrahiert den Objektnamen aus einem Greif-Prompt.
+    def _extract_prompt_elements(self, prompt: str) -> "PromptElements":
+        """Extrahiert Objekt + visuelle Attribute (Farbe, Form, Material) aus dem Prompt.
 
         Strategie:
-          1. Versucht den Objektnamen via Ollama LLM zu extrahieren
-             (schnell, lokal, deutsch + englisch nativ unterstützt).
-          2. Fällt bei Verbindungsfehler oder Timeout auf die eingebettete
-             regelbasierte Heuristik zurück.
+          1. Ollama LLM → strukturierte Ausgabe (object / color / shape / material)
+          2. Regelbasierte Heuristik als Fallback
 
         Beispiele:
-            "greife nach der Mayonnaisetube" → "Mayonnaisetube"
-            "pick up the red cup"            → "red cup"
-            "mayonnaise tube"                → "mayonnaise tube"
-
-        Args:
-            prompt: Sprachprompt (Deutsch oder Englisch).
+            "pick up the yellow mustard bottle"
+                → object: mustard bottle | color: yellow
+            "greife die zylindrische Plastikflasche"
+                → object: Flasche | shape: zylindrisch | material: Plastik
 
         Returns:
-            Extrahierter Objektname (Kleinbuchstaben, getrimmt).
+            PromptElements (detection_phrase und visual_query werden automatisch gebaut).
         """
         # ------------------------------------------------------------------
-        # 1. LLM-Extraktion via Ollama
+        # 1. LLM-Extraktion via Ollama (strukturierte Ausgabe)
         # ------------------------------------------------------------------
         try:
-            import ollama  # lazy – Paket ist optional zur Laufzeit
+            import ollama
 
             system_msg = (
-                "You are a concise extraction assistant. "
-                "Given a grasping instruction in German or English, "
-                "reply with ONLY the object name (noun phrase) – "
-                "no verbs, no articles, no punctuation, no extra words."
+                "You extract object properties from a grasping instruction "
+                "(German or English). Reply ONLY in this exact format – "
+                "use an empty string when the attribute is not mentioned:\n"
+                "object: <noun phrase>\n"
+                "color: <color or empty>\n"
+                "shape: <shape descriptor or empty>\n"
+                "material: <material or empty>"
             )
             user_msg = f"Instruction: {prompt}"
 
-            # Client-Instanz nutzt den konfigurierten Host (OLLAMA_HOST Env-Var
-            # wird als Fallback vom SDK verwendet, wenn kein Host übergeben wird).
             client = ollama.Client(host=self.config.ollama_host)
             response = client.chat(
                 model=self.config.ollama_model,
@@ -548,55 +592,110 @@ class OSCARPlusPipeline:
                     {"role": "system", "content": system_msg},
                     {"role": "user",   "content": user_msg},
                 ],
-                options={"temperature": 0, "num_predict": 20},
+                options={"temperature": 0, "num_predict": 40},
             )
-            extracted = response["message"]["content"].strip().lower()
-            if extracted:
-                logger.debug(
-                    "Ollama (%s) extrahierte Objektname: %r aus %r",
-                    self.config.ollama_model, extracted, prompt,
-                )
-                return extracted
+            raw = response["message"]["content"].strip()
+            parsed = self._parse_ollama_elements(raw)
+            if parsed:
+                logger.debug("Ollama-Elemente: %s", parsed)
+                return parsed
 
-        except Exception as exc:  # noqa: BLE001 – intentional broad catch for robustness
-            logger.debug(
-                "Ollama-Extraktion fehlgeschlagen (%s) – nutze Heuristik.", exc
-            )
+        except Exception as exc:
+            logger.debug("Ollama-Extraktion fehlgeschlagen (%s) – nutze Heuristik.", exc)
 
         # ------------------------------------------------------------------
         # 2. Regelbasierte Heuristik (Fallback)
         # ------------------------------------------------------------------
-        return self._extract_object_name_heuristic(prompt)
+        return self._extract_prompt_elements_heuristic(prompt)
+
+    @staticmethod
+    def _parse_ollama_elements(raw: str) -> "Optional[PromptElements]":
+        """Parst die strukturierte LLM-Ausgabe in ein PromptElements-Objekt.
+
+        Erwartet Format::
+            object: mustard bottle
+            color: yellow
+            shape:
+            material: plastic
+        """
+        import re
+        fields = {"object": "", "color": "", "shape": "", "material": ""}
+        for line in raw.splitlines():
+            for key in fields:
+                m = re.match(rf"^{key}\s*[:\-]\s*(.*)", line.strip(), re.IGNORECASE)
+                if m:
+                    fields[key] = m.group(1).strip().lower()
+                    break
+
+        if not fields["object"]:
+            return None
+
+        return PromptElements(
+            object_name=fields["object"],
+            color=fields["color"],
+            shape=fields["shape"],
+            material=fields["material"],
+        )
+
+    @staticmethod
+    def _extract_prompt_elements_heuristic(prompt: str) -> "PromptElements":
+        """Regelbasierter Fallback für _extract_prompt_elements.
+
+        Erkennt gängige Farb-, Form- und Materialwörter (DE + EN) und
+        extrahiert den verbleibenden Nomen-Teil als Objektname.
+        """
+        # --- Bekannte Attribut-Wörter ---
+        _COLORS = {
+            "red", "green", "blue", "yellow", "orange", "purple", "pink",
+            "white", "black", "gray", "grey", "brown", "cyan", "magenta",
+            "rot", "grün", "blau", "gelb", "orange", "lila", "rosa",
+            "weiß", "schwarz", "grau", "braun",
+        }
+        _SHAPES = {
+            "round", "square", "rectangular", "cylindrical", "flat", "spherical",
+            "cubic", "triangular", "oval", "elongated",
+            "rund", "eckig", "rechteckig", "zylindrisch", "flach", "kugelig",
+        }
+        _MATERIALS = {
+            "plastic", "metal", "wooden", "glass", "rubber", "cardboard",
+            "paper", "fabric", "ceramic", "foam",
+            "plastik", "metall", "holz", "glas", "gummi", "pappe", "stoff",
+        }
+        _VERBS    = {"greife", "nehme", "hole", "bringe", "pick", "grab", "get",
+                    "take", "fetch", "bring", "hol", "gib"}
+        _PREPS    = {"nach", "auf", "mit", "vor", "up", "at", "with",
+                    "from", "to", "for", "the", "a", "an",
+                    "der", "die", "das", "dem", "den", "einer", "einem", "einen"}
+
+        words = prompt.strip().split()
+        color = shape = material = ""
+        remaining = []
+
+        for w in words:
+            wl = w.lower()
+            if wl in _VERBS or wl in _PREPS:
+                continue
+            elif wl in _COLORS and not color:
+                color = wl
+            elif wl in _SHAPES and not shape:
+                shape = wl
+            elif wl in _MATERIALS and not material:
+                material = wl
+            else:
+                remaining.append(w)
+
+        object_name = " ".join(remaining).strip().lower() or prompt.lower()
+        return PromptElements(
+            object_name=object_name,
+            color=color,
+            shape=shape,
+            material=material,
+        )
 
     @staticmethod
     def _extract_object_name_heuristic(prompt: str) -> str:
-        """Regelbasierter Fallback für _extract_object_name.
-
-        Nimmt alles nach dem letzten Artikel; entfernt andernfalls
-        bekannte Verben und Präpositionen.
-        """
-        articles_de = ["der", "die", "das", "dem", "den", "einer", "einem", "einen"]
-        articles_en = ["the", "a", "an"]
-        prepositions = [
-            "nach", "auf", "mit", "vor",
-            "up", "at", "with", "from", "to",
-        ]
-
-        words = prompt.strip().split()
-        last_article_idx = -1
-        for i, word in enumerate(words):
-            if word.lower() in articles_de + articles_en:
-                last_article_idx = i
-
-        if last_article_idx >= 0 and last_article_idx < len(words) - 1:
-            return " ".join(words[last_article_idx + 1:])
-
-        verbs_de = ["greife", "nehme", "hole", "bringe", "pick", "grab", "get"]
-        filtered = [
-            w for w in words
-            if w.lower() not in verbs_de + prepositions + articles_de + articles_en
-        ]
-        return " ".join(filtered) if filtered else prompt
+        """Kompatiblitäts-Wrapper (wird von debug_steps.py genutzt)."""
+        return OSCARPlusPipeline._extract_prompt_elements_heuristic(prompt).object_name
 
     def _create_summary(self, results: dict) -> dict:
         """Erstellt eine kompakte Zusammenfassung der Pipeline-Ergebnisse."""
