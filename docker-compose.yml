@@ -24,11 +24,4 @@ services:
 
 volumes:
   hf_cache:   # Persistenter Cache für HuggingFace-Modelle (GroundingDINO, SAM, DINOv2 ...)
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
