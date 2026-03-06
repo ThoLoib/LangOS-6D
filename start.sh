@@ -10,7 +10,7 @@ until curl -s http://localhost:11434 > /dev/null; do
 done
 
 # Pull the model
-ollama pull mistral-small3.1
+ollama pull gemma3:4b
 
 # Keep the container alive
 tail -f /dev/null

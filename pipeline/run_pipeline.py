@@ -661,11 +661,24 @@ class OSCARPlusPipeline:
             "paper", "fabric", "ceramic", "foam",
             "plastik", "metall", "holz", "glas", "gummi", "pappe", "stoff",
         }
-        _VERBS    = {"greife", "nehme", "hole", "bringe", "pick", "grab", "get",
-                    "take", "fetch", "bring", "hol", "gib"}
-        _PREPS    = {"nach", "auf", "mit", "vor", "up", "at", "with",
-                    "from", "to", "for", "the", "a", "an",
-                    "der", "die", "das", "dem", "den", "einer", "einem", "einen"}
+        _VERBS    = {
+            # Deutsch
+            "greife", "nehme", "hole", "bringe", "hol", "gib", "brauch",
+            "brauche", "braucht", "möchte", "möchten", "bitte", "geben",
+            # Englisch
+            "pick", "grab", "get", "take", "fetch", "bring", "need", "needs",
+            "want", "wants", "give", "hand", "pass", "find", "bring", "please",
+            "could", "would", "should", "like",
+        }
+        _PREPS    = {
+            # Deutsch
+            "nach", "auf", "mit", "vor", "für", "von", "zu", "beim", "bitte",
+            "der", "die", "das", "dem", "den", "einer", "einem", "einen", "mir",
+            "ich", "du", "er", "sie", "wir", "ihr",
+            # Englisch
+            "up", "at", "with", "from", "to", "for", "the", "a", "an", "in",
+            "on", "of", "me", "i", "you", "we", "us", "my", "your", "our",
+        }
 
         words = prompt.strip().split()
         color = shape = material = ""
@@ -775,7 +788,7 @@ Beispiel:
     parser.add_argument("--ulip_repo", default="", help="Pfad zum geklonten ULIP-Repo")
     parser.add_argument("--ulip_checkpoint", default="", help="Pfad zum ULIP-2 Checkpoint (.pt)")
     parser.add_argument("--skip_steps", type=int, nargs="*", default=[], help="Schritte überspringen (z.B. --skip_steps 5 8)")
-    parser.add_argument("--ollama_model", default="mistral-small3.1", help="Ollama-Modell für Prompt-Parsing (default: mistral-small3.1)")
+    parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
     parser.add_argument("--visualize", action="store_true", help="Zwischenergebnisse als Bilder speichern (Masken, Punktwolken, Kandidaten)")
     return parser.parse_args()

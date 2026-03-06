@@ -145,7 +145,7 @@ class ObjectLocalizer:
         results = self._gdino_processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=self.config.detection_confidence,
+            threshold=self.config.detection_confidence,
             text_threshold=self.config.detection_confidence,
             target_sizes=[(rgb_image.height, rgb_image.width)],
         )
