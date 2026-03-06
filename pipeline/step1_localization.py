@@ -20,8 +20,9 @@
 #     Ref: https://github.com/facebookresearch/segment-anything-2
 #     Paper: "SAM 2: Segment Anything in Images and Videos" (Ravi et al., 2024)
 #
-#   • LangSAM – Kombination von GroundingDINO + SAM in einer API
-#     Ref: https://github.com/luca-medeiros/lang-segment-anything
+#   Beide Modelle werden direkt via HuggingFace transformers geladen
+#   Beide Modelle werden direkt via HuggingFace transformers geladen
+#   (kein LangSAM-Wrapper erforderlich).
 #
 # Outputs:
 #   - RGB-Bild (original)
@@ -74,7 +75,12 @@ class LocalizationResult:
 class ObjectLocalizer:
     """Lokalisiert Objekte in RGB-Bildern mit GroundingDINO + SAM.
 
-    Nutzt LangSAM als komfortablen Wrapper, der beide Modelle kombiniert.
+    Nutzt HuggingFace transformers direkt (kein LangSAM nötig).
+    GroundingDINO liefert Bounding Boxes, SAM segmentiert präzise.
+
+    Ref:
+        GroundingDINO: https://huggingface.co/IDEA-Research/grounding-dino-base
+        SAM: https://huggingface.co/facebook/sam-vit-large
 
     Usage:
         >>> localizer = ObjectLocalizer(config)
@@ -84,29 +90,94 @@ class ObjectLocalizer:
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.device = config.device
-        self.model = None  # Lazy-Loading
+        self._gdino_model = None
+        self._gdino_processor = None
+        self._sam_model = None
+        self._sam_processor = None
 
     def _load_model(self):
-        """Lädt das LangSAM-Modell (GroundingDINO + SAM) bei Erstverwendung.
-
-        LangSAM verbindet GroundingDINO zur Texterkennung mit SAM zur
-        präzisen Segmentierung in einer einzigen API.
-        Ref: https://github.com/luca-medeiros/lang-segment-anything
-        """
-        if self.model is not None:
+        """Lädt GroundingDINO + SAM via HuggingFace transformers."""
+        if self._gdino_model is not None:
             return
 
-        logger.info("Lade LangSAM-Modell (GroundingDINO + SAM)...")
-        try:
-            from lang_sam import LangSAM
-            self.model = LangSAM()
-            logger.info("LangSAM erfolgreich geladen.")
-        except ImportError:
-            raise ImportError(
-                "LangSAM nicht installiert. Installieren mit:\n"
-                "  pip install lang-sam\n"
-                "Ref: https://github.com/luca-medeiros/lang-segment-anything"
-            )
+        from transformers import (
+            AutoProcessor,
+            AutoModelForZeroShotObjectDetection,
+            SamModel,
+            SamProcessor,
+        )
+
+        gdino_id = self.config.grounding_dino_model
+        sam_id = self.config.sam_model
+
+        logger.info("Lade GroundingDINO (%s)...", gdino_id)
+        self._gdino_processor = AutoProcessor.from_pretrained(gdino_id)
+        self._gdino_model = (
+            AutoModelForZeroShotObjectDetection.from_pretrained(gdino_id)
+            .to(self.device)
+            .eval()
+        )
+
+        logger.info("Lade SAM (%s)...", sam_id)
+        self._sam_processor = SamProcessor.from_pretrained(sam_id)
+        self._sam_model = SamModel.from_pretrained(sam_id).to(self.device).eval()
+
+        logger.info("GroundingDINO + SAM erfolgreich geladen.")
+
+    def _detect(self, rgb_image: Image.Image, prompt: str):
+        """Führt GroundingDINO-Detektion aus.
+
+        Returns:
+            Dict mit 'scores' (Tensor), 'labels' (list[str]), 'boxes' (Tensor).
+        """
+        # GroundingDINO erwartet Prompt mit abschließendem Punkt
+        text = prompt.strip()
+        if not text.endswith("."):
+            text += "."
+
+        inputs = self._gdino_processor(
+            images=rgb_image, text=text, return_tensors="pt"
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self._gdino_model(**inputs)
+
+        results = self._gdino_processor.post_process_grounded_object_detection(
+            outputs,
+            inputs.input_ids,
+            box_threshold=self.config.detection_confidence,
+            text_threshold=self.config.detection_confidence,
+            target_sizes=[(rgb_image.height, rgb_image.width)],
+        )
+        return results[0]  # single image
+
+    def _segment(self, rgb_image: Image.Image, bbox: List[float]) -> np.ndarray:
+        """Erzeugt eine SAM-Maske aus einem Bounding-Box-Prompt.
+
+        Args:
+            rgb_image: RGB-Bild.
+            bbox: [x1, y1, x2, y2] in Pixelkoordinaten.
+
+        Returns:
+            Binäre Maske (H, W), bool.
+        """
+        input_boxes = [[[bbox[0], bbox[1], bbox[2], bbox[3]]]]
+        inputs = self._sam_processor(
+            rgb_image, input_boxes=input_boxes, return_tensors="pt"
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self._sam_model(**inputs)
+
+        masks = self._sam_processor.image_processor.post_process_masks(
+            outputs.pred_masks.cpu(),
+            inputs["original_sizes"].cpu(),
+            inputs["reshaped_input_sizes"].cpu(),
+        )
+        # masks[0] shape: (1, 3, H, W) – 3 Masken pro Box, beste wählen
+        iou_scores = outputs.iou_scores.cpu()  # (1, 1, 3)
+        best_mask_idx = iou_scores[0, 0].argmax().item()
+        return masks[0][0, best_mask_idx].numpy().astype(bool)
 
     def localize(
         self,
@@ -128,26 +199,25 @@ class ObjectLocalizer:
         """
         self._load_model()
 
-        # --- GroundingDINO → Bounding Box + SAM → Maske ---
-        masks, boxes, phrases, logits = self.model.predict(
-            rgb_image.convert("RGB"), prompt
-        )
+        det = self._detect(rgb_image, prompt)
 
-        if len(masks) == 0:
-            logger.warning(f"Kein Objekt für Prompt '{prompt}' gefunden.")
+        if len(det["scores"]) == 0:
+            logger.warning("Kein Objekt für Prompt '%s' gefunden.", prompt)
             return None
 
         # Beste Detektion auswählen (höchste Konfidenz)
-        best_idx = logits.argmax().item()
-        mask_tensor = masks[best_idx]  # (H, W) Tensor
-        mask_np = mask_tensor.squeeze().cpu().numpy().astype(bool)
-        bbox = boxes[best_idx].cpu().numpy().tolist()  # [x1, y1, x2, y2]
-        confidence = logits[best_idx].item()
+        best_idx = det["scores"].argmax().item()
+        bbox = det["boxes"][best_idx].cpu().tolist()  # [x1, y1, x2, y2]
+        confidence = det["scores"][best_idx].item()
+        label = det["labels"][best_idx]
 
         logger.info(
-            f"Objekt gefunden: '{phrases[best_idx]}' "
-            f"(Konfidenz: {confidence:.3f}, BBox: {bbox})"
+            "Objekt gefunden: '%s' (Konfidenz: %.3f, BBox: %s)",
+            label, confidence, bbox,
         )
+
+        # SAM-Segmentierung mit BBox-Prompt
+        mask_np = self._segment(rgb_image, bbox)
 
         # --- ROI-Ausschnitt erzeugen ---
         roi_image = self._extract_roi(rgb_image, mask_np, bbox)
@@ -179,24 +249,21 @@ class ObjectLocalizer:
         """
         self._load_model()
 
-        masks, boxes, phrases, logits = self.model.predict(
-            rgb_image.convert("RGB"), prompt
-        )
+        det = self._detect(rgb_image, prompt)
 
-        if len(masks) == 0:
-            logger.warning(f"Keine Objekte für Prompt '{prompt}' gefunden.")
+        if len(det["scores"]) == 0:
+            logger.warning("Keine Objekte für Prompt '%s' gefunden.", prompt)
             return []
 
         results = []
-        # Sortiere nach Konfidenz (absteigend)
-        sorted_indices = logits.argsort(descending=True)
+        sorted_indices = det["scores"].argsort(descending=True)
 
         for idx in sorted_indices:
             idx = idx.item()
-            mask_np = masks[idx].squeeze().cpu().numpy().astype(bool)
-            bbox = boxes[idx].cpu().numpy().tolist()
-            confidence = logits[idx].item()
+            bbox = det["boxes"][idx].cpu().tolist()
+            confidence = det["scores"][idx].item()
 
+            mask_np = self._segment(rgb_image, bbox)
             roi_image = self._extract_roi(rgb_image, mask_np, bbox)
 
             results.append(LocalizationResult(

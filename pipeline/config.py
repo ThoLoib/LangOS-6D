@@ -31,7 +31,7 @@ class PipelineConfig:
     # SAM2: https://github.com/facebookresearch/segment-anything-2
     # LangSAM (Wrapper): https://github.com/luca-medeiros/lang-segment-anything
     grounding_dino_model: str = "IDEA-Research/grounding-dino-base"
-    sam_model: str = "facebook/sam2-hiera-large"
+    sam_model: str = "facebook/sam-vit-large"
     detection_confidence: float = 0.3   # Mindest-Konfidenz für Bounding Boxes
     segmentation_threshold: float = 0.5  # SAM-Masken-Schwelle
 
