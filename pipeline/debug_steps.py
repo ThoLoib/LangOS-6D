@@ -982,31 +982,60 @@ def _parse() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Beispiele:
-  # Nur Schritt 1-2 testen (keine externen Modelle nötig außer GroundingDINO + SAM):
-  python -m pipeline.debug_steps --rgb ... --depth ... --prompt "mustard bottle" \\
-      --descriptions ... --reference_images ... --cad_models ... \\
-      --until_step 2
+  # Nur mit Defaults laufen lassen (YCBV-GSO, Szene 000048, Schritt 1-6):
+  python -m pipeline.debug_steps
 
-  # Bis Schritt 6 (CLIP + DINO + Fusion):
-  python -m pipeline.debug_steps ... --until_step 6
+  # Anderen Prompt testen:
+  python -m pipeline.debug_steps --prompt "banana"
+
+  # Nur Lokalisierung + Punktwolke (keine CLIP/DINO Modelle nötig):
+  python -m pipeline.debug_steps --until_step 2
 
   # Komplett mit ULIP-2 (Schritt 5):
-  python -m pipeline.debug_steps ... --until_step 6 \\
-      --ulip_repo /ulip --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
+  python -m pipeline.debug_steps --until_step 6 \\
+      --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
+
+  # Anderer Datensatz:
+  python -m pipeline.debug_steps \\
+      --rgb  eval/datasets/housecat6d/test/000001/rgb/000001.png \\
+      --depth eval/datasets/housecat6d/test/000001/depth/000001.png \\
+      --prompt "keyboard" \\
+      --descriptions object_database/housecat6d/descriptions_attributes.json \\
+      --reference_images object_images/housecat6d/ \\
+      --cad_models object_database/housecat6d/ \\
+      --camera eval/datasets/housecat6d/test/000001/scene_camera.json
         """,
     )
-    p.add_argument("--rgb",            required=True)
-    p.add_argument("--depth",          required=True)
-    p.add_argument("--prompt",         required=True)
-    p.add_argument("--descriptions",   required=True, help="Pfad zu descriptions_attributes.json")
-    p.add_argument("--reference_images", required=True, help="Pfad zu object_images/ycbv_gso/")
-    p.add_argument("--cad_models",     required=True, help="Pfad zu object_database/ycbv_gso/")
-    p.add_argument("--camera",         default=None,  help="scene_camera.json (optional)")
-    p.add_argument("--output",         default="debug_output")
-    p.add_argument("--until_step",     type=int, default=6,
+    # ── Datei-Defaults: YCBV-GSO Szene 000048, Bild 000001 ────────────────
+    _RGB   = "eval/datasets/ycbv_gso/test/000048/rgb/000001.png"
+    _DEPTH = "eval/datasets/ycbv_gso/test/000048/depth/000001.png"
+    _CAM   = "eval/datasets/ycbv_gso/test/000048/scene_camera.json"
+    _DESC  = "object_database/ycbv_gso/descriptions_attributes.json"
+    _REFS  = "object_images/ycbv_gso/"
+    _CADS  = "object_database/ycbv_gso/"
+    # ─────────────────────────────────────────────────────────────────────────
+
+    p.add_argument("--rgb",     default=_RGB,
+                   help=f"RGB-Bild (default: {_RGB})")
+    p.add_argument("--depth",   default=_DEPTH,
+                   help=f"Tiefenbild (default: {_DEPTH})")
+    p.add_argument("--prompt",  default="mustard bottle",
+                   help='Suchprompt (default: "mustard bottle")')
+    p.add_argument("--descriptions", default=_DESC,
+                   help=f"descriptions_attributes.json (default: {_DESC})")
+    p.add_argument("--reference_images", default=_REFS,
+                   help=f"Referenzbild-Verzeichnis (default: {_REFS})")
+    p.add_argument("--cad_models", default=_CADS,
+                   help=f"CAD-Modell-Verzeichnis (default: {_CADS})")
+    p.add_argument("--camera",  default=_CAM,
+                   help=f"scene_camera.json (default: {_CAM})")
+    p.add_argument("--output",  default="debug_output")
+    p.add_argument("--until_step", type=int, default=6,
                    help="Bis welchem Schritt ausführen: 1-8 (default: 6)")
-    p.add_argument("--ulip_repo",      default="", help="ULIP-Repo-Pfad (für Step 5)")
-    p.add_argument("--ulip_checkpoint", default="", help="ULIP-2 Checkpoint (für Step 5)")
+    p.add_argument("--ulip_repo",       default="/ulip",
+                   help="ULIP-Repo-Pfad (default: /ulip)")
+    p.add_argument("--ulip_checkpoint", default="",
+                   help="ULIP-2 Checkpoint .pt (leer = Schritt 5 überspringen)")
     return p.parse_args()
 
 
