@@ -2,8 +2,10 @@
 
 This branch (`exp/ulip2`) extends the original two-stage OSCAR baseline with a full **8-step modular pipeline** and integrates **ULIP-2 shape-aware retrieval** as a third scoring channel.
 
-Baseline reproduced at **75.95% Top-1** on YCBV-GSO.  
-New pipeline adds scale estimation and pose estimation on top of the retrieval result.
+Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
+New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
+
+> **Status (2026-03-12):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048.
 
 ---
 
@@ -11,21 +13,23 @@ New pipeline adds scale estimation and pose estimation on top of the retrieval r
 
 ```
 Natural language prompt + RGB-D image
-          │
-          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Step 1  │  Object Localization  │  GroundingDINO + SAM         │
-│  Step 2  │  Point Cloud          │  RGB-D → 3D point cloud       │
-│  Step 3  │  CLIP Retrieval       │  Prompt/description matching  │
-│  Step 4  │  DINOv2 Re-Ranking    │  Visual feature comparison    │
-│  Step 5  │  ULIP-2 Shape Match   │  3D geometry similarity (new) │
-│  Step 6  │  Score Fusion         │  CLIP · DINO · ULIP → rank    │
-│  Step 7  │  Scale Estimation     │  Observed bbox vs. CAD bbox   │
-│  Step 8  │  Pose Estimation      │  ICP / PnP                    │
-└─────────────────────────────────────────────────────────────────┘
-          │
-          ▼
-  Best matching CAD model + 6D pose
+          |
+          v
++--------------------------------------------------------------+
+| Step 1 | Object Localization  | GroundingDINO + SAM          |
+| Step 2 | Point Cloud          | RGB-D -> 3D point cloud      |
+| Step 3 | CLIP Retrieval       | Prompt/description matching  |
+| Step 4 | DINOv2 Re-Ranking    | Visual feature comparison    |
+|        |                      | (batch + disk cache)         |
+| Step 5 | ULIP-2 Shape Match   | 3D geometry similarity (new) |
+| Step 6 | Score Fusion         | CLIP * DINO * ULIP -> rank   |
+|        |                      | (NaN-safe min-max norm.)     |
+| Step 7 | Scale Estimation     | RANSAC+ICP coarse alignment  |
+| Step 8 | Pose Estimation      | ICP with coarse init pose    |
++--------------------------------------------------------------+
+          |
+          v
+  Best matching CAD model + 6D pose + scale factor
 ```
 
 All pipeline code lives in `pipeline/`. Each step is a self-contained module with a single dataclass result.
@@ -47,7 +51,7 @@ Clone the ULIP repo next to this one and place the checkpoint:
 cd ..
 git clone https://github.com/salesforce/ULIP.git
 # Download checkpoint:
-# ulip2_pointbert_10k.pt → ULIP/checkpoints/ulip2_pointbert_10k.pt
+# ulip2_pointbert_10k.pt -> ULIP/checkpoints/ulip2_pointbert_10k.pt
 ```
 The `docker-compose.yml` mounts `../ULIP` as `/ulip` inside the container.
 
@@ -61,18 +65,18 @@ docker compose run --rm -it oscar bash
 
 ## Rendering & Object Database
 
-The database must be rendered before retrieval. Each object needs multi-view images and (for ULIP-2) a `.glb` or `.ply` point cloud.
+The database must be rendered before retrieval. Each object needs multi-view images and a CAD model.
 
 **Database layout:**
 ```text
 OSCAR/
-├── object_database/{dataset}/
-│   └── {object_id}/
-│       ├── {object_id}.obj / .glb    ← CAD model
-│       └── descriptions_attributes.json   ← auto-generated
-└── object_images/{dataset}/
-    └── {object_id}/
-        └── *.png                     ← rendered views (8 angles)
++-- object_database/{dataset}/
+|   +-- {object_id}/
+|       +-- textured_simple.obj     <- CAD model
+|       +-- descriptions_attributes.json
++-- object_images/{dataset}/
+    +-- {object_id}/
+        +-- *.png                   <- rendered views (8 angles)
 ```
 
 **Render with Blender:**
@@ -93,10 +97,30 @@ python description_genertor/descriptions_ycbv_gso_attributes.py
 
 ## Running the Pipeline
 
-### Full run (single image)
+### Debug mode (recommended for testing)
+Saves 7 diagnostic PNG images to `debug_output/`:
+```bash
+python -m pipeline.debug_steps \
+    --prompt "i need the blue coffee can" \
+    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+    --until_step 8
+```
+
+| Output File | Content |
+|-------------|---------|
+| `debug_01_localization.png` | Scene + mask overlay, cropped ROI, prompt analysis |
+| `debug_02_pointcloud.png` | Depth (raw + masked), point cloud projections |
+| `debug_02_pointcloud_3d.html` | Interactive 3D point cloud viewer |
+| `debug_03_clip.png` | Query ROI vs. Top-5 CLIP candidates |
+| `debug_04_dino.png` | Query vs. best DINOv2 match, ranking table |
+| `debug_05_ulip.png` | 3D point cloud scatter, Top-3 ULIP-2 shape matches |
+| `debug_06_fusion.png` | CLIP/DINO/ULIP/Fused score table + winner |
+| `debug_07_scale_pose.png` | 3D wireframe overlay on scene, scale/pose info |
+
+### Full pipeline (single image)
 ```bash
 python -m pipeline.run_pipeline \
-    --rgb   eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
+    --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
     --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
     --prompt "mustard bottle" \
     --descriptions object_database/ycbv_gso/descriptions_attributes.json \
@@ -105,33 +129,19 @@ python -m pipeline.run_pipeline \
     --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json
 ```
 
-### Step-by-step debug (saves diagnostic images)
-```bash
-# With defaults (YCBV-GSO scene 000048, steps 1–6):
-python -m pipeline.debug_steps
+---
 
-# Different prompt:
-python -m pipeline.debug_steps --prompt "banana"
+## Key Configuration (pipeline/config.py)
 
-# With ULIP-2 shape matching:
-python -m pipeline.debug_steps \
-    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
-
-# Stop after step 2 (only needs GroundingDINO + SAM):
-python -m pipeline.debug_steps --until_step 2
+```python
+voxel_size     = 0.002          # Point cloud downsampling (2mm, ~4000 pts)
+depth_scale    = 10000.0        # BOP depth: 16-bit PNG, 0.1mm units
+weight_clip    = 0.3            # Fusion weights
+weight_dino    = 0.4
+weight_ulip    = 0.3
+ollama_model   = "gemma3:4b"    # LLM for prompt parsing
+pose_method    = "icp"          # Pose estimation method
 ```
-
-Output images are saved to `debug_output/`:
-
-| File | Content |
-|------|---------|
-| `debug_01_localization.png` | Scene + mask overlay · cropped ROI · prompt analysis |
-| `debug_02_pointcloud.png` | Depth (raw + masked) · point cloud projections |
-| `debug_03_clip.png` | Query ROI vs. Top-5 CLIP candidates |
-| `debug_04_dino.png` | Query vs. best DINOv2 match · ranking table |
-| `debug_05_ulip.png` | 3D point cloud scatter · Top-3 ULIP-2 shape matches |
-| `debug_06_fusion.png` | CLIP · DINO · ULIP · Fused score table + winner |
-| `debug_07_scale_pose.png` | Model overlay on scene · scale/pose info |
 
 ---
 
@@ -152,14 +162,8 @@ python retrieval_combi_eval_mi3dor.py
 ```
 @article{pulli2026oscar,
   title={OSCAR: Open-Set CAD Retrieval from a Language Prompt and a Single Image},
-  author={Pulli, Tessa and Weibel, Jean-Baptiste and Hönig, Peter and Hirschmanner, Matthias and Vincze, Markus and Holzinger, Andreas},
+  author={Pulli, Tessa and Weibel, Jean-Baptiste and Hoenig, Peter and Hirschmanner, Matthias and Vincze, Markus and Holzinger, Andreas},
   journal={arXiv preprint arXiv:2601.07333},
   year={2026}
 }
 ```
-
-
-
-
-
-

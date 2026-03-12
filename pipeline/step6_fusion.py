@@ -181,7 +181,9 @@ class ScoreFusion:
         if shape_result:
             for c in shape_result.candidates:
                 entry = scores.setdefault(c.object_id, {"clip": 0, "dino": 0, "ulip": 0})
-                entry["ulip"] = max(entry["ulip"], c.shape_score)
+                s = c.shape_score
+                if not (isinstance(s, float) and np.isnan(s)):
+                    entry["ulip"] = max(entry["ulip"], s)
                 if c.cad_model_path:
                     paths[c.object_id] = c.cad_model_path
 
@@ -195,9 +197,16 @@ class ScoreFusion:
         all_ulip = [s["ulip"] for s in scores.values()]
 
         def _minmax(values):
-            vmin, vmax = min(values), max(values)
+            clean = [v for v in values if not (isinstance(v, float) and np.isnan(v))]
+            if not clean:
+                return [0.0] * len(values)
+            vmin, vmax = min(clean), max(clean)
             rng = vmax - vmin
-            return [(v - vmin) / rng if rng > 0 else 0.0 for v in values]
+            return [
+                (v - vmin) / rng if rng > 0 and not (isinstance(v, float) and np.isnan(v))
+                else 0.0
+                for v in values
+            ]
 
         norm_clip = _minmax(all_clip)
         norm_dino = _minmax(all_dino)

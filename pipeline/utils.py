@@ -136,9 +136,3 @@ def load_object_descriptions(desc_file: str) -> Tuple[List[str], List[str]]:
             texts.append(text)
             labels.append(obj_id)
     return texts, labels
-
-
-def ensure_dir(path: str) -> str:
-    """Erstellt einen Ordner, falls er nicht existiert."""
-    os.makedirs(path, exist_ok=True)
-    return path

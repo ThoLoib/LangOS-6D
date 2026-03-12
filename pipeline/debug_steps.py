@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # =============================================================================
-# pipeline/debug_steps.py – Etappe-für-Etappe Debug der OSCAR+ Pipeline
+# pipeline/debug_steps.py – Step-by-Step Debug of the OSCAR+ Pipeline
 # =============================================================================
 #
-# Führt die Pipeline schrittweise aus und speichert nach jedem Schritt
-# ein detailliertes Diagnosebild. Ideal um Fehler früh zu erkennen.
+# Executes Pipeline stepwise and saves a detailed image for diagnosis after  
+# each step.
 #
 # Verwendung:
 #   python -m pipeline.debug_steps \
@@ -177,20 +177,20 @@ def save_debug_step1(rgb_image: Image.Image, mask: np.ndarray, bbox: list,
           (x1, max(0, y1 - 24)), fg=(0, 255, 100), bg=(0, 0, 0), size=15)
     ratio = tw / scene.width
     pa = scene.resize((tw, int(scene.height * ratio)), Image.LANCZOS)
-    pa = _label_top(pa, "A — Szene + Segmentierungsmaske + BBox", fg="cyan")
+    pa = _label_top(pa, "1.: Szene + Segmentierungsmaske + BBox", fg="cyan")
 
     # --- Panel B: Segmentierter ROI-Ausschnitt ---
     roi_r = roi_image.copy()
     roi_r.thumbnail((tw, tw), Image.LANCZOS)
     pb = Image.new("RGB", (tw, pa.height), (22, 22, 22))
     pb.paste(roi_r, ((tw - roi_r.width) // 2, (pa.height - roi_r.height - 20) // 2 + 20))
-    pb = _label_top(pb, "B — Segmentierter Objektausschnitt (ROI)", fg="cyan")
+    pb = _label_top(pb, "2.: Segmentierter Objektausschnitt (ROI)", fg="cyan")
     pb = pb.crop((0, 0, pb.width, pa.height))
 
     # --- Panel C: Text-Info ---
     pc = Image.new("RGB", (tw, pa.height), (14, 14, 18))
     draw_t = ImageDraw.Draw(pc)
-    draw_t.text((10, 14), "SCHRITT 1 — LOKALISIERUNG", fill=(0, 200, 255), font=_font(19))
+    draw_t.text((10, 14), "SCHRITT 1 - LOKALISIERUNG", fill=(0, 200, 255), font=_font(19))
 
     y = 60
     draw_t.text((10, y), "Eingabe-Prompt:", fill=(170, 170, 170), font=_font(13))
@@ -210,7 +210,7 @@ def save_debug_step1(rgb_image: Image.Image, mask: np.ndarray, bbox: list,
         y += 20
     y += 10
 
-    draw_t.text((10, y), "Extrahierter Objektname (→ GroundingDINO):",
+    draw_t.text((10, y), "Extrahierter Objektname (with GroundingDINO):",
                 fill=(170, 170, 170), font=_font(13))
     y += 20
     draw_t.text((14, y), f'"{extracted_name}"', fill=(255, 220, 0), font=_font(17))
@@ -655,12 +655,107 @@ def save_debug_step6(candidates: list, ref_dir: str,
 # Debug-Bild 7+8: Scale + Pose / Modellüberlagerung
 # =============================================================================
 
+def _project_cad_wireframe(
+    scene_img: Image.Image,
+    cad_model_path: str,
+    pose_matrix: np.ndarray,
+    scale_factor: float,
+    cam: dict,
+    color: tuple = (0, 255, 100),
+    alpha: float = 0.5,
+    scene_scale: float = 1.0,
+) -> Image.Image:
+    """Projiziert CAD-Mesh-Kanten auf das Szenenbild mittels Pose + Kameraintrinsics.
+
+    Args:
+        scene_img: Szenenbild (RGB PIL).
+        cad_model_path: Pfad zum CAD-Modell.
+        pose_matrix: 4x4 Objekt-zu-Kamera Transformationsmatrix.
+        scale_factor: Skalierungsfaktor fuer das CAD-Modell.
+        cam: Dict mit fx, fy, cx, cy.
+        color: Farbe der Wireframe-Linien.
+        alpha: Transparenz (0=unsichtbar, 1=opak).
+        scene_scale: Falls das Szenenbild skaliert wurde.
+
+    Returns:
+        Szenenbild mit Wireframe-Overlay.
+    """
+    try:
+        import trimesh
+    except ImportError:
+        logger.warning("trimesh nicht installiert, kein 3D-Overlay moeglich.")
+        return scene_img
+
+    try:
+        mesh = trimesh.load(cad_model_path, force="mesh")
+    except Exception as e:
+        logger.warning("CAD-Modell laden fehlgeschlagen: %s", e)
+        return scene_img
+
+    # Skalieren (gleiche Methode wie in step8: scale around mesh center)
+    raw_verts = np.array(mesh.vertices)
+    mesh_center = raw_verts.mean(axis=0)  # Open3D get_center() = vertex mean
+    verts = (raw_verts - mesh_center) * scale_factor + mesh_center  # (N, 3)
+
+    # pose_matrix bildet camera->CAD (source=observed, target=CAD in ICP),
+    # wir brauchen CAD->camera, also die Inverse.
+    T_cad2cam = np.linalg.inv(pose_matrix)
+    R = T_cad2cam[:3, :3]
+    t = T_cad2cam[:3, 3]
+    verts_cam = (R @ verts.T).T + t  # (N, 3)
+
+    # Auf 2D projizieren
+    fx = cam.get("fx", 600)
+    fy = cam.get("fy", 600)
+    cx = cam.get("cx", scene_img.width / (2 * scene_scale))
+    cy = cam.get("cy", scene_img.height / (2 * scene_scale))
+
+    z = verts_cam[:, 2]
+    valid = z > 0.01
+    u = np.full(len(z), -1.0)
+    v = np.full(len(z), -1.0)
+    u[valid] = (fx * verts_cam[valid, 0] / z[valid] + cx) * scene_scale
+    v[valid] = (fy * verts_cam[valid, 1] / z[valid] + cy) * scene_scale
+
+    # Kanten zeichnen (Mesh-Edges subsamplen fuer Performance)
+    edges = mesh.edges_unique
+    if len(edges) > 5000:
+        step = max(1, len(edges) // 5000)
+        edges = edges[::step]
+
+    overlay = Image.new("RGBA", scene_img.size, (0, 0, 0, 0))
+    from PIL import ImageDraw as ID2
+    draw_ov = ID2.Draw(overlay)
+    a_int = int(alpha * 255)
+    line_color = (*color, a_int)
+
+    w, h = scene_img.size
+    for i0, i1 in edges:
+        if not (valid[i0] and valid[i1]):
+            continue
+        x0, y0 = u[i0], v[i0]
+        x1, y1 = u[i1], v[i1]
+        # Clip Check
+        if (x0 < -50 or x0 > w + 50 or y0 < -50 or y0 > h + 50 or
+            x1 < -50 or x1 > w + 50 or y1 < -50 or y1 > h + 50):
+            continue
+        draw_ov.line([(x0, y0), (x1, y1)], fill=line_color, width=1)
+
+    result = scene_img.convert("RGBA")
+    result.alpha_composite(overlay)
+    return result.convert("RGB")
+
+
 def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
                         scale_factor: float, best_object_id: str,
                         ref_dir: str, pose_info: dict,
                         obs_size: Optional[np.ndarray],
                         cad_size: Optional[np.ndarray],
-                        output_dir: str) -> str:
+                        output_dir: str,
+                        pose_matrix: Optional[np.ndarray] = None,
+                        cad_model_path: Optional[str] = None,
+                        cam: Optional[dict] = None,
+                        ) -> str:
     """
     Links: Originalszene mit Modell-Thumbnail (50% Alpha) in BBox eingeblendet
     Mitte: Bestes Modell-Referenzbild
@@ -669,27 +764,37 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
     pad = 8
     scene_w = 500
 
-    # --- Panel A: Szene + Überlagerung ---
+    # --- Panel A: Szene + 3D-Wireframe-Überlagerung ---
     scene = rgb_image.copy().convert("RGB")
     sc = min(1.0, scene_w / scene.width)
     scene_s = scene.resize((int(scene.width * sc), int(scene.height * sc)), Image.LANCZOS)
     x1, y1, x2, y2 = [max(0, int(c * sc)) for c in bbox]
     bw, bh = max(x2 - x1, 10), max(y2 - y1, 10)
 
-    # Alpha-blend best model thumbnail into BBox
-    best_t = _load_thumb(best_object_id, ref_dir, max(bw, bh))
-    if best_t:
-        region = scene_s.crop((x1, y1, x1 + bw, y1 + bh))
-        best_r = best_t.resize((bw, bh), Image.LANCZOS)
-        blended = Image.blend(region, best_r, alpha=0.5)
-        scene_s.paste(blended, (x1, y1))
+    # 3D Wireframe-Overlay wenn Pose vorhanden, sonst Thumbnail-Fallback
+    has_3d = (pose_matrix is not None and cad_model_path is not None
+              and cam is not None)
+    if has_3d:
+        scene_s = _project_cad_wireframe(
+            scene_s, cad_model_path, pose_matrix, scale_factor,
+            cam, color=(0, 255, 100), alpha=0.6, scene_scale=sc,
+        )
+        overlay_label = "A — Szene + 3D-Wireframe (Pose)"
+    else:
+        best_t = _load_thumb(best_object_id, ref_dir, max(bw, bh))
+        if best_t:
+            region = scene_s.crop((x1, y1, x1 + bw, y1 + bh))
+            best_r = best_t.resize((bw, bh), Image.LANCZOS)
+            blended = Image.blend(region, best_r, alpha=0.5)
+            scene_s.paste(blended, (x1, y1))
+        overlay_label = "A — Szene + Thumbnail-Überlagerung"
 
     draw_s = ImageDraw.Draw(scene_s)
     draw_s.rectangle([x1, y1, x1 + bw, y1 + bh], outline=(255, 215, 0), width=3)
     _text(draw_s, f"{best_object_id[:28]}  ×{scale_factor:.3f}",
           (x1, max(0, y1 - 22)), fg=(255, 215, 0), bg=(0, 0, 0), size=13)
 
-    pa = _label_top(scene_s, "A — Szene + Modellüberlagerung (50% Alpha)")
+    pa = _label_top(scene_s, overlay_label)
 
     # --- Panel B: Modell-Referenzbild ---
     ref_img = _load_thumb(best_object_id, ref_dir, 300) or _placeholder(300, best_object_id[:8])
@@ -862,6 +967,7 @@ def run_debug(args) -> None:
         logger.info("  %d Punkte  BBox=%s", pc.num_points, pc.bbox_size)
         save_debug_step2(depth_m, loc.mask, pc.points, pc.colors,
                          pc.num_points, pc.bbox_size, out)
+        save_pointcloud_interactive(pc.points, pc.colors, out)
     else:
         logger.warning("  Keine Punktwolke erzeugt!")
 
@@ -965,6 +1071,7 @@ def run_debug(args) -> None:
             observed_pc=pc,
             fx=cam.get("fx"), fy=cam.get("fy"),
             cx=cam.get("cx"), cy=cam.get("cy"),
+            initial_pose=sr.coarse_alignment if 'sr' in dir() and sr is not None and sr.coarse_alignment is not None else None,
         )
         pose_info = {
             "Methode": pr.method,
@@ -976,14 +1083,75 @@ def run_debug(args) -> None:
 
     save_debug_step7_8(rgb_image, loc.bbox, scale_factor, best.object_id,
                        args.reference_images, pose_info,
-                       obs_size, cad_size, out)
+                       obs_size, cad_size, out,
+                       pose_matrix=pr.pose_matrix if 'pr' in dir() else None,
+                       cad_model_path=best.cad_model_path,
+                       cam=cam)
     _done(out)
+
+
+def save_pointcloud_interactive(points: "np.ndarray", colors: "np.ndarray",
+                                 output_dir: str) -> None:
+    """Speichert die Punktwolke als PLY und als interaktives Plotly-HTML.
+
+    Die HTML-Datei kann im Browser geöffnet werden (drehen, zoomen, etc.).
+    Die PLY-Datei kann in MeshLab / CloudCompare / Windows 3D Viewer geöffnet werden.
+    """
+    import open3d as o3d
+
+    ply_path = os.path.join(output_dir, "debug_02_pointcloud.ply")
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    if colors is not None and len(colors) == len(points):
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+    o3d.io.write_point_cloud(ply_path, pcd)
+    logger.info("  [3D] PLY gespeichert: %s", ply_path)
+
+    try:
+        import plotly.graph_objects as go
+
+        step = max(1, len(points) // 50000)  # max ~50k Punkte für Browser-Performance
+        p = points[::step]
+        c = colors[::step] if colors is not None and len(colors) == len(points) else None
+
+        if c is not None:
+            rgb_str = [
+                "rgb({},{},{})".format(int(r*255), int(g*255), int(b*255))
+                for r, g, b in c
+            ]
+        else:
+            rgb_str = "steelblue"
+
+        fig = go.Figure(data=[go.Scatter3d(
+            x=p[:, 0], y=p[:, 2], z=-p[:, 1],  # Y-up → Z-up
+            mode="markers",
+            marker=dict(size=1.5, color=rgb_str, opacity=0.85),
+        )])
+        fig.update_layout(
+            title="OSCAR+ Punktwolke (Schritt 2)",
+            scene=dict(
+                xaxis_title="X (m)", yaxis_title="Z (m)", zaxis_title="-Y (m)",
+                aspectmode="data",
+                bgcolor="rgb(20,20,20)",
+            ),
+            paper_bgcolor="rgb(30,30,30)",
+            font=dict(color="white"),
+            margin=dict(l=0, r=0, b=0, t=40),
+        )
+        html_path = os.path.join(output_dir, "debug_02_pointcloud_3d.html")
+        fig.write_html(html_path, include_plotlyjs="cdn")
+        logger.info("  [3D] Interaktives HTML gespeichert: %s  (im Browser öffnen!)", html_path)
+    except ImportError:
+        logger.warning("  [3D] plotly nicht installiert → nur PLY. Install: pip install plotly")
 
 
 def _done(out: str) -> None:
     logger.info("\n✓ Debug fertig. Gespeicherte Bilder:")
     for f in sorted(os.listdir(out)):
         if f.startswith("debug_"):
+            logger.info("    %s/%s", out, f)
+    for f in sorted(os.listdir(out)):
+        if f.endswith(".ply") or f.endswith(".html"):
             logger.info("    %s/%s", out, f)
 
 

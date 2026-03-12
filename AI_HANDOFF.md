@@ -1,6 +1,6 @@
 # AI Handoff – Branch `exp/ulip2`
 
-> Zuletzt aktualisiert: 2026-03-05
+> Zuletzt aktualisiert: 2026-03-12
 
 ---
 
@@ -19,23 +19,35 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `oscar` | Clean upstream mirror von pullover00/OSCAR | ✅ nie verändert |
 | `main` | Thesis-Scaffolding + AI-Docs | ✅ stabil |
 | `exp/oscar-repro` | OSCAR baseline reproduziert (d3098bdd) | ✅ abgeschlossen |
-| **`exp/ulip2`** | **Shape-Aware Pipeline (dieser Branch)** | 🟡 implementiert, End-to-End-Test ausstehend |
+| **`exp/ulip2`** | **Shape-Aware Pipeline (dieser Branch)** | 🟢 End-to-End funktioniert (8 Schritte) |
 
 ---
 
 ## Aktueller Stand (exp/ulip2)
 
-### Was ist fertig
+### Was funktioniert (End-to-End verifiziert, 2026-03-12)
 
-- **Modulare 8-Schritt-Pipeline** in `pipeline/` (17 Dateien):
-  1. `step1_localization.py` – GroundingDINO + SAM → Maske + BBox
-  2. `step2_pointcloud.py` – RGB-D + Maske → Open3D Point Cloud
-  3. `step3_clip_retrieval.py` – Prompt → CLIP → Top-K Kandidaten
-  4. `step4_dino_reranking.py` – ROI → DINOv2 → Re-Ranking
+- **Modulare 8-Schritt-Pipeline** in `pipeline/` – komplett durchgetestet:
+  1. `step1_localization.py` – GroundingDINO + SAM → Maske + BBox (Konfidenz 0.847)
+  2. `step2_pointcloud.py` – RGB-D + Maske → Open3D Point Cloud (4.201 Punkte bei 2mm Voxel)
+  3. `step3_clip_retrieval.py` – Prompt → CLIP → Top-8 Kandidaten (master_chef_can 0.4702)
+  4. `step4_dino_reranking.py` – ROI → DINOv2 → Top-5 Re-Ranking (master_chef_can 0.6447)
+     - **Batch-Encoding** (32 imgs/pass) + **.pt Disk-Cache** für 9.459 Referenzbilder
+     - Erstlauf ~5 Min, danach sofort aus Cache
   5. `step5_shape_matching.py` – **ULIP-2 Point Cloud Encoder** → Shape-Similarity
-  6. `step6_fusion.py` – Weighted Sum / RRF / Intersection
-  7. `step7_scale_estimation.py` – BBox-Vergleich → Skalenfaktor
-  8. `step8_pose_estimation.py` – FoundationPose / ICP
+     - NaN-Scores werden gefiltert (Overflow bei pcd.colors → fix mit `np.clip`)
+  6. `step6_fusion.py` – Weighted Sum mit Min-Max-Normalisierung pro Modalität
+     - NaN-sichere `_minmax()` Funktion
+     - Ergebnis: master_chef_can fused=0.8473
+  7. `step7_scale_estimation.py` – RANSAC + ICP Coarse-Alignment → Partial-Aware Scale
+     - scale=1.2968, conf=0.63 (2 beste Achsen)
+  8. `step8_pose_estimation.py` – ICP mit Coarse-Alignment aus Step 7 als Startpose
+     - fitness=0.9895, RMSE=0.007m
+
+- **Debug-Visualisierung** (`pipeline/debug_steps.py`, ~1200 Zeilen):
+  - 7 diagnostische PNG-Bilder + interaktiver 3D-Viewer (HTML)
+  - 3D-Wireframe-Overlay der CAD-Modell-Pose auf Szenenbild (via trimesh)
+  - Automatische Panels: Lokalisierung, Punktwolke, CLIP, DINOv2, ULIP, Fusion, Scale+Pose
 
 - **ULIP-2 Integration** (step5):
   - Lädt nur `point_encoder` + `pc_projection` (~400 MB statt ~5.5 GB für volles OpenCLIP)
@@ -43,68 +55,81 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
   - Checkpoint: `ulip2_pointbert_10k.pt` in `/ulip/checkpoints/`
   - ULIP-Repo als Volume gemountet (`../ULIP:/ulip` im Container)
 
-- **ULIP-Patches** (im ULIP-Repo, nicht in OSCAR):
-  - `ULIP/models/pointbert/dvae.py` → `knn_cuda` optional per try/except
-  - `ULIP/models/pointbert/misc.py` → `pointnet2_ops` optional, Pure-PyTorch `_fps_pytorch()` Fallback
-
-- **LLM-basiertes Prompt Parsing** (run_pipeline.py):
-  - Ollama + `mistral-small3.1` → extrahiert Objektname aus natürlichem Prompt
-  - Fallback: regelbasierter Heuristic-Parser wenn LLM nicht verfügbar
-
-- **Visualisierung** (`pipeline/visualization.py`):
-  - `--visualize` Flag erzeugt PNG-Bilder nach jedem Schritt
-  - Masken-Overlay, Depth-Maps, Point-Cloud-Projektionen, Top-K-Grids, Summary
+- **LLM-basiertes Prompt Parsing**:
+  - Ollama + `gemma3:4b` (localhost:11434, 30s Timeout)
+  - Extrahiert Objektname, Farbe, Form, Material aus natürlichem Prompt
+  - Fallback: regelbasierter Heuristic-Parser
 
 - **Docker-Konfiguration**:
+  - Image: `tholoi/oscar-plus`
   - GPU-Support via `deploy.resources.reservations.devices`
   - ULIP-Volume: `../ULIP:/ulip`
-  - Ollama im Container installiert + `mistral-small3.1` gepullt beim Start
-  - Alle Python-Dependencies in `requirements.txt`
+  - HuggingFace Cache-Volume
+  - Alle Python-Dependencies inkl. trimesh
+
+### Bekannte Limitierungen
+
+1. **ULIP-2 Shape Matching** liefert schwache Ergebnisse für partielle Punktwolken (single-view, ~4k Punkte vs. komplette 10k-CAD-Modelle). Fusion kompensiert durch CLIP+DINO.
+2. **ICP auf symmetrischen Objekten** (z.B. Dosen) kann Rotation um Symmetrieachse nicht eindeutig bestimmen.
+3. **FoundationPose** ist als `NotImplementedError` markiert – Pipeline nutzt ICP als Default.
 
 ### Was noch fehlt
 
-1. **End-to-End Test** – Pipeline komplett durchlaufen (alle 8 Schritte) und Ergebnis verifizieren.
-2. **Evaluation-Script** – Analog zu `retrieval_combi_eval.py` (OSCAR baseline), aber mit ULIP-2: über alle BOP-Szenen laufen, Top-K Accuracy berechnen, mit 75.95% Baseline vergleichen.
-3. **MI3DOR Evaluation** – Shape-Retrieval auf MI3DOR testen (hier sollte ULIP-2 besonders helfen).
-4. **HouseCat6D** – BOP-Testdaten beschaffen + evaluieren.
-5. **Hyperparameter-Tuning** – Fusionsgewichte (aktuell 0.3/0.4/0.3), Top-K je Schritt.
+1. **Evaluation-Script** – Über alle BOP-Szenen laufen, ULIP-2-augmentierte Top-K Accuracy berechnen, mit 75.95% Baseline vergleichen.
+2. **MI3DOR Evaluation** – Shape-Retrieval auf MI3DOR testen (ULIP-2 sollte hier besonders helfen).
+3. **HouseCat6D** – BOP-Testdaten beschaffen + evaluieren.
+4. **Hyperparameter-Tuning** – Fusionsgewichte (aktuell 0.3/0.4/0.3), Top-K je Schritt, Voxelgröße.
+5. **Fehlende MI3DOR-Beschreibungen** – 11/21 Kategorien noch nicht generiert.
 
 ---
 
 ## Datei-Inventar
 
-### Neue Dateien (pipeline/)
+### Pipeline-Dateien
 
 | Datei | Zeilen | Beschreibung |
 |---|---|---|
 | `pipeline/__init__.py` | 21 | Package-Init mit Version `0.1.0` |
-| `pipeline/config.py` | 133 | Zentrale `PipelineConfig` Dataclass (alle Hyperparameter) |
-| `pipeline/run_pipeline.py` | 747 | Orchestrator + CLI (`argparse`) + LLM-Parsing |
-| `pipeline/step1_localization.py` | ~240 | GroundingDINO + SAM Wrapper |
-| `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Open3D Point Cloud |
+| `pipeline/config.py` | ~140 | Zentrale `PipelineConfig` Dataclass |
+| `pipeline/run_pipeline.py` | ~750 | Orchestrator + CLI + LLM-Parsing |
+| `pipeline/debug_steps.py` | ~1200 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
+| `pipeline/step1_localization.py` | ~240 | GroundingDINO + SAM |
+| `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Point Cloud |
 | `pipeline/step3_clip_retrieval.py` | ~280 | CLIP Text-/Bild-Retrieval |
-| `pipeline/step4_dino_reranking.py` | ~320 | DINOv2 Re-Ranking |
-| `pipeline/step5_shape_matching.py` | 669 | **ULIP-2 Encoder** + Shape Matching |
-| `pipeline/step6_fusion.py` | ~380 | Score-Fusion (weighted_sum, RRF, intersection) |
-| `pipeline/step7_scale_estimation.py` | ~280 | BBox-/PC-basierte Skalenbestimmung |
-| `pipeline/step8_pose_estimation.py` | ~450 | FoundationPose / ICP Wrapper |
-| `pipeline/utils.py` | 142 | Hilfen: `crop_with_mask`, `load_depth_image`, `load_camera_intrinsics`, `load_object_descriptions`, `ensure_dir` |
-| `pipeline/visualization.py` | 375 | Viz für alle Schritte + Summary |
-| `pipeline/requirements.txt` | ~45 | Pipeline-spezifische Requirements |
+| `pipeline/step4_dino_reranking.py` | ~350 | DINOv2 Re-Ranking + Batch-Cache |
+| `pipeline/step5_shape_matching.py` | ~680 | ULIP-2 Encoder + NaN-Filterung |
+| `pipeline/step6_fusion.py` | ~370 | Score-Fusion (weighted_sum, RRF, intersection) |
+| `pipeline/step7_scale_estimation.py` | ~300 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
+| `pipeline/step8_pose_estimation.py` | ~460 | ICP mit initial_pose Support |
+| `pipeline/utils.py` | ~150 | Hilfsfunktionen |
+| `pipeline/visualization.py` | ~375 | Legacy-Visualization |
 
-### Modifizierte Dateien
+### Konfiguration (config.py Defaults)
 
-| Datei | Änderung |
-|---|---|
-| `docker-compose.yml` | Volume `../ULIP:/ulip`, GPU `deploy.resources.reservations` |
-| `requirements.txt` | +`ollama`, `open3d`, `easydict`, `timm`, `pyyaml_env_tag`, `termcolor` |
+```python
+# Punktwolke
+voxel_size = 0.002              # Voxel-Downsampling (2mm, ~4000 Punkte)
+depth_scale = 10000.0           # BOP depth: 16-bit PNG, 0.1mm Einheiten
+depth_trunc = 10.0              # Max Tiefe in Metern
 
-### ULIP-Patches (im ULIP-Repo, NICHT in OSCAR)
+# ULIP-2
+ulip2_backbone = "pointbert_colored"
+ulip2_num_points = 10000
+ulip2_embed_dim = 1280
 
-| Datei | Änderung |
-|---|---|
-| `ULIP/models/pointbert/dvae.py` | `from knn_cuda import KNN` → try/except mit Warning |
-| `ULIP/models/pointbert/misc.py` | `pointnet2_ops` optional + `_fps_pytorch()` Fallback |
+# Fusion
+weight_clip = 0.3
+weight_dino = 0.4
+weight_ulip = 0.3
+
+# Ollama
+ollama_host = "http://localhost:11434"
+ollama_model = "gemma3:4b"
+ollama_timeout = 30.0
+
+# Pose
+pose_method = "icp"             # FoundationPose ist NotImplemented
+```
 
 ---
 
@@ -126,69 +151,49 @@ Prompt + RGB-D Image
      │                   ▼
      │          ┌──────────────────┐
      │          │ 4. DINOv2 ReRank │ ROI → Image Embeddings
-     │          │    → Top-5       │
+     │          │    → Top-5       │ (Batch + Disk-Cache)
      │          └────────┬─────────┘
      ▼                   │
 ┌──────────┐             │
 │ 5. ULIP-2│ PC Embed    │
-│  → Top-5 │             │
+│  → Top-5 │ (NaN-safe)  │
 └────┬─────┘             │
      └───────┬───────────┘
              ▼
     ┌──────────────────┐
     │ 6. Score Fusion  │ Weighted Sum (0.3 / 0.4 / 0.3)
-    │    → Top-1       │
+    │    → Top-1       │ (NaN-safe Min-Max Norm.)
     └────────┬─────────┘
              ▼
     ┌──────────────────┐
-    │ 7. Scale Est.    │ BBox-Vergleich PC vs CAD
-    └────────┬─────────┘
+    │ 7. Scale Est.    │ RANSAC+ICP → Partial-Aware Scale
+    └────────┬─────────┘ (2 beste Achsen)
              ▼
     ┌──────────────────┐
-    │ 8. Pose Est.     │ FoundationPose / ICP → 4×4 Pose Matrix
-    └──────────────────┘
-```
-
----
-
-## Konfiguration (config.py)
-
-Wichtige Felder und Defaults:
-
-```python
-# ULIP-2
-ulip_repo_path = ""            # Im Container: "/ulip"
-ulip2_checkpoint = ""          # Im Container: "/ulip/checkpoints/ulip2_pointbert_10k.pt"
-ulip2_backbone = "pointbert_colored"
-ulip2_num_points = 10000
-ulip2_use_colors = True
-ulip2_embed_dim = 1280         # ViT-bigG-14 aligned
-
-# Fusion
-weight_clip = 0.3
-weight_dino = 0.4
-weight_ulip = 0.3
-fusion_top_k = 1
-
-# Ollama (Prompt Parsing)
-ollama_host = "http://localhost:11434"
-ollama_model = "mistral-small3.1"
-ollama_timeout = 5.0
+    │ 8. Pose Est.     │ ICP mit Coarse-Alignment als Startpose
+    └──────────────────┘ → 4×4 Pose Matrix
 ```
 
 ---
 
 ## How to Run
 
-### 1. Container starten
-
+### Container starten
 ```bash
-docker compose build          # Dependencies + Ollama installieren
+docker compose build
 docker compose run --rm -it oscar bash
 ```
 
-### 2. Pipeline ausführen (einzelnes Bild)
+### Debug-Modus (empfohlen zum Testen)
+```bash
+python -m pipeline.debug_steps \
+    --prompt "i need the blue coffee can" \
+    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+    --until_step 8
+# → debug_output/debug_01_localization.png ... debug_07_scale_pose.png
+```
 
+### Volle Pipeline
 ```bash
 python -m pipeline.run_pipeline \
     --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
@@ -199,32 +204,29 @@ python -m pipeline.run_pipeline \
     --cad_models object_database/ycbv_gso/ \
     --camera_json eval/datasets/ycbv_gso/test/000048/scene_camera.json \
     --ulip_repo /ulip \
-    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
-    --visualize
+    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
 ```
 
-### 3. OSCAR Baseline (zum Vergleich)
-
+### OSCAR Baseline (Vergleich)
 ```bash
-cd /app/object_retrieval
-python retrieval_combi_eval.py
-# → results_topk_eval_ycbv_gso/accuracy_summary_topk_15.json
+python retrieval_combi_eval.py  # → 75.95% Top-1
 ```
 
 ---
 
-## Daten-Layout (lokal, gitignored)
+## Bekannte Bugs & Workarounds
 
-| Pfad | Beschreibung | Größe |
+| Problem | Lösung | Datei |
 |---|---|---|
-| `eval/datasets/ycbv_gso/test/` | 12 BOP-Szenen (000048–000059), je rgb/, depth/, mask_visib/, scene_camera.json, scene_gt.json | ~900 Bilder |
-| `eval/datasets/mi3dor/image/test/` | MI3DOR Testbilder (21 Kategorien × 500) | 10.500 |
-| `object_database/ycbv_gso/` | 1051 CAD-Modelle (OBJ) + `descriptions_attributes.json` | ~2 GB |
-| `object_database/MI3DOR/` | 3848 CAD-Modelle + Descriptions (10/21 Kat.) | ~3 GB |
-| `object_database/housecat6d/` | 194 CAD-Modelle + Descriptions | ~500 MB |
-| `object_images/ycbv_gso/` | Gerenderte Referenzbilder (1050 × 8 Views) | ~4 GB |
-| `object_images/MI3DOR/` | Gerenderte Referenzbilder (3848 Objekte) | ~5 GB |
-| `/ulip/checkpoints/ulip2_pointbert_10k.pt` | ULIP-2 Checkpoint (PointBERT Colored, 10k) | ~402 MB |
+| `knn_cuda` nicht installierbar | try/except + Warning | `ULIP/models/pointbert/dvae.py` |
+| `pointnet2_ops` nicht installierbar | Optional import + `_fps_pytorch()` | `ULIP/models/pointbert/misc.py` |
+| PyTorch 2.6 `weights_only` Error | `torch.load(..., weights_only=False)` | `step5_shape_matching.py` |
+| `np.asarray(pcd.colors)` Overflow | `np.clip(raw, 0.0, 1.0)` | `step5_shape_matching.py` |
+| NaN in ULIP Similarity Scores | `torch.where(nan_mask, -1.0, sims)` | `step5_shape_matching.py` |
+| NaN in Fusion Min-Max Norm. | Filter NaN vor min/max | `step6_fusion.py` |
+| FoundationPose Fallback ohne initial_pose | `initial_pose` durchreichen | `step8_pose_estimation.py` |
+| Camera intrinsics KeyError | Fallback auf ersten Key | `pipeline/utils.py` |
+| Stale .pyc im Docker | `rm -rf /app/pipeline/__pycache__` nach Edits | manuell |
 
 ---
 
@@ -234,35 +236,3 @@ python retrieval_combi_eval.py
 |---|---|---|---|---|
 | YCBV_GSO | OSCAR full pipeline | **75.95%** | ~60% | GT-Masken statt GroundedSAM |
 | MI3DOR | OSCAR full pipeline | NN=77.95% | NN=89.4% | Descriptions nur 10/21 Kat. |
-
----
-
-## Bekannte Bugs & Workarounds
-
-| Problem | Lösung | Datei |
-|---|---|---|
-| `knn_cuda` nicht installierbar (GPU-Build) | try/except + Warning | `ULIP/models/pointbert/dvae.py` |
-| `pointnet2_ops` nicht installierbar | Optional import + `_fps_pytorch()` | `ULIP/models/pointbert/misc.py` |
-| PyTorch 2.6 `weights_only` Error | `torch.load(..., weights_only=False)` | `pipeline/step5_shape_matching.py` |
-| Camera intrinsics KeyError | Fallback auf ersten Key | `pipeline/utils.py` |
-| Ollama-Modell default war `llama3.2` | Korrigiert zu `mistral-small3.1` | `pipeline/config.py` |
-
----
-
-## Offene Fragen / Risiken
-
-- **End-to-End-Test** noch nicht vollständig durchgelaufen — bisher nur Einzelschritte debugged.
-- **Fusionsgewichte** (0.3/0.4/0.3) sind Initial-Werte, nicht tuned.
-- **MI3DOR Descriptions** unvollständig (10/21 Kategorien) — beeinflusst CLIP-Kanal.
-- **HouseCat6D BOP-Testdaten** nicht vorhanden — kein HouseCat6D eval möglich.
-- **GroundingDINO + SAM** noch nicht mit LangSAM getestet (Step 1 braucht Modelle).
-- **Evaluation-Script** fehlt — muss über alle Szenen loopen und Top-K Accuracy berechnen.
-
----
-
-## Key Decisions
-
-- ULIP-2 Checkpoint wird nur partiell geladen (point_encoder + pc_projection), nicht das volle Modell (~5.5 GB mit OpenCLIP).
-- Ollama läuft im selben Container, `start.sh` pullt beim Start.
-- Pure-PyTorch Fallbacks statt knn_cuda/pointnet2_ops (etwas langsamer, aber portabel).
-- Pipeline ist modular: jeder Schritt hat eigene Klasse, eigenes Result-Dataclass, eigene Tests möglich.

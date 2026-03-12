@@ -44,9 +44,9 @@ class PipelineConfig:
     camera_fy: float = 591.0    # Fokuslänge y (Pixel)
     camera_cx: float = 320.0    # Hauptpunkt x
     camera_cy: float = 240.0    # Hauptpunkt y
-    depth_scale: float = 1000.0  # Konversion: depth_raw / depth_scale = Meter
-    depth_trunc: float = 3.0     # Maximale Tiefe in Metern
-    voxel_size: float = 0.005    # Voxel-Downsampling-Größe (Meter)
+    depth_scale: float = 10000.0  # Konversion: depth_raw / depth_scale = Meter
+    depth_trunc: float = 10.0     # Maximale Tiefe in Metern
+    voxel_size: float = 0.002    # Voxel-Downsampling-Größe (Meter)
 
     # -------------------------------------------------------------------------
     # Schritt 3 – Semantische Kandidatensuche (CLIP)
@@ -105,7 +105,7 @@ class PipelineConfig:
     # -------------------------------------------------------------------------
     # MegaPose: https://github.com/megapose6d/megapose6d
     # FoundationPose: https://github.com/NVlabs/FoundationPose
-    pose_method: str = "foundationpose"  # "foundationpose" | "megapose" | "icp"
+    pose_method: str = "icp"  # "foundationpose" | "megapose" | "icp"
     icp_max_iterations: int = 50
     icp_threshold: float = 0.02          # Konvergenz-Schwelle (Meter)
 

@@ -194,3 +194,194 @@ TODOs
 - Generate missing MI3DOR descriptions for 11 categories (2031 models).
 - Obtain HouseCat6D BOP test scenes from dataset authors.
 - Begin exp/ulip2 shape-aware retrieval experiments.
+
+
+## 2026-03-12 Pipeline Debugging, ULIP NaN Fix, Batch Cache, ICP Alignment
+
+Goal
+- Fix all runtime bugs in the 8-step pipeline after initial end-to-end test.
+- Improve DINOv2 speed (Step 4) from serial encoding to batch + disk cache.
+- Fix ULIP-2 NaN scores (Step 5) caused by Open3D color overflow.
+- Fix score fusion NaN propagation (Step 6).
+- Fix ICP pose estimation not using coarse alignment from Step 7.
+- Add 3D wireframe overlay for debug visualization (Step 7+8).
+
+Changes
+
+### Modified: pipeline/step4_dino_reranking.py (rewritten)
+- Replaced serial 1-by-1 DINOv2 encoding with batch encoding (32 images/pass).
+- Added `.pt` disk cache keyed by model name + fingerprint (file count + newest mtime).
+- `CACHE_VERSION = 1`, `BATCH_SIZE = 32`.
+- First run: ~5 min for 9,459 reference images. Subsequent runs: instant from cache.
+- Cache file: `.dino_cache_{model}_{fingerprint}.pt`.
+
+### Modified: pipeline/step5_shape_matching.py
+- Fixed overflow bug: `np.asarray(pcd.colors, dtype=np.float32)` → `np.clip(raw, 0.0, 1.0).astype(np.float32)`. Open3D colors can exceed [0,1] range after processing, causing float32 overflow → inf → NaN embeddings.
+- Added NaN filtering in `match()`: `torch.isnan(sims)` detected, replaced with -1.0 before `topk()`. Previously NaN rose to top of rankings.
+
+### Modified: pipeline/step6_fusion.py
+- Made `_minmax()` NaN-safe: filters `NaN` values before computing min/max, returns 0.0 for NaN entries.
+- Added NaN guard in ULIP score collection: skips `c.shape_score` if NaN.
+
+### Modified: pipeline/step7_scale_estimation.py (rewritten previously)
+- Two-stage approach: `_coarse_align()` (RANSAC + ICP) → Partial-Aware Scale (2 best-visible axes).
+- Returns `ScaleEstimationResult` with `coarse_alignment` (4×4 matrix) and `visible_axes`.
+- fitness=0.63–0.90, scale=1.30–1.35, conf=0.63–0.90 depending on voxel size.
+
+### Modified: pipeline/step8_pose_estimation.py
+- Added `initial_pose` parameter to `_estimate_foundationpose()` signature.
+- Fixed FoundationPose fallback: passes `initial_pose` to `_estimate_icp()` (was missing).
+- Fixed main `estimate()`: passes `initial_pose` through when calling FoundationPose path.
+- ICP now uses coarse alignment from Step 7 as initial transform, skipping redundant RANSAC.
+
+### Modified: pipeline/config.py
+- Changed `pose_method` default from `"foundationpose"` to `"icp"` (FoundationPose is NotImplemented, always fell back to ICP without initial_pose).
+- Changed `voxel_size` from `0.005` (5mm, ~810 pts) to `0.002` (2mm, ~4200 pts) for denser point clouds.
+- Changed `ollama_model` from `"mistral-small3.1"` to `"gemma3:4b"`.
+- Changed `ollama_timeout` from `5.0` to `30.0`.
+- Changed `depth_scale` to `10000.0` and `depth_trunc` to `10.0`.
+
+### Modified: pipeline/debug_steps.py (~1200 lines)
+- Added `_project_cad_wireframe()`: projects CAD mesh edges onto scene image using pose matrix + camera intrinsics (trimesh).
+- Updated `save_debug_step7_8()`: adds `pose_matrix`, `cad_model_path`, `cam` parameters for 3D wireframe overlay (falls back to thumbnail if not available).
+- Fixed wireframe projection: inverted pose matrix (ICP returns camera→CAD, wireframe needs CAD→camera).
+- Fixed wireframe scaling: use `vertex_mean` (matching Open3D `get_center()`) instead of `bbox_center`.
+- Pipeline calls pass `sr.coarse_alignment` as `initial_pose` to Step 8.
+
+### Installed in Docker: trimesh
+- `pip install trimesh` in container for 3D wireframe overlay rendering.
+
+Bugs Fixed
+- NaN ULIP scores (foam_brick at #1 with NaN): Open3D pcd.colors overflow → np.clip fix.
+- NaN in topk rankings: replaced NaN with -1.0 before torch.topk().
+- NaN in fusion normalization: _minmax() now filters NaN values.
+- FoundationPose fallback not passing initial_pose: added parameter forwarding.
+- Stale .pyc files in Docker: cleared `/app/pipeline/__pycache__` (owned by root).
+- Wireframe projected to wrong position: pose matrix needed inversion (np.linalg.inv).
+- Wireframe scaling mismatch: bbox_center vs vertex_mean consistency fix.
+
+Pipeline Test Results (2026-03-12, scene 000048/000001, "i need the blue coffee can")
+- Step 1: Localization — confidence 0.847, BBox [207, 141, 335, 328]
+- Step 2: Point Cloud — 4,201 points (2mm voxel), BBox [0.094, 0.142, 0.062]m
+- Step 3: CLIP — #1 master_chef_can 0.4702
+- Step 4: DINOv2 — #1 master_chef_can 0.6447 (from cache, instant)
+- Step 5: ULIP-2 — #1 foam_brick 0.1977 (weak but no NaN; partial view limitation)
+- Step 6: Fusion — master_chef_can fused=0.8473 (CLIP+DINO compensate weak ULIP)
+- Step 7: Scale — factor=1.2968, conf=0.63
+- Step 8: ICP — fitness=0.9895, RMSE=0.007m (using coarse alignment as start)
+
+Files Touched
+- pipeline/config.py (modified)
+- pipeline/debug_steps.py (heavily modified)
+- pipeline/step4_dino_reranking.py (rewritten)
+- pipeline/step5_shape_matching.py (modified)
+- pipeline/step6_fusion.py (modified)
+- pipeline/step7_scale_estimation.py (rewritten previously)
+- pipeline/step8_pose_estimation.py (modified)
+- AI_HANDOFF.md (rewritten)
+- docs/AI_LOG.md (updated)
+- docs/DECISIONS.md (updated)
+- Readme.md (updated)
+
+TODOs
+- Create evaluation script for ULIP-2-augmented retrieval accuracy across all BOP scenes.
+- Evaluate on MI3DOR dataset (shape-focused, ULIP-2 should help).
+- Tune fusion weights and voxel size via grid search.
+- Investigate ULIP-2 performance gap (partial vs complete point clouds).
+- Generate missing MI3DOR descriptions (11/21 categories).
+- Obtain HouseCat6D BOP test scenes.
+
+## 2026-03-12 Pipeline Debugging, ULIP NaN Fix, Batch Cache, ICP Alignment
+
+Goal
+- Fix all runtime bugs in the 8-step pipeline after initial end-to-end test.
+- Improve DINOv2 speed (Step 4) from serial encoding to batch + disk cache.
+- Fix ULIP-2 NaN scores (Step 5) caused by Open3D color overflow.
+- Fix score fusion NaN propagation (Step 6).
+- Fix ICP pose estimation not using coarse alignment from Step 7.
+- Add 3D wireframe overlay for debug visualization (Step 7+8).
+
+Changes
+
+### Modified: pipeline/step4_dino_reranking.py (rewritten)
+- Replaced serial 1-by-1 DINOv2 encoding with batch encoding (32 images/pass).
+- Added `.pt` disk cache keyed by model name + fingerprint (file count + newest mtime).
+- `CACHE_VERSION = 1`, `BATCH_SIZE = 32`.
+- First run: ~5 min for 9,459 reference images. Subsequent runs: instant from cache.
+- Cache file: `.dino_cache_{model}_{fingerprint}.pt`.
+
+### Modified: pipeline/step5_shape_matching.py
+- Fixed overflow bug: `np.asarray(pcd.colors, dtype=np.float32)` → `np.clip(raw, 0.0, 1.0).astype(np.float32)`. Open3D colors can exceed [0,1] range after processing, causing float32 overflow → inf → NaN embeddings.
+- Added NaN filtering in `match()`: `torch.isnan(sims)` detected, replaced with -1.0 before `topk()`. Previously NaN rose to top of rankings.
+
+### Modified: pipeline/step6_fusion.py
+- Made `_minmax()` NaN-safe: filters `NaN` values before computing min/max, returns 0.0 for NaN entries.
+- Added NaN guard in ULIP score collection: skips `c.shape_score` if NaN.
+
+### Modified: pipeline/step7_scale_estimation.py (rewritten previously)
+- Two-stage approach: `_coarse_align()` (RANSAC + ICP) → Partial-Aware Scale (2 best-visible axes).
+- Returns `ScaleEstimationResult` with `coarse_alignment` (4×4 matrix) and `visible_axes`.
+- fitness=0.63–0.90, scale=1.30–1.35, conf=0.63–0.90 depending on voxel size.
+
+### Modified: pipeline/step8_pose_estimation.py
+- Added `initial_pose` parameter to `_estimate_foundationpose()` signature.
+- Fixed FoundationPose fallback: passes `initial_pose` to `_estimate_icp()` (was missing).
+- Fixed main `estimate()`: passes `initial_pose` through when calling FoundationPose path.
+- ICP now uses coarse alignment from Step 7 as initial transform, skipping redundant RANSAC.
+
+### Modified: pipeline/config.py
+- Changed `pose_method` default from `"foundationpose"` to `"icp"` (FoundationPose is NotImplemented, always fell back to ICP without initial_pose).
+- Changed `voxel_size` from `0.005` (5mm, ~810 pts) to `0.002` (2mm, ~4200 pts) for denser point clouds.
+- Changed `ollama_model` from `"mistral-small3.1"` to `"gemma3:4b"`.
+- Changed `ollama_timeout` from `5.0` to `30.0`.
+- Changed `depth_scale` to `10000.0` and `depth_trunc` to `10.0`.
+
+### Modified: pipeline/debug_steps.py (~1200 lines)
+- Added `_project_cad_wireframe()`: projects CAD mesh edges onto scene image using pose matrix + camera intrinsics (trimesh).
+- Updated `save_debug_step7_8()`: adds `pose_matrix`, `cad_model_path`, `cam` parameters for 3D wireframe overlay (falls back to thumbnail if not available).
+- Fixed wireframe projection: inverted pose matrix (ICP returns camera→CAD, wireframe needs CAD→camera).
+- Fixed wireframe scaling: use `vertex_mean` (matching Open3D `get_center()`) instead of `bbox_center`.
+- Pipeline calls pass `sr.coarse_alignment` as `initial_pose` to Step 8.
+
+### Installed in Docker: trimesh
+- `pip install trimesh` in container for 3D wireframe overlay rendering.
+
+Bugs Fixed
+- NaN ULIP scores (foam_brick at #1 with NaN): Open3D pcd.colors overflow → np.clip fix.
+- NaN in topk rankings: replaced NaN with -1.0 before torch.topk().
+- NaN in fusion normalization: _minmax() now filters NaN values.
+- FoundationPose fallback not passing initial_pose: added parameter forwarding.
+- Stale .pyc files in Docker: cleared `/app/pipeline/__pycache__` (owned by root).
+- Wireframe projected to wrong position: pose matrix needed inversion (np.linalg.inv).
+- Wireframe scaling mismatch: bbox_center vs vertex_mean consistency fix.
+
+Pipeline Test Results (2026-03-12, scene 000048/000001, "i need the blue coffee can")
+- Step 1: Localization — confidence 0.847, BBox [207, 141, 335, 328]
+- Step 2: Point Cloud — 4,201 points (2mm voxel), BBox [0.094, 0.142, 0.062]m
+- Step 3: CLIP — #1 master_chef_can 0.4702
+- Step 4: DINOv2 — #1 master_chef_can 0.6447 (from cache, instant)
+- Step 5: ULIP-2 — #1 foam_brick 0.1977 (weak but no NaN; partial view limitation)
+- Step 6: Fusion — master_chef_can fused=0.8473 (CLIP+DINO compensate weak ULIP)
+- Step 7: Scale — factor=1.2968, conf=0.63
+- Step 8: ICP — fitness=0.9895, RMSE=0.007m (using coarse alignment as start)
+
+Files Touched
+- pipeline/config.py (modified)
+- pipeline/debug_steps.py (heavily modified)
+- pipeline/step4_dino_reranking.py (rewritten)
+- pipeline/step5_shape_matching.py (modified)
+- pipeline/step6_fusion.py (modified)
+- pipeline/step7_scale_estimation.py (rewritten previously)
+- pipeline/step8_pose_estimation.py (modified)
+- AI_HANDOFF.md (rewritten)
+- docs/AI_LOG.md (updated)
+- docs/DECISIONS.md (updated)
+- Readme.md (updated)
+
+TODOs
+- Create evaluation script for ULIP-2-augmented retrieval accuracy across all BOP scenes.
+- Evaluate on MI3DOR dataset (shape-focused, ULIP-2 should help).
+- Tune fusion weights and voxel size via grid search.
+- Investigate ULIP-2 performance gap (partial vs complete point clouds).
+- Generate missing MI3DOR descriptions (11/21 categories).
+- Obtain HouseCat6D BOP test scenes.

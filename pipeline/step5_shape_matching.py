@@ -198,7 +198,8 @@ def sample_pointcloud_from_mesh(
         points = np.asarray(pcd.points, dtype=np.float32)
 
         if with_colors and pcd.has_colors():
-            colors = np.asarray(pcd.colors, dtype=np.float32)
+            raw = np.asarray(pcd.colors)
+            colors = np.clip(raw, 0.0, 1.0).astype(np.float32)
 
         return points, colors
 
@@ -642,6 +643,15 @@ class ShapeMatcher:
         ).to(self.device)  # (K, embed_dim)
 
         sims = (query_emb @ cad_embs.T).squeeze(0)  # (K,)
+
+        # --- NaN-Scores filtern (z.B. durch fehlerhafte Eingabedaten) ---
+        nan_mask = torch.isnan(sims)
+        if nan_mask.any():
+            logger.warning(
+                "%d von %d CAD-Embeddings haben NaN-Similarity (werden ignoriert).",
+                nan_mask.sum().item(), len(sims),
+            )
+            sims = torch.where(nan_mask, torch.tensor(-1.0, device=sims.device), sims)
 
         # --- Top-K ---
         k = min(top_k, len(obj_ids))

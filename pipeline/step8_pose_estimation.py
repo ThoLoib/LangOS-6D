@@ -119,6 +119,7 @@ class PoseEstimator:
         cx: Optional[float] = None,
         cy: Optional[float] = None,
         method: Optional[str] = None,
+        initial_pose: Optional[np.ndarray] = None,
     ) -> PoseEstimationResult:
         """Schätzt die 6D-Pose des Objekts.
 
@@ -142,7 +143,7 @@ class PoseEstimator:
         if method == "foundationpose":
             return self._estimate_foundationpose(
                 rgb_image, depth_image, mask, cad_model_path,
-                scale_factor, fx, fy, cx, cy,
+                scale_factor, fx, fy, cx, cy, initial_pose,
             )
         elif method == "megapose":
             return self._estimate_megapose(
@@ -151,7 +152,7 @@ class PoseEstimator:
             )
         elif method == "icp":
             return self._estimate_icp(
-                observed_pc, cad_model_path, scale_factor,
+                observed_pc, cad_model_path, scale_factor, initial_pose,
             )
         else:
             raise ValueError(f"Unbekannte Pose-Methode: {method}")
@@ -171,6 +172,7 @@ class PoseEstimator:
         fy: Optional[float],
         cx: Optional[float],
         cy: Optional[float],
+        initial_pose: Optional[np.ndarray] = None,
     ) -> PoseEstimationResult:
         """6D Pose via FoundationPose.
 
@@ -214,7 +216,7 @@ class PoseEstimator:
                     rgb, depth, mask, fx, fy, cx, cy
                 )
                 if observed_pc:
-                    return self._estimate_icp(observed_pc, cad_path, scale)
+                    return self._estimate_icp(observed_pc, cad_path, scale, initial_pose)
 
             return self._identity_pose(cad_path, scale, "foundationpose_fallback")
 
@@ -274,6 +276,7 @@ class PoseEstimator:
         observed_pc: Optional[PointCloudResult],
         cad_path: str,
         scale: float,
+        initial_pose: Optional[np.ndarray] = None,
     ) -> PoseEstimationResult:
         """6D Pose via ICP-Registrierung.
 
@@ -355,28 +358,34 @@ class PoseEstimator:
             o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100),
         )
 
-        # --- RANSAC Global Registration ---
-        logger.info("RANSAC Global Registration...")
-        ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
-            source_down, target_down,
-            source_fpfh, target_fpfh,
-            mutual_filter=True,
-            max_correspondence_distance=voxel_size * 1.5,
-            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
-            ransac_n=3,
-            checkers=[
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(voxel_size * 1.5),
-            ],
-            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999),
-        )
+        # --- Initiale Transformation ---
+        if initial_pose is not None:
+            logger.info("Verwende Coarse-Alignment aus Schritt 7 als Startpose.")
+            init_transform = initial_pose
+        else:
+            # --- RANSAC Global Registration ---
+            logger.info("RANSAC Global Registration...")
+            ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+                source_down, target_down,
+                source_fpfh, target_fpfh,
+                mutual_filter=True,
+                max_correspondence_distance=voxel_size * 1.5,
+                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+                ransac_n=3,
+                checkers=[
+                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(voxel_size * 1.5),
+                ],
+                criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999),
+            )
+            init_transform = ransac_result.transformation
 
         # --- ICP Refinement ---
         logger.info("ICP Point-to-Plane Verfeinerung...")
         icp_result = o3d.pipelines.registration.registration_icp(
             source, cad_pcd,
             max_correspondence_distance=self.config.icp_threshold,
-            init=ransac_result.transformation,
+            init=init_transform,
             estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
             criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
                 max_iteration=self.config.icp_max_iterations

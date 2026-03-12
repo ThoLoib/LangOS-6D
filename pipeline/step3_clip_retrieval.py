@@ -205,7 +205,7 @@ class CLIPRetriever:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         text_query: Optional[str] = None,
-        text_query_weight: float = 0.3,
+        text_query_weight: float = 0.0,
     ) -> CLIPRetrievalResult:
         """Findet die Top-K semantisch ähnlichsten CAD-Modelle.
 
@@ -216,7 +216,7 @@ class CLIPRetriever:
             text_query:         Optionaler Text-Query (z.B. "yellow mustard bottle").
                                 Falls angegeben, wird Image- und Text-Ähnlichkeit gemischt:
                                 ``score = (1-w)·img_sim + w·text_sim``
-            text_query_weight:  Gewicht des Text-Querys (default: 0.3).
+            text_query_weight:  Gewicht des Text-Querys (default: 0.0).
 
         Returns:
             CLIPRetrievalResult mit sortierten Kandidaten.

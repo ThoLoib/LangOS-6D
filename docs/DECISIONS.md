@@ -94,3 +94,156 @@ Rationale
 
 Alternatives Considered
 - Download ycbv_test_bop19 and run all baselines — deferred, not critical for thesis progress.
+
+
+## 2026-03-12 default pose_method to icp
+
+Decision
+- Changed `pose_method` default from `"foundationpose"` to `"icp"` in config.py.
+
+Rationale
+- FoundationPose is marked `NotImplementedError`. It always fell back to ICP anyway, but the fallback path did not forward `initial_pose` from Step 7's coarse alignment. Using ICP directly ensures the coarse alignment is used as the initial transform.
+
+Alternatives Considered
+- Implement FoundationPose wrapper — deferred, not critical for thesis prototype.
+- Keep foundationpose default and fix the fallback — done as well, but direct ICP is cleaner.
+
+## 2026-03-12 reduce voxel_size from 5mm to 2mm
+
+Decision
+- Changed `voxel_size` from `0.005` to `0.002` in config.py.
+
+Rationale
+- At 5mm, the observed point cloud had only ~810 points — too sparse for reliable ULIP-2 shape matching (expects 10,000 points). At 2mm, ~4,200 points are retained from a single depth view, providing much better surface coverage.
+- Tradeoff: FPFH computation and ICP are slightly slower with more points, but runtime is still under 1 second.
+
+Alternatives Considered
+- 0.001m (1mm, ~10k+ points): too dense, slower without significant quality gain.
+- 0.003m (3mm, ~2-3k points): considered as middle ground, 2mm chosen for better ULIP coverage.
+
+## 2026-03-12 DINOv2 batch encoding with disk cache
+
+Decision
+- Rewrote step4_dino_reranking.py with batch encoding (32 images/forward pass) and `.pt` disk cache.
+
+Rationale
+- Serial encoding of 9,459 reference images took ~45 minutes (1 forward pass per image). Batch encoding reduces this to ~5 minutes. Disk cache makes subsequent runs instant.
+- Cache keyed by model name + fingerprint (hash of file count + newest modification time) to auto-invalidate when reference images change.
+
+Alternatives Considered
+- Pre-compute embeddings offline and store as a separate file — less flexible, manual step.
+- Use FAISS index — overkill for ~10k vectors, simple cosine similarity is fast enough.
+
+## 2026-03-12 NaN handling in ULIP and fusion
+
+Decision
+- Added explicit NaN detection and replacement throughout Step 5 and Step 6.
+
+Rationale
+- Open3D `pcd.colors` can produce values outside [0,1] (e.g. from depth-to-color mapping), causing float32 overflow → inf → NaN embeddings → NaN cosine similarity. NaN silently propagated through topk() (NaN > any number in PyTorch) and corrupted fusion normalization.
+- Fix: clip colors to [0,1], replace NaN similarities with -1.0, skip NaN in min-max normalization.
+
+Alternatives Considered
+- Discard objects with NaN entirely — too aggressive, could lose valid partial matches.
+- Use nanmean/nanmin — less explicit, harder to debug.
+
+## 2026-03-12 switch LLM to gemma3:4b
+
+Decision
+- Changed `ollama_model` from `"mistral-small3.1"` to `"gemma3:4b"`.
+
+Rationale
+- gemma3:4b fits in 6GB VRAM alongside the other models (GroundingDINO, SAM, CLIP, DINOv2, ULIP-2). Responds within 5-10 seconds for prompt parsing.
+- mistral-small3.1 required more VRAM and was slower on the RTX 4050 Laptop GPU.
+
+Alternatives Considered
+- CPU-only inference for LLM — too slow (30+ seconds).
+- Skip LLM entirely, use only heuristic parser — less robust for complex prompts.
+
+## 2026-03-12 wireframe overlay via trimesh
+
+Decision
+- Installed trimesh in Docker for 3D wireframe overlay in debug visualization.
+
+Rationale
+- The debug image Step 7+8 previously showed a 2D thumbnail pasted onto the scene, which didn't convey pose orientation. Projecting CAD mesh edges using the estimated pose + camera intrinsics gives visual verification of alignment quality.
+
+Alternatives Considered
+- Use Open3D offscreen rendering — harder to integrate, requires display server.
+- Use matplotlib 3D projection — less precise, no mesh topology awareness.
+
+## 2026-03-12 default pose_method to icp
+
+Decision
+- Changed `pose_method` default from `"foundationpose"` to `"icp"` in config.py.
+
+Rationale
+- FoundationPose is marked `NotImplementedError`. It always fell back to ICP anyway, but the fallback path did not forward `initial_pose` from Step 7's coarse alignment. Using ICP directly ensures the coarse alignment is used as the initial transform.
+
+Alternatives Considered
+- Implement FoundationPose wrapper — deferred, not critical for thesis prototype.
+- Keep foundationpose default and fix the fallback — done as well, but direct ICP is cleaner.
+
+## 2026-03-12 reduce voxel_size from 5mm to 2mm
+
+Decision
+- Changed `voxel_size` from `0.005` to `0.002` in config.py.
+
+Rationale
+- At 5mm, the observed point cloud had only ~810 points — too sparse for reliable ULIP-2 shape matching (expects 10,000 points). At 2mm, ~4,200 points are retained from a single depth view, providing much better surface coverage.
+- Tradeoff: FPFH computation and ICP are slightly slower with more points, but runtime is still under 1 second.
+
+Alternatives Considered
+- 0.001m (1mm, ~10k+ points): too dense, slower without significant quality gain.
+- 0.003m (3mm, ~2-3k points): considered as middle ground, 2mm chosen for better ULIP coverage.
+
+## 2026-03-12 DINOv2 batch encoding with disk cache
+
+Decision
+- Rewrote step4_dino_reranking.py with batch encoding (32 images/forward pass) and `.pt` disk cache.
+
+Rationale
+- Serial encoding of 9,459 reference images took ~45 minutes (1 forward pass per image). Batch encoding reduces this to ~5 minutes. Disk cache makes subsequent runs instant.
+- Cache keyed by model name + fingerprint (hash of file count + newest modification time) to auto-invalidate when reference images change.
+
+Alternatives Considered
+- Pre-compute embeddings offline and store as a separate file — less flexible, manual step.
+- Use FAISS index — overkill for ~10k vectors, simple cosine similarity is fast enough.
+
+## 2026-03-12 NaN handling in ULIP and fusion
+
+Decision
+- Added explicit NaN detection and replacement throughout Step 5 and Step 6.
+
+Rationale
+- Open3D `pcd.colors` can produce values outside [0,1] (e.g. from depth-to-color mapping), causing float32 overflow → inf → NaN embeddings → NaN cosine similarity. NaN silently propagated through topk() (NaN > any number in PyTorch) and corrupted fusion normalization.
+- Fix: clip colors to [0,1], replace NaN similarities with -1.0, skip NaN in min-max normalization.
+
+Alternatives Considered
+- Discard objects with NaN entirely — too aggressive, could lose valid partial matches.
+- Use nanmean/nanmin — less explicit, harder to debug.
+
+## 2026-03-12 switch LLM to gemma3:4b
+
+Decision
+- Changed `ollama_model` from `"mistral-small3.1"` to `"gemma3:4b"`.
+
+Rationale
+- gemma3:4b fits in 6GB VRAM alongside the other models (GroundingDINO, SAM, CLIP, DINOv2, ULIP-2). Responds within 5-10 seconds for prompt parsing.
+- mistral-small3.1 required more VRAM and was slower on the RTX 4050 Laptop GPU.
+
+Alternatives Considered
+- CPU-only inference for LLM — too slow (30+ seconds).
+- Skip LLM entirely, use only heuristic parser — less robust for complex prompts.
+
+## 2026-03-12 wireframe overlay via trimesh
+
+Decision
+- Installed trimesh in Docker for 3D wireframe overlay in debug visualization.
+
+Rationale
+- The debug image Step 7+8 previously showed a 2D thumbnail pasted onto the scene, which didn't convey pose orientation. Projecting CAD mesh edges using the estimated pose + camera intrinsics gives visual verification of alignment quality.
+
+Alternatives Considered
+- Use Open3D offscreen rendering — harder to integrate, requires display server.
+- Use matplotlib 3D projection — less precise, no mesh topology awareness.
