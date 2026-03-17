@@ -666,29 +666,50 @@ class ShapeMatcher:
                 if ext not in allowed_extensions:
                     continue
                 obj_id = os.path.splitext(entry)[0]
-                self._encode_and_cache(obj_id, entry_path)
-                count += 1
+                if self._encode_and_cache(obj_id, entry_path):
+                    count += 1
                 continue
 
             # Fall 2: Unterordner mit Mesh-File
             if os.path.isdir(entry_path):
                 mesh_file = self._find_mesh_in_dir(entry_path, allowed_extensions)
                 if mesh_file:
-                    self._encode_and_cache(entry, mesh_file)
-                    count += 1
+                    if self._encode_and_cache(entry, mesh_file):
+                        count += 1
 
         logger.info(f"CAD-Modell-Embeddings berechnet: {count} Modelle.")
 
     def _find_mesh_in_dir(
         self, dir_path: str, extensions: Tuple[str, ...]
     ) -> Optional[str]:
-        """Findet die erste Mesh-Datei in einem Ordner."""
-        for fname in os.listdir(dir_path):
-            if os.path.splitext(fname)[1].lower() in extensions:
-                return os.path.join(dir_path, fname)
-        return None
+        """Findet rekursiv eine passende Mesh-Datei in einem Objektordner.
 
-    def _encode_and_cache(self, obj_id: str, mesh_path: str) -> None:
+        Bevorzugt gängige Dateinamen im `meshes/`-Unterordner (GSO/YCBV-GSO),
+        fällt sonst auf die erste gefundene Mesh-Datei zurück.
+        """
+        preferred_names = ("textured_simple.obj", "model.obj", "mesh.obj")
+        candidates: List[str] = []
+
+        for root, _, files in os.walk(dir_path):
+            for fname in files:
+                if os.path.splitext(fname)[1].lower() in extensions:
+                    candidates.append(os.path.join(root, fname))
+
+        if not candidates:
+            return None
+
+        def sort_key(path: str) -> Tuple[int, int, str]:
+            base = os.path.basename(path).lower()
+            in_meshes = 0 if os.path.basename(os.path.dirname(path)).lower() == "meshes" else 1
+            try:
+                pref_idx = preferred_names.index(base)
+            except ValueError:
+                pref_idx = len(preferred_names)
+            return (in_meshes, pref_idx, path)
+
+        return sorted(candidates, key=sort_key)[0]
+
+    def _encode_and_cache(self, obj_id: str, mesh_path: str) -> bool:
         """Sampelt Punkte von einem Mesh und berechnet das ULIP-2-Embedding."""
         try:
             use_colors = (
@@ -703,8 +724,10 @@ class ShapeMatcher:
             embedding = self.encode_pointcloud(points, colors=colors)
             self._cad_embeddings[obj_id] = embedding.squeeze(0)
             self._cad_paths[obj_id] = mesh_path
+            return True
         except Exception as e:
             logger.warning(f"Fehler bei CAD-Modell {obj_id}: {e}")
+            return False
 
     def _load_image_encoder(self) -> None:
         """Lädt den ULIP2ImageEncoder (lazy init)."""

@@ -1195,7 +1195,7 @@ Beispiele:
     _RGB   = "eval/datasets/ycbv_gso/test/000048/rgb/000001.png"
     _DEPTH = "eval/datasets/ycbv_gso/test/000048/depth/000001.png"
     _CAM   = "eval/datasets/ycbv_gso/test/000048/scene_camera.json"
-    _DESC  = "object_database/ycbv_gso/descriptions_attributes.json"
+    _DESC  = "object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json"
     _REFS  = "object_images/ycbv_gso/"
     _CADS  = "object_database/ycbv_gso/"
     # ─────────────────────────────────────────────────────────────────────────
