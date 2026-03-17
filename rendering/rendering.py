@@ -17,31 +17,63 @@ import argparse
 #from decimal import Decimal, getcontext
 #getcontext().prec = 28  # Set the precision for the decimal calculations.
  
-object_folder = '../object_database/modelnet10_output'
-object_images = '../object_images/modelnet10/' 
-allowed_exts = ['.glb', '.obj'] #, '.gltf', '.obj']
+object_folder = '../object_database/ycbv_gso'
+object_images = '../object_images/ycbv_gso/'
+allowed_exts = ['.glb', '.obj']
+overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
+render_only = os.environ.get('RENDER_ONLY', '').strip()
 
-model_files = []
 
-# Iterate through all files in object_folder
-for fname in os.listdir(object_folder):
-    file_path = os.path.join(object_folder, fname)
-    ext = os.path.splitext(fname)[1].lower()
-    if os.path.isfile(file_path) and ext in allowed_exts:
-        model_name = os.path.splitext(fname)[0]  # e.g., "bed_0001"
-        model_files.append((model_name, file_path))
+def infer_model_id(file_path):
+    norm = os.path.normpath(file_path)
+    parts = norm.split(os.sep)
+    if len(parts) >= 3 and parts[-2] == 'meshes':
+        return parts[-3]  # .../<object_id>/meshes/model.obj
+    if len(parts) >= 2:
+        return parts[-2]  # .../<object_id>/textured_simple.obj
+    return os.path.splitext(os.path.basename(file_path))[0]
 
-# Check for corresponding folders in object_images
-missing_folders = []
-for model_name, filename in model_files:
-    folder_path = os.path.join(object_images, model_name)
-    if not os.path.isdir(folder_path):
-        missing_folders.append((model_name, filename))
 
-print(f"📦 Total models found: {len(model_files)}")
-print(f"❌ Models without image folders: {len(missing_folders)}")
-for mid, fname in missing_folders:
-    print(f" - {fname} (missing folder: {mid})")
+def file_priority(fname):
+    base = fname.lower()
+    if base == 'textured_simple.obj':
+        return 0
+    if base == 'model.obj':
+        return 1
+    if base == 'textured.obj':
+        return 2
+    if base.endswith('.glb'):
+        return 3
+    return 9
+
+
+model_choice = {}
+for dirpath, _, files in os.walk(object_folder):
+    for fname in files:
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in allowed_exts:
+            continue
+        file_path = os.path.join(dirpath, fname)
+        model_id = infer_model_id(file_path)
+        prio = file_priority(fname)
+        current = model_choice.get(model_id)
+        if current is None or prio < current[0]:
+            model_choice[model_id] = (prio, file_path)
+
+model_files = sorted((mid, fp) for mid, (_, fp) in model_choice.items())
+
+pending_models = []
+for model_id, filename in model_files:
+    if render_only and model_id != render_only:
+        continue
+    folder_path = os.path.join(object_images, model_id)
+    if overwrite_existing or not os.path.isdir(folder_path):
+        pending_models.append((model_id, filename))
+
+print(f"Total models found: {len(model_files)}")
+print(f"Models to render now: {len(pending_models)} (overwrite_existing={overwrite_existing})")
+for mid, fname in pending_models[:20]:
+    print(f" - {fname} (output folder: {mid})")
 
 # Final cleanup (optional)
 #bpy.ops.wm.quit_blender()
@@ -281,7 +313,7 @@ def clear_scene():
 # Create new folder structure
 os.makedirs(object_images, exist_ok=True)
 
-for model_id, filename in missing_folders:
+for model_id, filename in pending_models:
     #camera = create_camera()  #
     # Create a folder for each model
     model_dir = os.path.join(object_images, model_id)
@@ -321,7 +353,7 @@ for model_id, filename in missing_folders:
     elevation_factor = 0.2
 
     camera = bpy.context.scene.camera
-    name = filename.split('/')[-1].split('.')[0]
+    name = model_id
     for camera_opt in range(-1, 8):
         # use transparent background to adjust camera distance
         if camera_opt == -1:
@@ -329,7 +361,7 @@ for model_id, filename in missing_folders:
             bpy.context.scene.render.film_transparent = True
             camera.location = Vector((distance * ratio, - distance * ratio, distance * elevation_factor * ratio))
         elif camera_opt == 0:
-            img_path = os.path.join(model_dir, '%s_bg.png'%(filename.split('/')[-1].split('.')[0]))
+            img_path = os.path.join(model_dir, f'{name}_bg.png')
             img = Image.open(img_path)
             img_array = np.array(img)
             if np.sum(img_array<10) > 1020000:
@@ -383,14 +415,14 @@ for model_id, filename in missing_folders:
         bpy.context.scene.render.resolution_y = 512
 
         if camera_opt == -1:
-            file_path = os.path.join(model_dir, '%s_bg.png'%(filename.split('/')[-1].split('.')[0]))
+            file_path = os.path.join(model_dir, f'{name}_bg.png')
             bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path):
+            if os.path.exists(file_path) and not overwrite_existing:
                continue
         else:
-            file_path = os.path.join(model_dir, '%s_%d.png'%(filename.split('/')[-1].split('.')[0], camera_opt))
+            file_path = os.path.join(model_dir, f'{name}_{camera_opt}.png')
             bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path):
+            if os.path.exists(file_path) and not overwrite_existing:
                continue
 
         bpy.ops.render.render(write_still=True)
@@ -398,7 +430,7 @@ for model_id, filename in missing_folders:
         if camera_opt>=0:
             RT = get_3x4_RT_matrix_from_blender(camera)
             
-            model_name = os.path.splitext(os.path.basename(filename))[0]
+            model_name = model_id
             RT_path = os.path.join(model_dir, f"{model_name}_view{camera_opt}_CamMatrix.npy")
             os.makedirs(model_dir, exist_ok=True)
             np.save(RT_path, RT)
