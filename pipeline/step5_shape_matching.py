@@ -241,6 +241,117 @@ class ULIP2PointEncoder(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# ULIP-2 Image Encoder (OpenCLIP ViT-bigG-14) für Cross-Modal Retrieval
+# ---------------------------------------------------------------------------
+
+class ULIP2ImageEncoder:
+    """OpenCLIP ViT-bigG-14 Image Encoder für ULIP-2 Cross-Modal Retrieval.
+
+    ULIP-2 friert den Image-Encoder während des Trainings ein, deshalb
+    sind vanilla OpenCLIP ViT-bigG-14 Gewichte (laion2b_s39b_b160k) identisch
+    mit dem ULIP-2 Image-Branch — kein separater Download nötig.
+
+    Cross-Modal: image_embedding und pc_embedding liegen im selben 1280-dim
+    Raum → Cosine-Similarity direkt vergleichbar.
+
+    Ref: "ULIP-2: Towards Scalable Multimodal Pre-training for 3D Understanding"
+         Xue et al., CVPR 2024
+    """
+
+    def __init__(self, device: str = "cpu", checkpoint_path: Optional[str] = None):
+        self.device = device
+        self._checkpoint_path = checkpoint_path
+        self.model: Optional[nn.Module] = None
+        self.preprocess = None
+
+    def load(self) -> None:
+        """Lädt OpenCLIP ViT-bigG-14 (lazy init)."""
+        if self.model is not None:
+            return
+
+        try:
+            import open_clip  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "open_clip nicht installiert.\n"
+                "  pip install open-clip-torch"
+            )
+
+        logger.info(
+            "Lade OpenCLIP ViT-bigG-14 Image-Encoder "
+            "(für ULIP-2 Cross-Modal Retrieval)..."
+        )
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            "ViT-bigG-14", pretrained="laion2b_s39b_b160k"
+        )
+
+        # Optional: visuelle Gewichte aus ULIP-2 Checkpoint laden.
+        # Da ULIP-2 den Image-Encoder einfriert, sind vanilla Gewichte
+        # identisch — dieser Block ist nur zur Vollständigkeit.
+        if self._checkpoint_path and os.path.isfile(self._checkpoint_path):
+            try:
+                ckpt = torch.load(
+                    self._checkpoint_path, map_location="cpu", weights_only=False
+                )
+                sd = ckpt.get("state_dict", ckpt)
+                sd = OrderedDict({k.replace("module.", ""): v for k, v in sd.items()})
+                visual_sd = {k[len("visual."):]: v for k, v in sd.items()
+                             if k.startswith("visual.")}
+                if visual_sd:
+                    res = model.visual.load_state_dict(visual_sd, strict=False)
+                    logger.info(
+                        f"Visuelle Gewichte aus Checkpoint geladen "
+                        f"(fehlend={len(res.missing_keys)}, "
+                        f"unerwartet={len(res.unexpected_keys)})"
+                    )
+                else:
+                    logger.info(
+                        "Keine visual.* Keys im Checkpoint — "
+                        "verwende vanilla OpenCLIP (erwartet, ULIP-2 friert Image-Encoder ein)."
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"Konnte visuelle Gewichte nicht laden: {exc}. "
+                    "Verwende vanilla OpenCLIP."
+                )
+
+        self.model = model.visual.to(self.device)
+        self.model.eval()
+        self.preprocess = preprocess
+
+        n_params = sum(p.numel() for p in self.model.parameters())
+        logger.info(
+            f"OpenCLIP ViT-bigG-14 Image-Encoder geladen: "
+            f"{n_params / 1e6:.1f}M Parameter, Device: {self.device}"
+        )
+
+    def encode(self, image) -> torch.Tensor:
+        """Encodiert ein PIL-Bild oder numpy-Array als ULIP-2-kompatibles Embedding.
+
+        Args:
+            image: PIL.Image oder numpy-Array (H, W, 3) uint8.
+
+        Returns:
+            L2-normalisierter Tensor (1, 1280).
+        """
+        self.load()
+        from PIL import Image as PILImage  # type: ignore
+
+        if isinstance(image, np.ndarray):
+            image = PILImage.fromarray(image.astype(np.uint8))
+        elif not isinstance(image, PILImage.Image):
+            raise TypeError(
+                f"Erwartet PIL.Image oder numpy.ndarray, got {type(image)}"
+            )
+
+        tensor = self.preprocess(image).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            embedding = self.model(tensor)  # (1, 1280)
+            embedding = F.normalize(embedding, p=2, dim=-1)
+        return embedding
+
+
+# ---------------------------------------------------------------------------
 # ULIP-2 Shape Matching Modul
 # ---------------------------------------------------------------------------
 
@@ -275,6 +386,7 @@ class ShapeMatcher:
         self.config = config
         self.device = config.device
         self.model: Optional[ULIP2PointEncoder] = None
+        self.image_encoder: Optional[ULIP2ImageEncoder] = None
 
         # Gecachte CAD-Modell-Embeddings
         self._cad_embeddings: Dict[str, torch.Tensor] = {}
@@ -594,19 +706,49 @@ class ShapeMatcher:
         except Exception as e:
             logger.warning(f"Fehler bei CAD-Modell {obj_id}: {e}")
 
+    def _load_image_encoder(self) -> None:
+        """Lädt den ULIP2ImageEncoder (lazy init)."""
+        if self.image_encoder is None:
+            self.image_encoder = ULIP2ImageEncoder(
+                device=self.device,
+                checkpoint_path=self.config.ulip2_checkpoint or None,
+            )
+        self.image_encoder.load()
+
+    def encode_image(self, image) -> torch.Tensor:
+        """Encodiert ein Query-Bild in das ULIP-2 Embedding (cross-modal).
+
+        Args:
+            image: PIL.Image oder numpy-Array (H, W, 3) uint8.
+
+        Returns:
+            L2-normalisierter Tensor (1, embed_dim).
+        """
+        self._load_image_encoder()
+        return self.image_encoder.encode(image)
+
     def match(
         self,
         observed_pc: PointCloudResult,
         top_k: Optional[int] = None,
         candidate_ids: Optional[List[str]] = None,
+        query_image=None,
     ) -> ShapeMatchingResult:
         """Findet die geometrisch ähnlichsten CAD-Modelle.
+
+        Der Retrieval-Modus wird über config.ulip2_mode gesteuert:
+          - "pc"    : Beobachtete Punktwolke → PC-Encoder → mit CAD-PC verglichen.
+          - "cross" : Cropped Query-Bild → OpenCLIP Image-Encoder → mit CAD-PC verglichen.
+                      Nutzt den gemeinsamen ULIP-2 Embedding-Raum cross-modal.
+          - "both"  : Gewichteter Mittelwert aus PC- und Image-Embedding
+                      (ulip2_image_weight aus Config).
 
         Args:
             observed_pc: Punktwolke des beobachteten Objekts (Schritt 2).
             top_k: Anzahl der Ergebnisse (überschreibt Config).
-            candidate_ids: Optional – nur diese Objekte vergleichen
-                           (z.B. aus Schritt 3/4 vorselektierte Kandidaten).
+            candidate_ids: Optional – nur diese Objekte vergleichen.
+            query_image: PIL.Image oder numpy-Array (H, W, 3) – Query-Bild für
+                         cross-modal Retrieval. Wird ignoriert wenn mode="pc".
 
         Returns:
             ShapeMatchingResult mit sortierten Kandidaten.
@@ -617,13 +759,54 @@ class ShapeMatcher:
             )
 
         top_k = top_k or self.config.ulip2_top_k
+        mode = getattr(self.config, "ulip2_mode", "pc")
 
-        # --- Query Embedding ---
-        # PointCloudResult hat .points (N,3) und .colors (N,3) oder None
-        colors = getattr(observed_pc, "colors", None)
-        query_emb = self.encode_pointcloud(
-            observed_pc.points, colors=colors
-        )  # (1, embed_dim)
+        # --- Query Embedding aufbauen ---
+        query_emb: Optional[torch.Tensor] = None
+
+        # PC-Embedding (immer nötig bei mode="pc" oder "both")
+        pc_emb: Optional[torch.Tensor] = None
+        if mode in ("pc", "both"):
+            colors = getattr(observed_pc, "colors", None)
+            pc_emb = self.encode_pointcloud(
+                observed_pc.points, colors=colors
+            )  # (1, embed_dim)
+
+        # Image-Embedding (nötig bei mode="cross" oder "both")
+        img_emb: Optional[torch.Tensor] = None
+        if mode in ("cross", "both"):
+            if query_image is None:
+                if mode == "cross":
+                    logger.warning(
+                        "ulip2_mode='cross' aber kein query_image übergeben — "
+                        "Fallback auf PC-Modus."
+                    )
+                    mode = "pc"
+                    pc_emb = self.encode_pointcloud(
+                        observed_pc.points,
+                        colors=getattr(observed_pc, "colors", None),
+                    )
+                # mode="both" ohne Bild → nur PC nutzen
+            else:
+                img_emb = self.encode_image(query_image)  # (1, embed_dim)
+
+        # Finales Query-Embedding zusammensetzen
+        if mode == "pc" or (mode == "both" and img_emb is None):
+            query_emb = pc_emb
+            logger.info("ULIP-2: Retrieval-Modus = PC→PC (shape matching)")
+        elif mode == "cross":
+            query_emb = img_emb
+            logger.info("ULIP-2: Retrieval-Modus = Image→PC (cross-modal)")
+        else:  # "both" mit beiden Embeddings
+            w_img = getattr(self.config, "ulip2_image_weight", 0.5)
+            w_pc = 1.0 - w_img
+            query_emb = F.normalize(
+                w_img * img_emb + w_pc * pc_emb, p=2, dim=-1
+            )
+            logger.info(
+                f"ULIP-2: Retrieval-Modus = both "
+                f"(image_weight={w_img:.2f}, pc_weight={w_pc:.2f})"
+            )
 
         # --- Kandidaten zusammenstellen ---
         if candidate_ids:
@@ -644,7 +827,7 @@ class ShapeMatcher:
 
         sims = (query_emb @ cad_embs.T).squeeze(0)  # (K,)
 
-        # --- NaN-Scores filtern (z.B. durch fehlerhafte Eingabedaten) ---
+        # --- NaN-Scores filtern ---
         nan_mask = torch.isnan(sims)
         if nan_mask.any():
             logger.warning(

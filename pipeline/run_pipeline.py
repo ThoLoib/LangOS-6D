@@ -417,7 +417,12 @@ class OSCARPlusPipeline:
                         results["clip_retrieval"]
                     )
 
-                shape_result = self.shape_matcher.match(pc, candidate_ids=candidate_ids)
+                query_img = results.get("localization", None)
+                shape_result = self.shape_matcher.match(
+                    pc,
+                    candidate_ids=candidate_ids,
+                    query_image=query_img.roi_image if query_img else None,
+                )
                 results["shape_matching"] = shape_result
                 timings["step5_ulip"] = time.time() - t0
 
@@ -787,6 +792,14 @@ Beispiel:
     parser.add_argument("--ulip_top_k", type=int, default=5)
     parser.add_argument("--ulip_repo", default="", help="Pfad zum geklonten ULIP-Repo")
     parser.add_argument("--ulip_checkpoint", default="", help="Pfad zum ULIP-2 Checkpoint (.pt)")
+    parser.add_argument(
+        "--ulip_mode", default="cross", choices=["pc", "cross", "both"],
+        help="ULIP-2 Retrieval-Modus: 'pc' (PC→PC), 'cross' (Image→PC, default), 'both' (gewichteter Mix)"
+    )
+    parser.add_argument(
+        "--ulip_image_weight", type=float, default=0.5,
+        help="Gewicht des Image-Embeddings im Modus 'both' (PC-Gewicht = 1 - w)."
+    )
     parser.add_argument("--skip_steps", type=int, nargs="*", default=[], help="Schritte überspringen (z.B. --skip_steps 5 8)")
     parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
@@ -811,6 +824,8 @@ def main():
         ulip2_top_k=args.ulip_top_k,
         ulip_repo_path=args.ulip_repo,
         ulip2_checkpoint=args.ulip_checkpoint,
+        ulip2_mode=args.ulip_mode,
+        ulip2_image_weight=args.ulip_image_weight,
         ollama_model=args.ollama_model,
         ollama_host=args.ollama_host,
     )

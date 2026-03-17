@@ -82,6 +82,15 @@ class PipelineConfig:
     ulip2_use_colors: bool = True  # xyzrgb (True) oder nur xyz (False)
     ulip2_embed_dim: int = 1280    # Embedding-Dimension (1280 für ViT-bigG-14, 512 für ViT-B)
 
+    # Modus für ULIP-2 Query-Embedding:
+    #   "pc"    – Beobachtete Punktwolke → ULIP-PC-Encoder → mit CAD-PC-Embeddings vergleichen (wie bisher)
+    #   "cross" – Cropped Query-Bild → OpenCLIP ViT-bigG-14 (ULIP Image-Branch) → mit CAD-PC-Embeddings
+    #             vergleichen (cross-modal; nutzt den gemeinsamen Embedding-Raum von ULIP-2 voll aus).
+    #             ULIP-2 friert den Image-Encoder während Training ein → vanilla OpenCLIP Gewichte sind korrekt.
+    #   "both"  – Gewichteter Durchschnitt aus "pc" und "cross" Embeddings.
+    ulip2_mode: str = "cross"         # "pc" | "cross" | "both"
+    ulip2_image_weight: float = 0.5   # Gewicht für Image-Embedding in Modus "both" (PC-Gewicht = 1 - image_weight)
+
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
     cad_models_dir: str = ""       # z.B. "object_database/ycbv_gso/"
 
