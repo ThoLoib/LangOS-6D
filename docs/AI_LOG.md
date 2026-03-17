@@ -1,5 +1,34 @@
 # AI Log
 
+## 2026-03-17 ULIP Full Mode, CAD Cache, and Pose Path Fixes
+
+Goal
+- Enable side-by-side experiments for ULIP `pc` vs ULIP `cross` (full cross-modal) in the debug pipeline.
+- Fix slow Step 5 by caching CAD embeddings.
+- Fix Step 8 failures caused by image paths being passed as CAD mesh paths.
+
+Changes
+- Modified `pipeline/step5_shape_matching.py`:
+  - added ULIP cross-modal image encoding support (`open-clip-torch`)
+  - recursive CAD mesh discovery (supports `meshes/model.obj` style layouts)
+  - added CAD embedding disk cache (`.ulip_cache_<hash>.pt`)
+  - stores cached CAD embeddings on CPU to reduce repeated GPU work
+- Modified `pipeline/debug_steps.py`:
+  - added CLI args `--ulip_mode` and `--ulip_image_weight`
+  - forwards `query_image` to Step 5
+  - robust CAD mesh path resolution before Step 7/8
+- Modified `pipeline/step6_fusion.py`:
+  - separated DINO `best_view_path` (image) from true `cad_model_path` (mesh)
+  - prevents Step 8 from trying to load PNG as mesh
+- Modified dependencies:
+  - root `requirements.txt`: added `open-clip-torch`, `trimesh`
+
+Results
+- `open_clip` import error resolved.
+- CAD loading count corrected from 21 to 1051 models for ycbv_gso.
+- Step 8 no longer fails with `CAD-Mesh leer: ...png` due to wrong path propagation.
+- Step 5 subsequent runs are faster due to cache reuse.
+
 ## 2026-03-05 ULIP-2 Pipeline Integration + Visualization
 
 Goal

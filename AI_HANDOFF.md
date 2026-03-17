@@ -1,6 +1,6 @@
-# AI Handoff – Branch `exp/ulip2`
+# AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-03-12
+> Zuletzt aktualisiert: 2026-03-17
 
 ---
 
@@ -19,7 +19,33 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `oscar` | Clean upstream mirror von pullover00/OSCAR | ✅ nie verändert |
 | `main` | Thesis-Scaffolding + AI-Docs | ✅ stabil |
 | `exp/oscar-repro` | OSCAR baseline reproduziert (d3098bdd) | ✅ abgeschlossen |
-| **`exp/ulip2`** | **Shape-Aware Pipeline (dieser Branch)** | 🟢 End-to-End funktioniert (8 Schritte) |
+| `exp/ulip2` | Shape-Aware Pipeline (PC-ULIP + Fusion) | ✅ stabil |
+| **`exp/ulip2-full`** | **ULIP full experiments (PC vs cross-modal image->PC)** | 🟢 aktiv |
+
+---
+
+## Update 2026-03-17 (exp/ulip2-full)
+
+- ULIP Step 5 erweitert um `ulip_mode`:
+  - `pc`: nur Shape-Embedding (PointCloud -> CAD-PC)
+  - `cross`: Image->PC Cross-Modal (OpenCLIP image branch)
+  - `both`: gewichteter Mix (`ulip_image_weight`)
+- `debug_steps.py` erweitert:
+  - neue CLI-Args `--ulip_mode`, `--ulip_image_weight`
+  - `query_image` wird an Step 5 durchgereicht
+- GSO-CAD-Laden in Step 5 gefixt:
+  - rekursive Mesh-Suche in Unterordnern (`meshes/model.obj`, `textured_simple.obj`)
+  - vorher nur 21 Modelle, jetzt 1051 Modelle
+- Performance-Fix Step 5:
+  - CAD-Embeddings werden als Disk-Cache gespeichert (`.ulip_cache_<hash>.pt`)
+  - erste Berechnung bleibt teuer, Folge-Runs laden Cache deutlich schneller
+- Step 8 Pose-Fix:
+  - falscher Bildpfad (`object_images/...png`) konnte als `cad_model_path` in Fusion landen
+  - Fusion trennt jetzt `best_view_path` (DINO-Bild) von echtem `cad_model_path` (Mesh)
+  - Debug löst Meshpfad robust auf, damit ICP ein OBJ/PLY/GLB bekommt
+- Dependencies ergänzt:
+  - `open-clip-torch` (für ULIP cross)
+  - `trimesh` (für Overlay/Wireframe-Visualisierung)
 
 ---
 

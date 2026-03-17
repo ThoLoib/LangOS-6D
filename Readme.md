@@ -1,11 +1,33 @@
 # OSCAR+: Shape-Aware Open-Set CAD Retrieval
 
-This branch (`exp/ulip2`) extends the original two-stage OSCAR baseline with a full **8-step modular pipeline** and integrates **ULIP-2 shape-aware retrieval** as a third scoring channel.
+This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline with a full **8-step modular pipeline** and integrates **ULIP-2 shape-aware retrieval** as a third scoring channel.
 
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
 New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-03-12):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048.
+> **Status (2026-03-17):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes.
+
+## ULIP Modes (Step 5)
+
+Step 5 supports three retrieval modes:
+
+- `pc`: observed point cloud -> ULIP point encoder -> CAD point embeddings
+- `cross`: query ROI image -> OpenCLIP image encoder -> CAD point embeddings
+- `both`: weighted combination of `pc` and `cross` query embeddings
+
+Debug CLI supports:
+
+```bash
+--ulip_mode {pc,cross,both}
+--ulip_image_weight 0.5
+```
+
+## ULIP CAD Cache
+
+Step 5 now stores CAD embeddings in an on-disk cache (`.ulip_cache_<hash>.pt`) inside the CAD directory.
+
+- first run: computes all CAD embeddings (slow)
+- subsequent runs with same config+meshes: loads from cache (much faster)
 
 ---
 

@@ -1,5 +1,50 @@
 # Decisions
 
+## 2026-03-17 enable ULIP mode switch in debug and pipeline
+
+Decision
+- Expose ULIP retrieval mode as a runtime option (`pc`, `cross`, `both`) instead of hardcoding point-cloud-only behavior.
+
+Rationale
+- Needed for direct thesis ablation: shape-only vs full ULIP cross-modal retrieval on identical scenes.
+
+Alternatives Considered
+- Keep single `pc` mode only — rejected, prevents controlled comparison.
+
+## 2026-03-17 recursive CAD mesh discovery for ycbv_gso
+
+Decision
+- Use recursive mesh lookup in CAD object folders and prefer known mesh filenames in `meshes/`.
+
+Rationale
+- ycbv_gso object layouts are nested; non-recursive lookup found only 21 models.
+- Recursive lookup resolves 1051 models and stabilizes Step 5 coverage.
+
+Alternatives Considered
+- Enforce one flat file layout per object — rejected, too invasive for downloaded assets.
+
+## 2026-03-17 cache ULIP CAD embeddings on disk
+
+Decision
+- Save/reload CAD embeddings in `.ulip_cache_<hash>.pt` keyed by model+config+mesh inventory.
+
+Rationale
+- Step 5 over 1000+ CAD models is the dominant runtime; repeated runs should not recompute unchanged embeddings.
+
+Alternatives Considered
+- In-memory cache only — rejected, not persistent across process/container restarts.
+
+## 2026-03-17 separate image view paths from CAD mesh paths in fusion
+
+Decision
+- Keep DINO `best_view_path` separate from `cad_model_path` in fusion output.
+
+Rationale
+- Passing image paths as mesh paths caused Step 8 ICP to read `.png` as CAD mesh and fail.
+
+Alternatives Considered
+- Force Step 8 to ignore fusion path and always search filesystem — kept as fallback only.
+
 ## 2026-02-06 reset main to scaffold
 
 Decision
