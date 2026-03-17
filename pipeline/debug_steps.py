@@ -888,6 +888,8 @@ def run_debug(args) -> None:
         output_dir=args.output,
         ulip_repo_path=args.ulip_repo,
         ulip2_checkpoint=args.ulip_checkpoint,
+        ulip2_mode=getattr(args, "ulip_mode", "cross"),
+        ulip2_image_weight=getattr(args, "ulip_image_weight", 0.5),
     )
 
     rgb_image = Image.open(args.rgb).convert("RGB")
@@ -1011,7 +1013,7 @@ def run_debug(args) -> None:
         logger.info("\n─── Schritt 5: ULIP-2 Shape Matching ───")
         shape = ShapeMatcher(config)
         shape.load_cad_models()
-        shape_res = shape.match(pc)
+        shape_res = shape.match(pc, query_image=loc.roi_image)
         results["shape_matching"] = shape_res
         logger.info("  %d Matches", len(shape_res.candidates))
         for i, c in enumerate(shape_res.candidates[:3]):
@@ -1219,6 +1221,11 @@ Beispiele:
                    help="ULIP-Repo-Pfad (default: /ulip)")
     p.add_argument("--ulip_checkpoint", default="",
                    help="ULIP-2 Checkpoint .pt (leer = Schritt 5 überspringen)")
+    p.add_argument("--ulip_mode", default="cross",
+                   choices=["pc", "cross", "both"],
+                   help="ULIP-2 Modus: 'cross'=Image→PC (default), 'pc'=PC→PC, 'both'=Mix")
+    p.add_argument("--ulip_image_weight", type=float, default=0.5,
+                   help="Gewicht des Image-Embeddings im Modus 'both' (default: 0.5)")
     return p.parse_args()
 
 
