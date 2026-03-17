@@ -63,6 +63,7 @@ class FusedCandidate:
     dino_score: float = 0.0
     ulip_score: float = 0.0
     cad_model_path: str = ""
+    best_view_path: str = ""  # bestes Referenzbild (aus DINOv2)
 
 
 @dataclass
@@ -164,6 +165,7 @@ class ScoreFusion:
         # --- Alle Scores sammeln ---
         scores: Dict[str, Dict[str, float]] = {}  # obj_id → {clip, dino, ulip}
         paths: Dict[str, str] = {}
+        view_paths: Dict[str, str] = {}  # obj_id → bestes Referenzbild
 
         if clip_result:
             for c in clip_result.candidates:
@@ -176,7 +178,7 @@ class ScoreFusion:
                 entry["dino"] = max(entry["dino"], c.dino_score)
                 entry["clip"] = max(entry.get("clip", 0), c.clip_score)
                 if c.best_view_path:
-                    paths[c.object_id] = c.best_view_path
+                    view_paths[c.object_id] = c.best_view_path
 
         if shape_result:
             for c in shape_result.candidates:
@@ -185,7 +187,7 @@ class ScoreFusion:
                 if not (isinstance(s, float) and np.isnan(s)):
                     entry["ulip"] = max(entry["ulip"], s)
                 if c.cad_model_path:
-                    paths[c.object_id] = c.cad_model_path
+                    paths[c.object_id] = c.cad_model_path  # echter OBJ-Pfad
 
         if not scores:
             logger.warning("Keine Kandidaten für die Fusion verfügbar.")
@@ -227,6 +229,7 @@ class ScoreFusion:
                 dino_score=norm_dino[i],
                 ulip_score=norm_ulip[i],
                 cad_model_path=paths.get(obj_id, ""),
+                best_view_path=view_paths.get(obj_id, ""),
             ))
 
         # Sortieren nach fusioniertem Score (absteigend)

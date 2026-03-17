@@ -850,6 +850,43 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
         out.paste(img, (0, 0))
         return out
 
+
+    def _find_cad_mesh(object_id: str, cad_root: str) -> str:
+        """Findet ein CAD-Mesh für ein Objekt rekursiv im CAD-Ordner.
+
+        Bevorzugt typische GSO/YCBV Dateinamen in `meshes/`.
+        """
+        if not object_id or not cad_root:
+            return ""
+
+        obj_dir = os.path.join(cad_root, object_id)
+        if not os.path.isdir(obj_dir):
+            return ""
+
+        allowed = {".obj", ".ply", ".glb", ".gltf"}
+        preferred_names = ("textured_simple.obj", "model.obj", "mesh.obj")
+        candidates = []
+
+        for root, _, files in os.walk(obj_dir):
+            for fname in files:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in allowed:
+                    candidates.append(os.path.join(root, fname))
+
+        if not candidates:
+            return ""
+
+        def sort_key(path: str):
+            base = os.path.basename(path).lower()
+            in_meshes = 0 if os.path.basename(os.path.dirname(path)).lower() == "meshes" else 1
+            try:
+                pref_idx = preferred_names.index(base)
+            except ValueError:
+                pref_idx = len(preferred_names)
+            return (in_meshes, pref_idx, path)
+
+        return sorted(candidates, key=sort_key)[0]
+
     final = _hstack([pad_h(pa, h_max), pad_h(pb, h_max), pad_h(pc, h_max)], pad=pad)
     final = _vstack([_banner("SCHRITT 7+8: Skalenbestimmung & Modellüberlagerung",
                              final.width, bg=(30, 10, 10)), final], pad=0)
@@ -1051,24 +1088,44 @@ def run_debug(args) -> None:
     scale_factor = 1.0
     obs_size = cad_size = None
 
-    if pc and best.cad_model_path:
+    # --- Mesh-Pfad sicherstellen ---
+    # cad_model_path aus der Fusion kann ein Referenzbild (PNG) sein, wenn ULIP
+    # das Gewinner-Objekt nicht in seinen Top-K hatte.  Korrekte Quelle ist der
+    # Shape-Matcher (falls vorhanden) oder ein Dateisystem-Lookup.
+    resolved_mesh = best.cad_model_path
+    # Prüfen: ist der Pfad eine Bilddatei statt eines 3D-Modells?
+    _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+    if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
+        # 1. Versuch: Shape-Matcher hat den Pfad bereits gecacht
+        if shape is not None and hasattr(shape, "_cad_paths"):
+            resolved_mesh = shape._cad_paths.get(best.object_id, resolved_mesh)
+        # 2. Versuch: Dateisystem-Lookup im CAD-Modell-Verzeichnis
+        if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
+            resolved_mesh = _find_cad_mesh(best.object_id, args.cad_models)
+        if resolved_mesh and os.path.splitext(resolved_mesh)[1].lower() not in _IMG_EXTS:
+            logger.info("  Mesh-Pfad aufgelöst: %s", resolved_mesh)
+        else:
+            logger.warning("  Kein gültiger Mesh-Pfad für %s gefunden.", best.object_id)
+            resolved_mesh = ""
+
+    if pc and resolved_mesh:
         logger.info("\n─── Schritt 7: Skalenbestimmung ───")
         se = ScaleEstimator(config)
-        sr = se.estimate(pc, best.cad_model_path)
+        sr = se.estimate(pc, resolved_mesh)
         scale_factor = sr.scale_factor
         obs_size = sr.observed_size
         cad_size = sr.cad_size
         logger.info("  scale=%.4f  conf=%.2f", scale_factor, sr.confidence)
 
     pose_info = {}
-    if args.until_step >= 8 and best.cad_model_path:
+    if args.until_step >= 8 and resolved_mesh:
         logger.info("\n─── Schritt 8: Pose Estimation ───")
         pe = PoseEstimator(config)
         pr = pe.estimate(
             rgb_image=np.array(rgb_image),
             depth_image=depth_m,
             mask=loc.mask,
-            cad_model_path=best.cad_model_path,
+            cad_model_path=resolved_mesh,
             scale_factor=scale_factor,
             observed_pc=pc,
             fx=cam.get("fx"), fy=cam.get("fy"),
@@ -1087,7 +1144,7 @@ def run_debug(args) -> None:
                        args.reference_images, pose_info,
                        obs_size, cad_size, out,
                        pose_matrix=pr.pose_matrix if 'pr' in dir() else None,
-                       cad_model_path=best.cad_model_path,
+                    cad_model_path=resolved_mesh,
                        cam=cam)
     _done(out)
 

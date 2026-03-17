@@ -49,6 +49,7 @@
 import logging
 import os
 import sys
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple
@@ -392,6 +393,109 @@ class ShapeMatcher:
         self._cad_embeddings: Dict[str, torch.Tensor] = {}
         self._cad_paths: Dict[str, str] = {}
 
+    def _collect_mesh_items(
+        self,
+        cad_dir: str,
+        allowed_extensions: Tuple[str, ...],
+    ) -> List[Tuple[str, str]]:
+        """Sammelt (object_id, mesh_path)-Paare aus dem CAD-Ordner."""
+        items: List[Tuple[str, str]] = []
+
+        for entry in sorted(os.listdir(cad_dir)):
+            entry_path = os.path.join(cad_dir, entry)
+
+            if os.path.isfile(entry_path):
+                ext = os.path.splitext(entry)[1].lower()
+                if ext in allowed_extensions:
+                    items.append((os.path.splitext(entry)[0], entry_path))
+                continue
+
+            if os.path.isdir(entry_path):
+                mesh_file = self._find_mesh_in_dir(entry_path, allowed_extensions)
+                if mesh_file:
+                    items.append((entry, mesh_file))
+
+        return items
+
+    def _get_cache_path(
+        self,
+        cad_dir: str,
+        mesh_items: List[Tuple[str, str]],
+    ) -> str:
+        """Erzeugt einen stabilen Cache-Pfad für CAD-Embeddings."""
+        ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
+        meta_parts = [
+            f"backbone={self.config.ulip2_backbone}",
+            f"npts={self.config.ulip2_num_points}",
+            f"colors={int(self.config.ulip2_use_colors)}",
+            f"edim={self.config.ulip2_embed_dim}",
+            f"ckpt={ckpt_tag}",
+        ]
+
+        inv = []
+        for obj_id, path in mesh_items:
+            try:
+                st = os.stat(path)
+                inv.append(
+                    f"{obj_id}|{os.path.relpath(path, cad_dir)}|"
+                    f"{int(st.st_mtime_ns)}|{st.st_size}"
+                )
+            except OSError:
+                inv.append(f"{obj_id}|{os.path.relpath(path, cad_dir)}|missing")
+
+        raw = "\n".join(meta_parts + sorted(inv))
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        fname = f".ulip_cache_{digest}.pt"
+        return os.path.join(cad_dir, fname)
+
+    def _try_load_cache(self, cache_path: str) -> bool:
+        """Lädt CAD-Embeddings aus Cache, falls vorhanden und gültig."""
+        if not os.path.isfile(cache_path):
+            return False
+
+        try:
+            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
+            emb = payload.get("embeddings", {})
+            paths = payload.get("paths", {})
+            if not isinstance(emb, dict) or not isinstance(paths, dict):
+                return False
+
+            loaded_emb: Dict[str, torch.Tensor] = {}
+            loaded_paths: Dict[str, str] = {}
+            for obj_id, tensor in emb.items():
+                if torch.is_tensor(tensor):
+                    loaded_emb[obj_id] = tensor.detach().cpu()
+            for obj_id, path in paths.items():
+                if isinstance(path, str):
+                    loaded_paths[obj_id] = path
+
+            if not loaded_emb:
+                return False
+
+            self._cad_embeddings = loaded_emb
+            self._cad_paths = loaded_paths
+            logger.info(
+                "CAD-Embeddings aus Cache geladen: %d Modelle (%s)",
+                len(self._cad_embeddings),
+                cache_path,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("Konnte ULIP-CAD-Cache nicht laden (%s): %s", cache_path, exc)
+            return False
+
+    def _save_cache(self, cache_path: str) -> None:
+        """Speichert CAD-Embeddings auf Disk."""
+        try:
+            payload = {
+                "embeddings": {k: v.detach().cpu() for k, v in self._cad_embeddings.items()},
+                "paths": dict(self._cad_paths),
+            }
+            torch.save(payload, cache_path)
+            logger.info("CAD-Embeddings Cache gespeichert: %s", cache_path)
+        except Exception as exc:
+            logger.warning("Konnte ULIP-CAD-Cache nicht speichern (%s): %s", cache_path, exc)
+
     def _load_model(self):
         """Lädt den ULIP-2 Point-Cloud-Encoder.
 
@@ -655,29 +759,25 @@ class ShapeMatcher:
             raise ValueError("Kein cad_models_dir konfiguriert.")
 
         logger.info(f"Lade CAD-Modelle aus: {cad_dir}")
+        mesh_items = self._collect_mesh_items(cad_dir, allowed_extensions)
+        if not mesh_items:
+            logger.warning("Keine CAD-Meshes im Ordner gefunden: %s", cad_dir)
+            return
+
+        cache_path = self._get_cache_path(cad_dir, mesh_items)
+        if self._try_load_cache(cache_path):
+            return
+
+        self._cad_embeddings = {}
+        self._cad_paths = {}
         count = 0
-
-        for entry in sorted(os.listdir(cad_dir)):
-            entry_path = os.path.join(cad_dir, entry)
-
-            # Fall 1: Direktes Mesh-File
-            if os.path.isfile(entry_path):
-                ext = os.path.splitext(entry)[1].lower()
-                if ext not in allowed_extensions:
-                    continue
-                obj_id = os.path.splitext(entry)[0]
-                if self._encode_and_cache(obj_id, entry_path):
-                    count += 1
-                continue
-
-            # Fall 2: Unterordner mit Mesh-File
-            if os.path.isdir(entry_path):
-                mesh_file = self._find_mesh_in_dir(entry_path, allowed_extensions)
-                if mesh_file:
-                    if self._encode_and_cache(entry, mesh_file):
-                        count += 1
+        for obj_id, mesh_path in mesh_items:
+            if self._encode_and_cache(obj_id, mesh_path):
+                count += 1
 
         logger.info(f"CAD-Modell-Embeddings berechnet: {count} Modelle.")
+        if count > 0:
+            self._save_cache(cache_path)
 
     def _find_mesh_in_dir(
         self, dir_path: str, extensions: Tuple[str, ...]
@@ -722,7 +822,7 @@ class ShapeMatcher:
                 with_colors=use_colors,
             )
             embedding = self.encode_pointcloud(points, colors=colors)
-            self._cad_embeddings[obj_id] = embedding.squeeze(0)
+            self._cad_embeddings[obj_id] = embedding.squeeze(0).detach().cpu()
             self._cad_paths[obj_id] = mesh_path
             return True
         except Exception as e:
