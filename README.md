@@ -2,7 +2,19 @@
 
 Language- and shape-aware 3D object retrieval for 6D pose estimation.
 
-`main` is the documentation hub. Active implementation happens in experiment branches.
+## Project Scope
+
+This thesis project builds on OSCAR (language and image based open-set CAD retrieval) and extends it with a shape-aware channel from RGB-D observations.
+
+Goal:
+- improve retrieval robustness when text and appearance alone are ambiguous,
+- compare shape-only and cross-modal ULIP variants,
+- measure impact on downstream scale and 6D pose estimation.
+
+Core idea:
+- extract a segmented point cloud from RGB-D,
+- embed it with ULIP-2,
+- fuse CLIP, DINOv2, and ULIP scores to rank CAD candidates.
 
 ## Branch Overview
 
@@ -14,15 +26,10 @@ Language- and shape-aware 3D object retrieval for 6D pose estimation.
 | `exp/ulip2` | Initial 8-step pipeline with ULIP point-cloud channel | Stable |
 | `exp/ulip2-full` | Active ULIP full experiments (`pc`, `cross`, `both`) | Active |
 
-## Latest Validated Highlights (`exp/ulip2-full`)
+## Where To Find What
 
-- ULIP mode switch in Step 5: `pc`, `cross`, `both`.
-- Recursive CAD mesh discovery for nested YCBV/GSO layouts.
-- On-disk CAD embedding cache for faster repeated runs.
-- Fusion and debug flow keep `best_view_path` (image) separate from `cad_model_path` (mesh).
-- Required dependencies aligned: `open-clip-torch`, `trimesh`.
-
-## Working Rule
-
-- Implement and test code changes in `exp/*` branches.
-- Keep `main` as the canonical project overview and handoff branch.
+- High-level project and branch map: this file (`main`)
+- Experiment details, commands, and ULIP implementation notes: `exp/ulip2-full` `README.md`
+- Handoff summary: `AI_HANDOFF.md`
+- Decision log: `docs/DECISIONS.md`
+- Change log: `docs/AI_LOG.md`
