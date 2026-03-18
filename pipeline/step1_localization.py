@@ -21,7 +21,6 @@
 #     Paper: "SAM 2: Segment Anything in Images and Videos" (Ravi et al., 2024)
 #
 #   Beide Modelle werden direkt via HuggingFace transformers geladen
-#   Beide Modelle werden direkt via HuggingFace transformers geladen
 #   (kein LangSAM-Wrapper erforderlich).
 #
 # Outputs:

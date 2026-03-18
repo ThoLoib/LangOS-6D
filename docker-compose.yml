@@ -7,6 +7,7 @@ services:
     volumes:
       - .:/app
       - ../ULIP:/ulip
+      - ../FoundationPose:/foundationpose
       - hf_cache:/root/.cache/huggingface   # HuggingFace-Modelle cached (kein Re-Download)
     ports:
       - "11434:11434"  # Expose ports if needed

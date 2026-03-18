@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-03-18 staged FoundationPose switch
+
+Decision
+- Use a staged migration path for FoundationPose:
+- first install FoundationPose and expose it via Docker volume,
+- then keep Step 8 on ICP fallback until API integration is implemented and validated.
+
+Rationale
+- Reduces risk of breaking the current end-to-end pipeline while environment dependencies are prepared.
+- Allows iterative verification (setup, weights, extension build, API wiring, evaluation).
+
+Alternatives Considered
+- Immediate hard switch from ICP to FoundationPose in Step 8; rejected due incomplete integration and higher regression risk.
+
 ## 2026-03-17 enable ULIP mode switch in debug and pipeline
 
 Decision

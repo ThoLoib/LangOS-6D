@@ -29,6 +29,20 @@ Step 5 now stores CAD embeddings in an on-disk cache (`.ulip_cache_<hash>.pt`) i
 - first run: computes all CAD embeddings (slow)
 - subsequent runs with same config+meshes: loads from cache (much faster)
 
+## FoundationPose Status
+
+- Repository cloned at host path: `~/thesis/FoundationPose`
+- Docker image installed locally: `foundationpose:latest`
+- OSCAR compose mount added: `../FoundationPose:/foundationpose`
+- Current pipeline status in `step8_pose_estimation.py`:
+  - `method="foundationpose"` is still a template path with fallback to ICP
+  - productive FoundationPose call interface is not wired yet
+
+Notes for next switch step:
+- Download FoundationPose weights into `FoundationPose/weights/`
+- Build FoundationPose extensions (`build_all.sh`) in the FP environment
+- Implement concrete estimator call in Step 8 and validate on one debug scene
+
 ---
 
 ## Pipeline Overview

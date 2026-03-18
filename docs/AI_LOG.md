@@ -1,5 +1,37 @@
 # AI Log
 
+## 2026-03-18 Step 1 localization cleanup
+
+Goal
+- Verify what changed in `pipeline/step1_localization.py` and document it.
+
+Changes
+- Confirmed a non-functional cleanup in Step 1:
+  - removed one duplicated comment line in the module header.
+- No runtime logic, model call, threshold, or output schema changed.
+
+Impact
+- Behavior unchanged.
+- Improves readability and avoids confusion during code review.
+
+## 2026-03-18 FoundationPose setup and compose update
+
+Goal
+- Prepare a reproducible local setup for FoundationPose and document current switch status.
+
+Changes
+- Host setup:
+  - cloned `NVlabs/FoundationPose` to `~/thesis/FoundationPose`
+  - installed Docker image `foundationpose:latest`
+- OSCAR integration prep:
+  - updated `docker-compose.yml` volumes with `../FoundationPose:/foundationpose`
+- Codebase check:
+  - verified `pipeline/step8_pose_estimation.py` still uses a FoundationPose template path (`NotImplementedError`) and falls back to ICP.
+
+Impact
+- FoundationPose assets are available from the OSCAR container path `/foundationpose`.
+- Runtime behavior of Step 8 is unchanged until estimator integration is implemented.
+
 ## 2026-03-17 ULIP Full Mode, CAD Cache, and Pose Path Fixes
 
 Goal

@@ -47,6 +47,18 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
   - `open-clip-torch` (für ULIP cross)
   - `trimesh` (für Overlay/Wireframe-Visualisierung)
 
+## Update 2026-03-18 (foundationpose prep + step1 cleanup)
+
+- `pipeline/step1_localization.py`:
+  - eine doppelte Kommentarzeile im Header entfernt (non-functional cleanup).
+- `docker-compose.yml`:
+  - zusätzliches Volume-Mount für FoundationPose:
+    - `../FoundationPose:/foundationpose`
+- FoundationPose Setup-Status:
+  - Repo lokal geklont (`~/thesis/FoundationPose`)
+  - Docker image vorhanden (`foundationpose:latest`)
+  - Step 8 verwendet weiterhin ICP-Fallback, bis die FoundationPose-API in `step8_pose_estimation.py` konkret integriert ist.
+
 ---
 
 ## Aktueller Stand (exp/ulip2)
