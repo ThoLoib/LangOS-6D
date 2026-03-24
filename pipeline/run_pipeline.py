@@ -525,6 +525,7 @@ class OSCARPlusPipeline:
                     observed_pc=results.get("point_cloud"),
                     fx=cam.get("fx"), fy=cam.get("fy"),
                     cx=cam.get("cx"), cy=cam.get("cy"),
+                    initial_pose=scale.coarse_alignment if scale is not None else None,
                 )
                 results["pose_estimation"] = pose_result
                 timings["step8_pose"] = time.time() - t0
@@ -787,6 +788,9 @@ Beispiel:
     parser.add_argument("--output", default="pipeline_output", help="Ausgabeordner")
     parser.add_argument("--fusion_method", default="weighted_sum", choices=["weighted_sum", "intersection", "rank_fusion"])
     parser.add_argument("--pose_method", default="icp", choices=["foundationpose", "megapose", "icp"])
+    parser.add_argument("--foundationpose_url", default="http://foundationpose:5050", help="URL des FoundationPose HTTP-Service")
+    parser.add_argument("--foundationpose_refine_iter", type=int, default=5, help="Refinement-Iterationen fuer FoundationPose register()")
+    parser.add_argument("--foundationpose_debug", type=int, default=0, help="FoundationPose Debug-Level (0 = headless)")
     parser.add_argument("--clip_top_k", type=int, default=20)
     parser.add_argument("--dino_top_k", type=int, default=5)
     parser.add_argument("--ulip_top_k", type=int, default=5)
@@ -819,6 +823,9 @@ def main():
         output_dir=args.output,
         fusion_method=args.fusion_method,
         pose_method=args.pose_method,
+        foundationpose_url=args.foundationpose_url,
+        foundationpose_est_refine_iter=args.foundationpose_refine_iter,
+        foundationpose_debug=args.foundationpose_debug,
         clip_top_k=args.clip_top_k,
         dino_top_k=args.dino_top_k,
         ulip2_top_k=args.ulip_top_k,
@@ -834,12 +841,6 @@ def main():
     logger.info(f"Lade RGB: {args.rgb}")
     rgb_image = Image.open(args.rgb).convert("RGB")
 
-    logger.info(f"Lade Depth: {args.depth}")
-    depth_image = np.array(Image.open(args.depth))
-    # Konvertierung in Meter falls nötig (Heuristik)
-    if depth_image.max() > 100:
-        depth_image = depth_image.astype(np.float32) / config.depth_scale
-
     # --- Kameraintrinsics ---
     camera_intrinsics = None
     if args.camera:
@@ -847,6 +848,14 @@ def main():
         # Image-ID aus dem RGB-Dateinamen ableiten (z.B. "000001.png" → 1)
         image_id = int(os.path.splitext(os.path.basename(args.rgb))[0])
         camera_intrinsics = load_camera_intrinsics(args.camera, image_id=image_id)
+
+    logger.info(f"Lade Depth: {args.depth}")
+    depth_image = np.array(Image.open(args.depth))
+    # Konvertierung in Meter falls nötig.
+    # BOP depth_scale is a multiplier; our pipeline uses config.depth_scale as
+    # a divisor (raw / 10000 → metres).  Always use config value.
+    if depth_image.max() > 100:
+        depth_image = depth_image.astype(np.float32) / config.depth_scale
 
     # --- Pipeline ausführen ---
     pipeline = OSCARPlusPipeline(config, visualize=args.visualize)

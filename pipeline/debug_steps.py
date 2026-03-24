@@ -664,6 +664,7 @@ def _project_cad_wireframe(
     color: tuple = (0, 255, 100),
     alpha: float = 0.5,
     scene_scale: float = 1.0,
+    pose_method: str = "icp",
 ) -> Image.Image:
     """Projiziert CAD-Mesh-Kanten auf das Szenenbild mittels Pose + Kameraintrinsics.
 
@@ -676,6 +677,7 @@ def _project_cad_wireframe(
         color: Farbe der Wireframe-Linien.
         alpha: Transparenz (0=unsichtbar, 1=opak).
         scene_scale: Falls das Szenenbild skaliert wurde.
+        pose_method: "icp" oder "foundationpose" — steuert Skalierungs- und Pose-Konvention.
 
     Returns:
         Szenenbild mit Wireframe-Overlay.
@@ -692,16 +694,24 @@ def _project_cad_wireframe(
         logger.warning("CAD-Modell laden fehlgeschlagen: %s", e)
         return scene_img
 
-    # Skalieren (gleiche Methode wie in step8: scale around mesh center)
+    # Skalieren — method-aware center
     raw_verts = np.array(mesh.vertices)
-    mesh_center = raw_verts.mean(axis=0)  # Open3D get_center() = vertex mean
-    verts = (raw_verts - mesh_center) * scale_factor + mesh_center  # (N, 3)
+    if pose_method == "foundationpose":
+        # FP centers mesh around bbox center internally, so just scale around origin
+        verts = raw_verts * scale_factor
+    else:
+        # ICP scales around bbox center (Open3D get_center = (min+max)/2)
+        bbox_center = (raw_verts.min(axis=0) + raw_verts.max(axis=0)) / 2
+        verts = (raw_verts - bbox_center) * scale_factor + bbox_center
 
-    # pose_matrix bildet camera->CAD (source=observed, target=CAD in ICP),
-    # wir brauchen CAD->camera, also die Inverse.
-    T_cad2cam = np.linalg.inv(pose_matrix)
-    R = T_cad2cam[:3, :3]
-    t = T_cad2cam[:3, 3]
+    # Pose convention: FP returns CAD→camera directly, ICP returns camera→CAD
+    if pose_method == "foundationpose":
+        cam_from_obj = pose_matrix
+    else:
+        cam_from_obj = np.linalg.inv(pose_matrix)
+
+    R = cam_from_obj[:3, :3]
+    t = cam_from_obj[:3, 3]
     verts_cam = (R @ verts.T).T + t  # (N, 3)
 
     # Auf 2D projizieren
@@ -717,6 +727,23 @@ def _project_cad_wireframe(
     u[valid] = (fx * verts_cam[valid, 0] / z[valid] + cx) * scene_scale
     v[valid] = (fy * verts_cam[valid, 1] / z[valid] + cy) * scene_scale
 
+    # Diagnostic logging
+    if valid.any():
+        u_valid, v_valid = u[valid], v[valid]
+        logger.info(
+            "  [wireframe] pose_method=%s  projected px bounds: "
+            "u=[%.1f, %.1f]  v=[%.1f, %.1f]  image=%dx%d",
+            pose_method, u_valid.min(), u_valid.max(),
+            v_valid.min(), v_valid.max(),
+            scene_img.width, scene_img.height,
+        )
+    else:
+        logger.warning("  [wireframe] No vertices with z>0 — overlay will be empty")
+
+    logger.debug(
+        "  [wireframe] pose_matrix:\n%s", np.array2string(pose_matrix, precision=4)
+    )
+
     # Kanten zeichnen (Mesh-Edges subsamplen fuer Performance)
     edges = mesh.edges_unique
     if len(edges) > 5000:
@@ -730,6 +757,7 @@ def _project_cad_wireframe(
     line_color = (*color, a_int)
 
     w, h = scene_img.size
+    edges_drawn = 0
     for i0, i1 in edges:
         if not (valid[i0] and valid[i1]):
             continue
@@ -740,6 +768,37 @@ def _project_cad_wireframe(
             x1 < -50 or x1 > w + 50 or y1 < -50 or y1 > h + 50):
             continue
         draw_ov.line([(x0, y0), (x1, y1)], fill=line_color, width=1)
+        edges_drawn += 1
+
+    # Fallback: scatter-plot vertices as dots for simple meshes with few edges
+    if edges_drawn < 20 and valid.any():
+        dot_color = (*color, a_int)
+        for idx in np.where(valid)[0]:
+            px, py = u[idx], v[idx]
+            if 0 <= px < w and 0 <= py < h:
+                draw_ov.ellipse(
+                    [(px - 2, py - 2), (px + 2, py + 2)], fill=dot_color
+                )
+
+    logger.info("  [wireframe] edges_drawn=%d / %d total", edges_drawn, len(edges))
+
+    # Coordinate axes overlay (X=red, Y=green, Z=blue) at object origin
+    origin_cam = cam_from_obj[:3, 3]
+    if origin_cam[2] > 0.01:
+        axis_len = 0.05  # 5 cm in world units
+        axis_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+        for ax_idx, ax_col in enumerate(axis_colors):
+            direction = cam_from_obj[:3, ax_idx] * axis_len
+            tip_cam = origin_cam + direction
+            if tip_cam[2] > 0.01:
+                ou = (fx * origin_cam[0] / origin_cam[2] + cx) * scene_scale
+                ov = (fy * origin_cam[1] / origin_cam[2] + cy) * scene_scale
+                tu = (fx * tip_cam[0] / tip_cam[2] + cx) * scene_scale
+                tv = (fy * tip_cam[1] / tip_cam[2] + cy) * scene_scale
+                draw_ov.line(
+                    [(ou, ov), (tu, tv)],
+                    fill=(*ax_col, 220), width=2,
+                )
 
     result = scene_img.convert("RGBA")
     result.alpha_composite(overlay)
@@ -755,6 +814,8 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
                         pose_matrix: Optional[np.ndarray] = None,
                         cad_model_path: Optional[str] = None,
                         cam: Optional[dict] = None,
+                        pose_method: str = "icp",
+                        gt_pose_matrix: Optional[np.ndarray] = None,
                         ) -> str:
     """
     Links: Originalszene mit Modell-Thumbnail (50% Alpha) in BBox eingeblendet
@@ -778,7 +839,35 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
         scene_s = _project_cad_wireframe(
             scene_s, cad_model_path, pose_matrix, scale_factor,
             cam, color=(0, 255, 100), alpha=0.6, scene_scale=sc,
+            pose_method=pose_method,
         )
+        # GT wireframe overlay (magenta).
+        # BOP GT poses reference centered models (bbox_center at origin).
+        # Our OBJ mesh may have a non-zero bbox_center offset, causing a
+        # systematic pixel shift.  Compensate by adjusting the GT translation:
+        #   t_adjusted = t_gt - R_gt @ bbox_center
+        # so the wireframe is drawn as if the mesh were centered.
+        if gt_pose_matrix is not None and cad_model_path:
+            try:
+                import trimesh as _trimesh
+                _m = _trimesh.load(cad_model_path, force="mesh")
+                _v = np.array(_m.vertices)
+                _bbox_c = (_v.min(0) + _v.max(0)) / 2
+                _R_gt = gt_pose_matrix[:3, :3]
+                _gt_adj = gt_pose_matrix.copy()
+                _gt_adj[:3, 3] = gt_pose_matrix[:3, 3] - _R_gt @ _bbox_c
+                logger.info(
+                    "  [GT] bbox_center offset: %s m  → t adjustment: %s m",
+                    np.round(_bbox_c, 4),
+                    np.round(-_R_gt @ _bbox_c, 4),
+                )
+            except Exception:
+                _gt_adj = gt_pose_matrix
+            scene_s = _project_cad_wireframe(
+                scene_s, cad_model_path, _gt_adj, 1.0,
+                cam, color=(255, 100, 255), alpha=0.6, scene_scale=sc,
+                pose_method="foundationpose",
+            )
         overlay_label = "A — Szene + 3D-Wireframe (Pose)"
     else:
         best_t = _load_thumb(best_object_id, ref_dir, max(bw, bh))
@@ -794,6 +883,13 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
     _text(draw_s, f"{best_object_id[:28]}  ×{scale_factor:.3f}",
           (x1, max(0, y1 - 22)), fg=(255, 215, 0), bg=(0, 0, 0), size=13)
 
+    # Legend labels for wireframe overlays
+    if has_3d:
+        legend_y = scene_s.height - 40
+        _text(draw_s, "Predicted", (6, legend_y), fg=(0, 255, 100), bg=(0, 0, 0), size=12)
+        if gt_pose_matrix is not None:
+            _text(draw_s, "GT", (6, legend_y + 16), fg=(255, 100, 255), bg=(0, 0, 0), size=12)
+
     pa = _label_top(scene_s, overlay_label)
 
     # --- Panel B: Modell-Referenzbild ---
@@ -801,7 +897,8 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
     pb = _label_top(ref_img, f"B — Referenzbild: {best_object_id[:30]}", fg=(255, 215, 0))
 
     # --- Panel C: Infos ---
-    pc_h = max(pa.height, pb.height, 350)
+    gt_extra = 90 if (gt_pose_matrix is not None and pose_matrix is not None) else 0
+    pc_h = max(pa.height, pb.height, 350 + gt_extra)
     pc = Image.new("RGB", (340, pc_h), (12, 12, 18))
     td = ImageDraw.Draw(pc)
     td.text((10, 14), "SCHRITT 7 + 8", fill=(0, 200, 255), font=_font(20))
@@ -840,6 +937,30 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
             y += 18
     else:
         td.text((16, y), "(Pose nicht berechnet)", fill=(100, 100, 100), font=_font(13))
+
+    # GT error metrics
+    if gt_pose_matrix is not None and pose_matrix is not None:
+        y += 26
+        td.line([(10, y), (330, y)], fill=(50, 50, 80), width=1)
+        y += 8
+        td.text((10, y), "GT-Vergleich:", fill=(255, 100, 255), font=_font(14))
+        y += 22
+
+        # Translation error (mm)
+        t_pred = pose_matrix[:3, 3] if pose_method == "foundationpose" else np.linalg.inv(pose_matrix)[:3, 3]
+        t_gt = gt_pose_matrix[:3, 3]
+        t_err_mm = np.linalg.norm(t_pred - t_gt) * 1000.0
+        td.text((16, y), f"Δt: {t_err_mm:.1f} mm", fill="white", font=_font(14))
+        y += 20
+
+        # Rotation error (deg)
+        R_pred = pose_matrix[:3, :3] if pose_method == "foundationpose" else np.linalg.inv(pose_matrix)[:3, :3]
+        R_gt = gt_pose_matrix[:3, :3]
+        R_rel = R_pred @ R_gt.T
+        cos_angle = np.clip((np.trace(R_rel) - 1) / 2, -1.0, 1.0)
+        rot_err_deg = np.degrees(np.arccos(cos_angle))
+        td.text((16, y), f"ΔR: {rot_err_deg:.1f}°", fill="white", font=_font(14))
+        y += 20
 
     h_max = max(pa.height, pb.height, pc.height)
     # Pad panels to equal height
@@ -923,6 +1044,10 @@ def run_debug(args) -> None:
         reference_images_dir=args.reference_images,
         cad_models_dir=args.cad_models,
         output_dir=args.output,
+        pose_method=args.pose_method,
+        foundationpose_url=args.foundationpose_url,
+        foundationpose_est_refine_iter=args.foundationpose_refine_iter,
+        foundationpose_debug=args.foundationpose_debug,
         ulip_repo_path=args.ulip_repo,
         ulip2_checkpoint=args.ulip_checkpoint,
         ulip2_mode=getattr(args, "ulip_mode", "cross"),
@@ -931,13 +1056,37 @@ def run_debug(args) -> None:
 
     rgb_image = Image.open(args.rgb).convert("RGB")
     depth_raw = np.array(Image.open(args.depth))
-    depth_m = (depth_raw.astype(np.float32) / config.depth_scale
-               if depth_raw.max() > 100 else depth_raw.astype(np.float32))
 
     cam = {}
+    gt_data = None      # will hold (scene_gt_dict, label_to_obj_id, img_id)
     if args.camera:
         img_id = int(os.path.splitext(os.path.basename(args.rgb))[0])
         cam = load_camera_intrinsics(args.camera, image_id=img_id)
+
+        # Load ground-truth poses if available
+        import json as _json
+        scene_dir = os.path.dirname(args.camera)
+        gt_path = os.path.join(scene_dir, "scene_gt.json")
+        id_label_path = os.path.join(scene_dir, "..", "id_to_label.json")
+        if os.path.isfile(gt_path) and os.path.isfile(id_label_path):
+            try:
+                with open(gt_path) as f:
+                    scene_gt = _json.load(f)
+                with open(id_label_path) as f:
+                    id_to_label = _json.load(f)
+                label_to_obj_id = {v: int(k) for k, v in id_to_label.items()}
+                gt_data = (scene_gt, label_to_obj_id, img_id)
+                logger.info("  GT geladen: %s (%d Labels)", gt_path, len(label_to_obj_id))
+            except Exception as e:
+                logger.warning("  GT laden fehlgeschlagen: %s", e)
+
+    # Convert depth to metres.
+    # BOP scene_camera.json depth_scale is a multiplier (depth_m = raw * scale),
+    # but our pipeline uses it as a divisor (depth_m = raw / scale, e.g. 10000
+    # for 0.1mm raw values).  The two conventions are incompatible, so we always
+    # use config.depth_scale here and ignore the JSON field.
+    depth_m = (depth_raw.astype(np.float32) / config.depth_scale
+               if depth_raw.max() > 100 else depth_raw.astype(np.float32))
 
     results = {}
 
@@ -1044,6 +1193,7 @@ def run_debug(args) -> None:
 
     # ── SCHRITT 5 ──────────────────────────────────────────────────────────
     shape_res = None
+    shape = None  # Initialisiere shape, um UnboundLocalError zu vermeiden
     if not args.ulip_checkpoint:
         logger.warning("\n  --ulip_checkpoint fehlt → Schritt 5 übersprungen.")
     elif pc:
@@ -1140,12 +1290,35 @@ def run_debug(args) -> None:
         }
         logger.info("  method=%s  conf=%.4f", pr.method, pr.confidence)
 
+    # --- GT Pose Matrix aufbauen ---
+    gt_pose_matrix = None
+    if gt_data is not None:
+        scene_gt, label_to_obj_id, frame_id = gt_data
+        gt_obj_id = label_to_obj_id.get(best.object_id)
+        if gt_obj_id is not None:
+            frame_key = str(frame_id)
+            for gt_entry in scene_gt.get(frame_key, []):
+                if gt_entry.get("obj_id") == gt_obj_id:
+                    R_gt = np.array(gt_entry["cam_R_m2c"]).reshape(3, 3)
+                    t_gt = np.array(gt_entry["cam_t_m2c"]) / 1000.0  # mm → m
+                    gt_pose_matrix = np.eye(4)
+                    gt_pose_matrix[:3, :3] = R_gt
+                    gt_pose_matrix[:3, 3] = t_gt
+                    logger.info("  GT Pose gefunden für obj_id=%d (%s)", gt_obj_id, best.object_id)
+                    break
+            if gt_pose_matrix is None:
+                logger.info("  Kein GT-Eintrag für obj_id=%d in Frame %s", gt_obj_id, frame_key)
+        else:
+            logger.info("  Objekt '%s' nicht in id_to_label gefunden", best.object_id)
+
     save_debug_step7_8(rgb_image, loc.bbox, scale_factor, best.object_id,
                        args.reference_images, pose_info,
                        obs_size, cad_size, out,
                        pose_matrix=pr.pose_matrix if 'pr' in dir() else None,
-                    cad_model_path=resolved_mesh,
-                       cam=cam)
+                       cad_model_path=resolved_mesh,
+                       cam=cam,
+                       pose_method=pr.method if 'pr' in dir() else "icp",
+                       gt_pose_matrix=gt_pose_matrix)
     _done(out)
 
 
@@ -1283,6 +1456,15 @@ Beispiele:
                    help="ULIP-2 Modus: 'cross'=Image→PC (default), 'pc'=PC→PC, 'both'=Mix")
     p.add_argument("--ulip_image_weight", type=float, default=0.5,
                    help="Gewicht des Image-Embeddings im Modus 'both' (default: 0.5)")
+    p.add_argument("--pose_method", default="icp",
+                   choices=["foundationpose", "megapose", "icp"],
+                   help="Pose-Backend fuer Schritt 8 (default: icp)")
+    p.add_argument("--foundationpose_url", default="http://foundationpose:5050",
+                   help="URL des FoundationPose HTTP-Service (default: http://foundationpose:5050)")
+    p.add_argument("--foundationpose_refine_iter", type=int, default=5,
+                   help="Refinement-Iterationen fuer FoundationPose register()")
+    p.add_argument("--foundationpose_debug", type=int, default=0,
+                   help="FoundationPose Debug-Level (0=headless)")
     return p.parse_args()
 
 

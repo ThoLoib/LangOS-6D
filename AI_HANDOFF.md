@@ -1,8 +1,6 @@
 # AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-03-17
-
----
+> Zuletzt aktualisiert: 2026-03-20
 
 ## Projektziel
 
@@ -23,6 +21,90 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | **`exp/ulip2-full`** | **ULIP full experiments (PC vs cross-modal image->PC)** | 🟢 aktiv |
 
 ---
+
+## Update 2026-03-24 (GT overlay + intrinsics/depth fixes)
+
+### GT pose overlay in debug_07_scale_pose.png
+- `pipeline/debug_steps.py`: loads `scene_gt.json` + `id_to_label.json` in `run_debug()` after camera intrinsics.
+- Builds 4×4 GT pose matrix from `cam_R_m2c` (reshape 3×3) and `cam_t_m2c` (mm → m).
+- Compensates for mesh bbox_center offset: subtracts `R_gt @ bbox_center` from GT translation before projection (BOP model frame ≠ pipeline OBJ frame).
+- Draws magenta GT wireframe via second `_project_cad_wireframe()` call alongside predicted (green).
+- Adds "Predicted" / "GT" legend labels to Panel A; Δt (mm) and ΔR (deg) error metrics to Panel C.
+- Panel C min height +90px when GT metrics are present.
+
+### Camera intrinsics priority fix
+- Camera loading moved **before** depth conversion so real `fx/fy/cx/cy` from `scene_camera.json` reach `generate()`.
+- `config` values used as fallback only when `--camera` is absent.
+- Affects both `pipeline/debug_steps.py` and `pipeline/run_pipeline.py`.
+
+### BOP depth_scale convention mismatch (gotcha)
+- `scene_camera.json` `depth_scale` is a **multiplier** (e.g. 0.1 for this dataset).
+- Pipeline divides depth by `config.depth_scale` (default 10000.0) — a **divisor** convention.
+- Using the JSON value caused depths to be 100× too large, resulting in ~855mm translation error.
+- Decision: always use `config.depth_scale` as divisor; ignore the JSON field entirely.
+- Explanatory comment added in both `debug_steps.py` and `run_pipeline.py`.
+
+---
+
+## Update 2026-03-20 (FoundationPose two-container HTTP integration)
+
+Architecture change: FoundationPose now runs as a **separate Docker container** with an HTTP API instead of via subprocess/venv inside the OSCAR container.
+
+- `foundationpose_server.py` in the FoundationPose repo: Flask server with `/health` and `/estimate_pose`
+- `pipeline/foundationpose_bridge.py`: rewritten as HTTP client (uses httpx)
+- `pipeline/step8_pose_estimation.py`: calls bridge via HTTP, removed subprocess and local-import paths
+- `pipeline/config.py`: `foundationpose_url` replaces `foundationpose_python` and `foundationpose_repo_path`
+- `docker-compose.yml`: added `foundationpose` service using `shingarey/foundationpose_custom_cuda121`
+- FP container mounts OSCAR repo read-only at `/oscar` for CAD model access
+- Bridge auto-translates CAD paths from `/app/...` to `/oscar/...`
+
+Why this was done:
+- The venv-inside-OSCAR approach failed because the OSCAR container (CUDA 12.2 runtime, Python 3.11) cannot compile pytorch3d/kaolin/nvdiffrast which require CUDA devel headers.
+- Two containers with HTTP boundary gives full dependency isolation with no shared Python environment.
+
+Removed (superseded):
+- `foundationpose_python` config field and CLI arg
+- `foundationpose_repo_path` config field and CLI arg
+- Subprocess bridge logic in step8
+- Local-import path (`_run_foundationpose_local`) in step8
+- `../FoundationPose:/foundationpose` volume mount in oscar service
+- MegaPose stub method in step8 (was always NotImplementedError)
+
+Operational pattern:
+
+```bash
+# Start FP service (first time loads models ~30s)
+docker compose up -d foundationpose
+
+# Run OSCAR with FoundationPose
+docker compose run --rm -it oscar bash
+python3.11 -m pipeline.debug_steps \
+  --until_step 8 \
+  --prompt "I need the red mug" \
+  --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+  --pose_method foundationpose \
+  --reference_images object_images/ycbv_gso/ \
+  --cad_models object_database/ycbv_gso/ \
+  --output debug_output
+```
+
+If FoundationPose service is down or fails, Step 8 falls back to ICP automatically.
+
+## Update 2026-03-19 (FoundationPose split-env integration — superseded)
+
+> This approach was replaced by the two-container HTTP architecture on 2026-03-20.
+> The subprocess bridge and venv approach did not work due to CUDA/ABI incompatibilities.
+> Kept here for historical context only.
+
+## Update 2026-03-18 (foundationpose prep + step1 cleanup)
+
+- `pipeline/step1_localization.py`:
+  - eine doppelte Kommentarzeile im Header entfernt (non-functional cleanup).
+- `docker-compose.yml`:
+  - zusätzliches Volume-Mount für FoundationPose (superseded by 2026-03-20 two-container setup).
+- FoundationPose Setup-Status:
+  - Repo lokal geklont (`~/thesis/FoundationPose`)
+  - Docker image vorhanden (`foundationpose:latest`)
 
 ## Update 2026-03-17 (exp/ulip2-full)
 
@@ -47,18 +129,6 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
   - `open-clip-torch` (für ULIP cross)
   - `trimesh` (für Overlay/Wireframe-Visualisierung)
 
-## Update 2026-03-18 (foundationpose prep + step1 cleanup)
-
-- `pipeline/step1_localization.py`:
-  - eine doppelte Kommentarzeile im Header entfernt (non-functional cleanup).
-- `docker-compose.yml`:
-  - zusätzliches Volume-Mount für FoundationPose:
-    - `../FoundationPose:/foundationpose`
-- FoundationPose Setup-Status:
-  - Repo lokal geklont (`~/thesis/FoundationPose`)
-  - Docker image vorhanden (`foundationpose:latest`)
-  - Step 8 verwendet weiterhin ICP-Fallback, bis die FoundationPose-API in `step8_pose_estimation.py` konkret integriert ist.
-
 ---
 
 ## Aktueller Stand (exp/ulip2)
@@ -79,8 +149,8 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
      - Ergebnis: master_chef_can fused=0.8473
   7. `step7_scale_estimation.py` – RANSAC + ICP Coarse-Alignment → Partial-Aware Scale
      - scale=1.2968, conf=0.63 (2 beste Achsen)
-  8. `step8_pose_estimation.py` – ICP mit Coarse-Alignment aus Step 7 als Startpose
-     - fitness=0.9895, RMSE=0.007m
+  8. `step8_pose_estimation.py` – FoundationPose (HTTP) oder ICP mit Coarse-Alignment
+     - ICP: fitness=0.9895, RMSE=0.007m
 
 - **Debug-Visualisierung** (`pipeline/debug_steps.py`, ~1200 Zeilen):
   - 7 diagnostische PNG-Bilder + interaktiver 3D-Viewer (HTML)
@@ -99,17 +169,16 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
   - Fallback: regelbasierter Heuristic-Parser
 
 - **Docker-Konfiguration**:
-  - Image: `tholoi/oscar-plus`
+  - OSCAR Image: `tholoi/oscar-plus` (CUDA 12.2, Python 3.11)
+  - FoundationPose Image: `shingarey/foundationpose_custom_cuda121` (CUDA 12.1, Python 3.8)
   - GPU-Support via `deploy.resources.reservations.devices`
   - ULIP-Volume: `../ULIP:/ulip`
   - HuggingFace Cache-Volume
-  - Alle Python-Dependencies inkl. trimesh
 
 ### Bekannte Limitierungen
 
 1. **ULIP-2 Shape Matching** liefert schwache Ergebnisse für partielle Punktwolken (single-view, ~4k Punkte vs. komplette 10k-CAD-Modelle). Fusion kompensiert durch CLIP+DINO.
 2. **ICP auf symmetrischen Objekten** (z.B. Dosen) kann Rotation um Symmetrieachse nicht eindeutig bestimmen.
-3. **FoundationPose** ist als `NotImplementedError` markiert – Pipeline nutzt ICP als Default.
 
 ### Was noch fehlt
 
@@ -131,6 +200,7 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `pipeline/config.py` | ~140 | Zentrale `PipelineConfig` Dataclass |
 | `pipeline/run_pipeline.py` | ~750 | Orchestrator + CLI + LLM-Parsing |
 | `pipeline/debug_steps.py` | ~1200 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
+| `pipeline/foundationpose_bridge.py` | ~100 | HTTP client for FoundationPose service |
 | `pipeline/step1_localization.py` | ~240 | GroundingDINO + SAM |
 | `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Point Cloud |
 | `pipeline/step3_clip_retrieval.py` | ~280 | CLIP Text-/Bild-Retrieval |
@@ -138,7 +208,7 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `pipeline/step5_shape_matching.py` | ~680 | ULIP-2 Encoder + NaN-Filterung |
 | `pipeline/step6_fusion.py` | ~370 | Score-Fusion (weighted_sum, RRF, intersection) |
 | `pipeline/step7_scale_estimation.py` | ~300 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
-| `pipeline/step8_pose_estimation.py` | ~460 | ICP mit initial_pose Support |
+| `pipeline/step8_pose_estimation.py` | ~290 | FoundationPose (HTTP) + ICP fallback |
 | `pipeline/utils.py` | ~150 | Hilfsfunktionen |
 | `pipeline/visualization.py` | ~375 | Legacy-Visualization |
 
@@ -163,10 +233,10 @@ weight_ulip = 0.3
 # Ollama
 ollama_host = "http://localhost:11434"
 ollama_model = "gemma3:4b"
-ollama_timeout = 30.0
 
 # Pose
-pose_method = "icp"             # FoundationPose ist NotImplemented
+pose_method = "icp"
+foundationpose_url = "http://foundationpose:5050"
 ```
 
 ---
@@ -207,9 +277,11 @@ Prompt + RGB-D Image
     │ 7. Scale Est.    │ RANSAC+ICP → Partial-Aware Scale
     └────────┬─────────┘ (2 beste Achsen)
              ▼
-    ┌──────────────────┐
-    │ 8. Pose Est.     │ ICP mit Coarse-Alignment als Startpose
-    └──────────────────┘ → 4×4 Pose Matrix
+    ┌──────────────────┐           ┌──────────────────────┐
+    │ 8. Pose Est.     │── HTTP ──>│ FoundationPose       │
+    │  (OSCAR cont.)   │<── JSON ──│ (separate container)  │
+    └──────────────────┘           └──────────────────────┘
+      ↓ fallback: ICP              → 4×4 Pose Matrix
 ```
 
 ---
@@ -218,7 +290,7 @@ Prompt + RGB-D Image
 
 ### Container starten
 ```bash
-docker compose build
+docker compose up -d foundationpose   # optional: start FP service
 docker compose run --rm -it oscar bash
 ```
 
@@ -262,8 +334,8 @@ python retrieval_combi_eval.py  # → 75.95% Top-1
 | `np.asarray(pcd.colors)` Overflow | `np.clip(raw, 0.0, 1.0)` | `step5_shape_matching.py` |
 | NaN in ULIP Similarity Scores | `torch.where(nan_mask, -1.0, sims)` | `step5_shape_matching.py` |
 | NaN in Fusion Min-Max Norm. | Filter NaN vor min/max | `step6_fusion.py` |
-| FoundationPose Fallback ohne initial_pose | `initial_pose` durchreichen | `step8_pose_estimation.py` |
 | Camera intrinsics KeyError | Fallback auf ersten Key | `pipeline/utils.py` |
+| BOP `depth_scale` multiplier vs divisor mismatch | Always use `config.depth_scale` as divisor; ignore `scene_camera.json` field (it uses multiplier 0.1, not divisor) | `pipeline/debug_steps.py`, `pipeline/run_pipeline.py` |
 | Stale .pyc im Docker | `rm -rf /app/pipeline/__pycache__` nach Edits | manuell |
 
 ---
