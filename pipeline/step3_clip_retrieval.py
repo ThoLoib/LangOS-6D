@@ -140,7 +140,6 @@ class CLIPRetriever:
             id_to_label: Optionales Mapping von Objekt-IDs auf Labels.
         """
         self._load_model()
-        import clip
 
         desc_file = desc_file or self.config.description_file
         if not desc_file:

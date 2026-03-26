@@ -9,19 +9,11 @@
 #
 # Optionen:
 #   • FoundationPose – NVIDIA, State-of-the-Art für model-based Pose
+#     Runs in a separate container, called via HTTP.
 #     Ref: https://github.com/NVlabs/FoundationPose
-#     Paper: "FoundationPose: Unified 6D Object Pose Estimation and
-#             Tracking of Novel Objects" (Wen et al., 2024)
-#
-#   • MegaPose – Model-based Pose Estimation mit CNOS
-#     Ref: https://github.com/megapose6d/megapose6d
-#     Paper: "MegaPose: 6D Pose Estimation of Novel Objects via
-#             Render & Compare" (Labbe et al., 2022)
 #
 #   • ICP + RANSAC – Klassische geometrische Registrierung
 #     Ref: Open3D ICP Tutorial
-#          http://www.open3d.org/docs/release/tutorial/pipelines/icp_registration.html
-#     Paper: "A Method for Registration of 3-D Shapes" (Besl & McKay, 1992)
 #
 # Inputs:
 #   - Skaliertes CAD-Modell (Schritt 7)
@@ -36,6 +28,7 @@
 # =============================================================================
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -85,21 +78,11 @@ class PoseEstimator:
     """Schätzt die 6D-Pose eines Objekts relativ zur Kamera.
 
     Unterstützt mehrere Backends:
-    1. foundationpose: NVIDIA FoundationPose (State-of-the-Art)
-    2. megapose: MegaPose (Render & Compare)
-    3. icp: Klassische Point-to-Point ICP-Registrierung
+    1. foundationpose: NVIDIA FoundationPose (via HTTP to separate container)
+    2. icp: Klassische Point-to-Point ICP-Registrierung
 
     Die ICP-Methode ist als Fallback implementiert und benötigt keine
-    externen Modelle. FoundationPose und MegaPose erfordern separate
-    Installation.
-
-    Usage:
-        >>> estimator = PoseEstimator(config)
-        >>> result = estimator.estimate(
-        ...     rgb_image, depth_image, mask,
-        ...     cad_model_path="cad/object.obj",
-        ...     scale_factor=0.85
-        ... )
+    externen Modelle.
     """
 
     def __init__(self, config: PipelineConfig):
@@ -121,21 +104,7 @@ class PoseEstimator:
         method: Optional[str] = None,
         initial_pose: Optional[np.ndarray] = None,
     ) -> PoseEstimationResult:
-        """Schätzt die 6D-Pose des Objekts.
-
-        Args:
-            rgb_image: RGB-Bild (H, W, 3), uint8.
-            depth_image: Tiefenbild (H, W), float32 in Metern (für ICP).
-            mask: Segmentierungsmaske (H, W), bool.
-            cad_model_path: Pfad zum (skalierten) CAD-Modell.
-            scale_factor: Angewandter Skalierungsfaktor.
-            observed_pc: Vorberechnete Punktwolke (für ICP, spart Neuberechnung).
-            fx, fy, cx, cy: Kameraintrinsics (überschreiben Config).
-            method: Backend ("foundationpose" | "megapose" | "icp").
-
-        Returns:
-            PoseEstimationResult mit Transformation und Konfidenz.
-        """
+        """Schätzt die 6D-Pose des Objekts."""
         method = method or self.config.pose_method
 
         logger.info(f"Pose Estimation mit Methode: {method}")
@@ -144,11 +113,7 @@ class PoseEstimator:
             return self._estimate_foundationpose(
                 rgb_image, depth_image, mask, cad_model_path,
                 scale_factor, fx, fy, cx, cy, initial_pose,
-            )
-        elif method == "megapose":
-            return self._estimate_megapose(
-                rgb_image, mask, cad_model_path, scale_factor,
-                fx, fy, cx, cy,
+                observed_pc=observed_pc,
             )
         elif method == "icp":
             return self._estimate_icp(
@@ -158,7 +123,7 @@ class PoseEstimator:
             raise ValueError(f"Unbekannte Pose-Methode: {method}")
 
     # -----------------------------------------------------------------------
-    # Methode 1: FoundationPose (NVIDIA)
+    # Methode 1: FoundationPose (via HTTP)
     # -----------------------------------------------------------------------
 
     def _estimate_foundationpose(
@@ -173,102 +138,81 @@ class PoseEstimator:
         cx: Optional[float],
         cy: Optional[float],
         initial_pose: Optional[np.ndarray] = None,
+        observed_pc: Optional[PointCloudResult] = None,
     ) -> PoseEstimationResult:
-        """6D Pose via FoundationPose.
+        """6D Pose via FoundationPose HTTP service.
 
-        FoundationPose nutzt einen neuronalen Render-and-Compare-Ansatz:
-        1. Initiale Pose-Hypothesen generieren.
-        2. CAD-Modell rendern und mit dem Eingabebild vergleichen.
-        3. Iterativ verfeinern.
-
-        Ref: https://github.com/NVlabs/FoundationPose
-        Paper: Wen et al., "FoundationPose: Unified 6D Object Pose
-               Estimation and Tracking of Novel Objects", CVPR 2024.
-
-        HINWEIS: Erfordert separate Installation von FoundationPose.
+        Calls the FoundationPose container over the Docker network.
+        Falls back to ICP on any error.
         """
         try:
-            # FoundationPose Integration
-            # Das folgende ist ein Interface-Template – die tatsächliche
-            # Integration hängt von der FoundationPose-Installation ab.
-            logger.info("Versuche FoundationPose zu verwenden...")
+            logger.info("Calling FoundationPose service...")
+            if depth is None:
+                raise RuntimeError("FoundationPose benoetigt ein Tiefenbild, erhielt aber None.")
 
-            # Beispiel-Interface (muss an die tatsächliche API angepasst werden):
-            # from foundationpose import FoundationPoseEstimator
-            # estimator = FoundationPoseEstimator(cad_path, scale)
-            # pose = estimator.estimate(rgb, depth, mask, K)
+            K = self._camera_matrix(fx, fy, cx, cy)
+            url = self.config.foundationpose_url.rstrip("/") + "/estimate_pose"
 
-            raise NotImplementedError(
-                "FoundationPose-Integration noch nicht implementiert.\n"
-                "Bitte das FoundationPose-Repository klonen und konfigurieren:\n"
-                "  https://github.com/NVlabs/FoundationPose\n"
-                "Alternativ: method='icp' als Fallback verwenden."
+            from .foundationpose_bridge import call_foundationpose
+
+            pose_matrix, fp_conf = call_foundationpose(
+                url=url,
+                rgb=rgb,
+                depth=depth,
+                mask=mask,
+                K=K,
+                cad_path=cad_path,
+                scale=scale,
+                refine_iter=int(self.config.foundationpose_est_refine_iter),
+                debug=int(self.config.foundationpose_debug),
+                debug_dir=os.path.join(self.config.output_dir, "foundationpose_debug"),
             )
 
-        except (ImportError, NotImplementedError) as e:
-            logger.warning(f"FoundationPose nicht verfügbar: {e}")
+            return PoseEstimationResult(
+                pose_matrix=pose_matrix,
+                rotation=np.array(pose_matrix[:3, :3]),
+                translation=np.array(pose_matrix[:3, 3]),
+                confidence=float(fp_conf),
+                method="foundationpose",
+                cad_model_path=cad_path,
+                scale_factor=scale,
+            )
+
+        except Exception as e:
+            logger.warning("FoundationPose nicht verfuegbar oder fehlgeschlagen: %s", e)
             logger.info("Fallback auf ICP...")
-            # ICP als Fallback wenn Tiefe verfügbar
-            if depth is not None:
+
+            if observed_pc is None and depth is not None:
                 from .step2_pointcloud import PointCloudGenerator
+
                 pc_gen = PointCloudGenerator(self.config)
-                observed_pc = pc_gen.generate(
-                    rgb, depth, mask, fx, fy, cx, cy
-                )
-                if observed_pc:
-                    return self._estimate_icp(observed_pc, cad_path, scale, initial_pose)
+                observed_pc = pc_gen.generate(rgb, depth, mask, fx, fy, cx, cy)
+
+            if observed_pc is not None:
+                return self._estimate_icp(observed_pc, cad_path, scale, initial_pose)
 
             return self._identity_pose(cad_path, scale, "foundationpose_fallback")
 
-    # -----------------------------------------------------------------------
-    # Methode 2: MegaPose
-    # -----------------------------------------------------------------------
-
-    def _estimate_megapose(
+    def _camera_matrix(
         self,
-        rgb: np.ndarray,
-        mask: np.ndarray,
-        cad_path: str,
-        scale: float,
         fx: Optional[float],
         fy: Optional[float],
         cx: Optional[float],
         cy: Optional[float],
-    ) -> PoseEstimationResult:
-        """6D Pose via MegaPose.
+    ) -> np.ndarray:
+        """Builds camera intrinsic matrix from args or config defaults."""
+        k_fx = float(fx if fx is not None else self.config.camera_fx)
+        k_fy = float(fy if fy is not None else self.config.camera_fy)
+        k_cx = float(cx if cx is not None else self.config.camera_cx)
+        k_cy = float(cy if cy is not None else self.config.camera_cy)
 
-        MegaPose ist ein Render-and-Compare-Ansatz, der:
-        1. CAD-Modell aus vielen Blickwinkeln rendert.
-        2. Features mit dem Eingabebild vergleicht.
-        3. Die beste Pose iterativ verfeinert.
-
-        Ref: https://github.com/megapose6d/megapose6d
-        Paper: Labbe et al., "MegaPose: 6D Pose Estimation of Novel
-               Objects via Render & Compare", CoRL 2022.
-
-        HINWEIS: Erfordert separate Installation von MegaPose.
-        """
-        try:
-            logger.info("Versuche MegaPose zu verwenden...")
-
-            # Beispiel-Interface (anpassbar):
-            # from megapose.inference import MegaPoseInference
-            # inference = MegaPoseInference(cad_path)
-            # pose = inference.run(rgb, mask, K)
-
-            raise NotImplementedError(
-                "MegaPose-Integration noch nicht implementiert.\n"
-                "Bitte das MegaPose-Repository klonen und konfigurieren:\n"
-                "  https://github.com/megapose6d/megapose6d\n"
-                "Alternativ: method='icp' als Fallback verwenden."
-            )
-
-        except (ImportError, NotImplementedError) as e:
-            logger.warning(f"MegaPose nicht verfügbar: {e}")
-            return self._identity_pose(cad_path, scale, "megapose_fallback")
+        return np.array(
+            [[k_fx, 0.0, k_cx], [0.0, k_fy, k_cy], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
 
     # -----------------------------------------------------------------------
-    # Methode 3: ICP (Iterative Closest Point)
+    # Methode 2: ICP (Iterative Closest Point)
     # -----------------------------------------------------------------------
 
     def _estimate_icp(
@@ -288,19 +232,6 @@ class PoseEstimator:
         1. CAD-Modell laden und Punktwolke sampeln.
         2. RANSAC für grobe initiale Ausrichtung.
         3. Point-to-Plane ICP für feine Verfeinerung.
-
-        Ref: Open3D ICP Registration Tutorial
-             http://www.open3d.org/docs/release/tutorial/pipelines/icp_registration.html
-        Paper: Besl & McKay, "A Method for Registration of 3-D Shapes",
-               IEEE TPAMI 1992.
-
-        Args:
-            observed_pc: Punktwolke des beobachteten Objekts.
-            cad_path: Pfad zum CAD-Modell.
-            scale: Skalierungsfaktor.
-
-        Returns:
-            PoseEstimationResult.
         """
         if observed_pc is None:
             logger.warning("Keine Punktwolke für ICP verfügbar.")

@@ -1,36 +1,17 @@
 #!/usr/bin/env python3
 # =============================================================================
-# pipeline/debug_steps.py – Step-by-Step Debug of the OSCAR+ Pipeline
+# pipeline/debug_viz.py – Debug-Visualisierungen für die OSCAR+ Pipeline
 # =============================================================================
 #
-# Executes Pipeline stepwise and saves a detailed image for diagnosis after  
-# each step.
+# Enthält alle visuellen Debug-Funktionen (save_debug_step1 … save_debug_step7_8),
+# PIL-Hilfsfunktionen, 3D-Projektion und interaktive Punktwolken-Ausgabe.
 #
-# Verwendung:
-#   python -m pipeline.debug_steps \
-#       --rgb  eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
-#       --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
-#       --prompt "mustard bottle" \
-#       --descriptions object_database/ycbv_gso/descriptions_attributes.json \
-#       --reference_images object_images/ycbv_gso/ \
-#       --cad_models object_database/ycbv_gso/ \
-#       --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
-#       --until_step 4        # Stop nach Schritt 4
-#
-# Ausgabe je Schritt:
-#   debug_01_localization.png  – Prompt → Objekt (Maske, ROI, Text)
-#   debug_02_pointcloud.png    – Tiefenbild + Punktwolke 2D/3D
-#   debug_03_clip.png          – ROI vs Top-5 CLIP-Kandidaten + Scores
-#   debug_04_dino.png          – ROI vs bestes DINO-Match + Score-Tabelle
-#   debug_05_ulip.png          – Punktwolke 3D + Top-3 ULIP-Matches
-#   debug_06_fusion.png        – Score-Tabelle (CLIP/DINO/ULIP/Fusion) + Vergleich
-#   debug_07_scale_pose.png    – Modellüberlagerung auf Szene + Scale/Pose Info
+# Wird von OSCARPlusPipeline (run_pipeline.py) bei debug_viz=True importiert.
 # =============================================================================
 
-import argparse
 import logging
 import os
-from typing import Optional, List
+from typing import Optional
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -39,11 +20,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%H:%M:%S",
-)
 logger = logging.getLogger("debug")
 
 
@@ -149,6 +125,47 @@ RANK_COLORS = [
     (140, 140, 140),
     (120, 120, 120),
 ]
+
+
+# =============================================================================
+# Mesh-Pfad-Auflösung (Bug-Fix: war in save_debug_step7_8 verschachtelt)
+# =============================================================================
+
+def _find_cad_mesh(object_id: str, cad_root: str) -> str:
+    """Findet ein CAD-Mesh für ein Objekt rekursiv im CAD-Ordner.
+
+    Bevorzugt typische GSO/YCBV Dateinamen in `meshes/`.
+    """
+    if not object_id or not cad_root:
+        return ""
+
+    obj_dir = os.path.join(cad_root, object_id)
+    if not os.path.isdir(obj_dir):
+        return ""
+
+    allowed = {".obj", ".ply", ".glb", ".gltf"}
+    preferred_names = ("textured_simple.obj", "model.obj", "mesh.obj")
+    candidates = []
+
+    for root, _, files in os.walk(obj_dir):
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in allowed:
+                candidates.append(os.path.join(root, fname))
+
+    if not candidates:
+        return ""
+
+    def sort_key(path: str):
+        base = os.path.basename(path).lower()
+        in_meshes = 0 if os.path.basename(os.path.dirname(path)).lower() == "meshes" else 1
+        try:
+            pref_idx = preferred_names.index(base)
+        except ValueError:
+            pref_idx = len(preferred_names)
+        return (in_meshes, pref_idx, path)
+
+    return sorted(candidates, key=sort_key)[0]
 
 
 # =============================================================================
@@ -963,50 +980,13 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
         y += 20
 
     h_max = max(pa.height, pb.height, pc.height)
-    # Pad panels to equal height
+
     def pad_h(img, h):
         if img.height >= h:
             return img
         out = Image.new("RGB", (img.width, h), (18, 18, 18))
         out.paste(img, (0, 0))
         return out
-
-
-    def _find_cad_mesh(object_id: str, cad_root: str) -> str:
-        """Findet ein CAD-Mesh für ein Objekt rekursiv im CAD-Ordner.
-
-        Bevorzugt typische GSO/YCBV Dateinamen in `meshes/`.
-        """
-        if not object_id or not cad_root:
-            return ""
-
-        obj_dir = os.path.join(cad_root, object_id)
-        if not os.path.isdir(obj_dir):
-            return ""
-
-        allowed = {".obj", ".ply", ".glb", ".gltf"}
-        preferred_names = ("textured_simple.obj", "model.obj", "mesh.obj")
-        candidates = []
-
-        for root, _, files in os.walk(obj_dir):
-            for fname in files:
-                ext = os.path.splitext(fname)[1].lower()
-                if ext in allowed:
-                    candidates.append(os.path.join(root, fname))
-
-        if not candidates:
-            return ""
-
-        def sort_key(path: str):
-            base = os.path.basename(path).lower()
-            in_meshes = 0 if os.path.basename(os.path.dirname(path)).lower() == "meshes" else 1
-            try:
-                pref_idx = preferred_names.index(base)
-            except ValueError:
-                pref_idx = len(preferred_names)
-            return (in_meshes, pref_idx, path)
-
-        return sorted(candidates, key=sort_key)[0]
 
     final = _hstack([pad_h(pa, h_max), pad_h(pb, h_max), pad_h(pc, h_max)], pad=pad)
     final = _vstack([_banner("SCHRITT 7+8: Skalenbestimmung & Modellüberlagerung",
@@ -1018,311 +998,10 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
 
 
 # =============================================================================
-# Haupt-Debug-Loop
+# Interaktive Punktwolke
 # =============================================================================
 
-def run_debug(args) -> None:
-    from .config import PipelineConfig
-    from .step1_localization import ObjectLocalizer
-    from .step2_pointcloud import PointCloudGenerator
-    from .step3_clip_retrieval import CLIPRetriever
-    from .step4_dino_reranking import DINOReRanker
-    from .step5_shape_matching import ShapeMatcher
-    from .step6_fusion import ScoreFusion
-    from .step7_scale_estimation import ScaleEstimator
-    from .step8_pose_estimation import PoseEstimator
-    from .run_pipeline import OSCARPlusPipeline
-    from .utils import load_camera_intrinsics, ensure_dir
-
-    out = ensure_dir(args.output)
-    logger.info("=" * 60)
-    logger.info("OSCAR+ Debug — bis Schritt %d  →  %s", args.until_step, out)
-    logger.info("=" * 60)
-
-    config = PipelineConfig(
-        description_file=args.descriptions,
-        reference_images_dir=args.reference_images,
-        cad_models_dir=args.cad_models,
-        output_dir=args.output,
-        pose_method=args.pose_method,
-        foundationpose_url=args.foundationpose_url,
-        foundationpose_est_refine_iter=args.foundationpose_refine_iter,
-        foundationpose_debug=args.foundationpose_debug,
-        ulip_repo_path=args.ulip_repo,
-        ulip2_checkpoint=args.ulip_checkpoint,
-        ulip2_mode=getattr(args, "ulip_mode", "cross"),
-        ulip2_image_weight=getattr(args, "ulip_image_weight", 0.5),
-    )
-
-    rgb_image = Image.open(args.rgb).convert("RGB")
-    depth_raw = np.array(Image.open(args.depth))
-
-    cam = {}
-    gt_data = None      # will hold (scene_gt_dict, label_to_obj_id, img_id)
-    if args.camera:
-        img_id = int(os.path.splitext(os.path.basename(args.rgb))[0])
-        cam = load_camera_intrinsics(args.camera, image_id=img_id)
-
-        # Load ground-truth poses if available
-        import json as _json
-        scene_dir = os.path.dirname(args.camera)
-        gt_path = os.path.join(scene_dir, "scene_gt.json")
-        id_label_path = os.path.join(scene_dir, "..", "id_to_label.json")
-        if os.path.isfile(gt_path) and os.path.isfile(id_label_path):
-            try:
-                with open(gt_path) as f:
-                    scene_gt = _json.load(f)
-                with open(id_label_path) as f:
-                    id_to_label = _json.load(f)
-                label_to_obj_id = {v: int(k) for k, v in id_to_label.items()}
-                gt_data = (scene_gt, label_to_obj_id, img_id)
-                logger.info("  GT geladen: %s (%d Labels)", gt_path, len(label_to_obj_id))
-            except Exception as e:
-                logger.warning("  GT laden fehlgeschlagen: %s", e)
-
-    # Convert depth to metres.
-    # BOP scene_camera.json depth_scale is a multiplier (depth_m = raw * scale),
-    # but our pipeline uses it as a divisor (depth_m = raw / scale, e.g. 10000
-    # for 0.1mm raw values).  The two conventions are incompatible, so we always
-    # use config.depth_scale here and ignore the JSON field.
-    depth_m = (depth_raw.astype(np.float32) / config.depth_scale
-               if depth_raw.max() > 100 else depth_raw.astype(np.float32))
-
-    results = {}
-
-    # ── SCHRITT 1 ──────────────────────────────────────────────────────────
-    logger.info("\n─── Schritt 1: Lokalisierung ───")
-
-    # Primär: LLM-Extraktion (gleiche Logik wie Vollpipeline)
-    elements = OSCARPlusPipeline._extract_prompt_elements_heuristic(args.prompt)
-    try:
-        import ollama
-        client = ollama.Client(host=config.ollama_host)
-        resp = client.chat(
-            model=config.ollama_model,
-            messages=[
-                {"role": "system",
-                 "content": (
-                     "You extract object properties from a grasping instruction "
-                     "(German or English). Reply ONLY in this exact format – "
-                     "use an empty string when the attribute is not mentioned:\n"
-                     "object: <noun phrase>\n"
-                     "color: <color or empty>\n"
-                     "shape: <shape descriptor or empty>\n"
-                     "material: <material or empty>"
-                 )},
-                {"role": "user", "content": f"Instruction: {args.prompt}"},
-            ],
-            options={"temperature": 0, "num_predict": 40},
-        )
-        parsed = OSCARPlusPipeline._parse_ollama_elements(
-            resp["message"]["content"].strip()
-        )
-        if parsed:
-            elements = parsed
-            logger.info("  Ollama: object='%s' color='%s' shape='%s' material='%s'",
-                        elements.object_name, elements.color,
-                        elements.shape, elements.material)
-    except Exception as e:
-        logger.info("  Ollama nicht verfügbar (%s) → Heuristik", e)
-
-    extracted = elements.detection_phrase  # Farbe + Objektname für GroundingDINO
-    logger.info("  Prompt:            '%s'", args.prompt)
-    logger.info("  Detektions-Phrase: '%s'", extracted)
-    logger.info("  CLIP visual_query: '%s'", elements.visual_query)
-
-    localizer = ObjectLocalizer(config)
-    loc = localizer.localize(rgb_image, extracted)
-    if loc is None:
-        logger.error("Objekt nicht gefunden – Abbruch.")
-        return
-    results["localization"] = loc
-    logger.info("  Konfidenz=%.3f  BBox=%s", loc.confidence, loc.bbox)
-    save_debug_step1(rgb_image, loc.mask, loc.bbox, loc.roi_image,
-                     args.prompt, extracted, loc.confidence, out)
-
-    if args.until_step < 2:
-        _done(out); return
-
-    # ── SCHRITT 2 ──────────────────────────────────────────────────────────
-    logger.info("\n─── Schritt 2: Punktwolke ───")
-    pc_gen = PointCloudGenerator(config)
-    pc = pc_gen.generate(np.array(rgb_image), depth_m, loc.mask,
-                         fx=cam.get("fx"), fy=cam.get("fy"),
-                         cx=cam.get("cx"), cy=cam.get("cy"))
-    results["point_cloud"] = pc
-    if pc:
-        logger.info("  %d Punkte  BBox=%s", pc.num_points, pc.bbox_size)
-        save_debug_step2(depth_m, loc.mask, pc.points, pc.colors,
-                         pc.num_points, pc.bbox_size, out)
-        save_pointcloud_interactive(pc.points, pc.colors, out)
-    else:
-        logger.warning("  Keine Punktwolke erzeugt!")
-
-    if args.until_step < 3:
-        _done(out); return
-
-    # ── SCHRITT 3 ──────────────────────────────────────────────────────────
-    logger.info("\n─── Schritt 3: CLIP Retrieval ───")
-    clip = CLIPRetriever(config)
-    clip.load_descriptions()
-    clip_res = clip.retrieve(loc.roi_image)
-    results["clip_retrieval"] = clip_res
-    logger.info("  %d Kandidaten", len(clip_res.candidates))
-    for i, c in enumerate(clip_res.candidates[:5]):
-        logger.info("    #%d  %s  score=%.4f", i+1, c.object_id, c.score)
-    save_debug_step3(loc.roi_image, clip_res.candidates, args.reference_images, out)
-
-    if args.until_step < 4:
-        _done(out); return
-
-    # ── SCHRITT 4 ──────────────────────────────────────────────────────────
-    logger.info("\n─── Schritt 4: DINOv2 Re-Ranking ───")
-    dino = DINOReRanker(config)
-    dino.load_reference_images()
-    dino_res = dino.rerank(loc.roi_image, clip_res)
-    results["dino_reranking"] = dino_res
-    logger.info("  %d Kandidaten", len(dino_res.candidates))
-    for i, c in enumerate(dino_res.candidates[:5]):
-        logger.info("    #%d  %s  dino=%.4f clip=%.4f",
-                    i+1, c.object_id, c.dino_score, c.clip_score)
-    save_debug_step4(loc.roi_image, dino_res.candidates, args.reference_images, out)
-
-    if args.until_step < 5:
-        _done(out); return
-
-    # ── SCHRITT 5 ──────────────────────────────────────────────────────────
-    shape_res = None
-    shape = None  # Initialisiere shape, um UnboundLocalError zu vermeiden
-    if not args.ulip_checkpoint:
-        logger.warning("\n  --ulip_checkpoint fehlt → Schritt 5 übersprungen.")
-    elif pc:
-        logger.info("\n─── Schritt 5: ULIP-2 Shape Matching ───")
-        shape = ShapeMatcher(config)
-        shape.load_cad_models()
-        shape_res = shape.match(pc, query_image=loc.roi_image)
-        results["shape_matching"] = shape_res
-        logger.info("  %d Matches", len(shape_res.candidates))
-        for i, c in enumerate(shape_res.candidates[:3]):
-            logger.info("    #%d  %s  shape=%.4f", i+1, c.object_id, c.shape_score)
-        save_debug_step5(pc.points, pc.colors,
-                         shape_res.candidates, args.reference_images, out)
-
-    if args.until_step < 6:
-        _done(out); return
-
-    # ── SCHRITT 6 ──────────────────────────────────────────────────────────
-    logger.info("\n─── Schritt 6: Score-Fusion ───")
-    fusion = ScoreFusion(config)
-    fusion_res = fusion.fuse(
-        clip_result=clip_res,
-        dino_result=dino_res,
-        shape_result=shape_res,
-    )
-    results["fusion"] = fusion_res
-    if fusion_res.best_match:
-        b = fusion_res.best_match
-        logger.info("  Gewinner: %s  fused=%.4f", b.object_id, b.fused_score)
-    save_debug_step6(fusion_res.candidates, args.reference_images,
-                     loc.roi_image, out)
-
-    if args.until_step < 7:
-        _done(out); return
-
-    # ── SCHRITT 7+8 ────────────────────────────────────────────────────────
-    if not fusion_res.best_match:
-        logger.warning("Kein Gewinner → Schritte 7+8 übersprungen.")
-        _done(out); return
-
-    best = fusion_res.best_match
-    scale_factor = 1.0
-    obs_size = cad_size = None
-
-    # --- Mesh-Pfad sicherstellen ---
-    # cad_model_path aus der Fusion kann ein Referenzbild (PNG) sein, wenn ULIP
-    # das Gewinner-Objekt nicht in seinen Top-K hatte.  Korrekte Quelle ist der
-    # Shape-Matcher (falls vorhanden) oder ein Dateisystem-Lookup.
-    resolved_mesh = best.cad_model_path
-    # Prüfen: ist der Pfad eine Bilddatei statt eines 3D-Modells?
-    _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-    if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
-        # 1. Versuch: Shape-Matcher hat den Pfad bereits gecacht
-        if shape is not None and hasattr(shape, "_cad_paths"):
-            resolved_mesh = shape._cad_paths.get(best.object_id, resolved_mesh)
-        # 2. Versuch: Dateisystem-Lookup im CAD-Modell-Verzeichnis
-        if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
-            resolved_mesh = _find_cad_mesh(best.object_id, args.cad_models)
-        if resolved_mesh and os.path.splitext(resolved_mesh)[1].lower() not in _IMG_EXTS:
-            logger.info("  Mesh-Pfad aufgelöst: %s", resolved_mesh)
-        else:
-            logger.warning("  Kein gültiger Mesh-Pfad für %s gefunden.", best.object_id)
-            resolved_mesh = ""
-
-    if pc and resolved_mesh:
-        logger.info("\n─── Schritt 7: Skalenbestimmung ───")
-        se = ScaleEstimator(config)
-        sr = se.estimate(pc, resolved_mesh)
-        scale_factor = sr.scale_factor
-        obs_size = sr.observed_size
-        cad_size = sr.cad_size
-        logger.info("  scale=%.4f  conf=%.2f", scale_factor, sr.confidence)
-
-    pose_info = {}
-    if args.until_step >= 8 and resolved_mesh:
-        logger.info("\n─── Schritt 8: Pose Estimation ───")
-        pe = PoseEstimator(config)
-        pr = pe.estimate(
-            rgb_image=np.array(rgb_image),
-            depth_image=depth_m,
-            mask=loc.mask,
-            cad_model_path=resolved_mesh,
-            scale_factor=scale_factor,
-            observed_pc=pc,
-            fx=cam.get("fx"), fy=cam.get("fy"),
-            cx=cam.get("cx"), cy=cam.get("cy"),
-            initial_pose=sr.coarse_alignment if 'sr' in dir() and sr is not None and sr.coarse_alignment is not None else None,
-        )
-        pose_info = {
-            "Methode": pr.method,
-            "Konfidenz": f"{pr.confidence:.4f}",
-            "t [m]": np.round(pr.translation, 3).tolist()
-                     if hasattr(pr, "translation") else "N/A",
-        }
-        logger.info("  method=%s  conf=%.4f", pr.method, pr.confidence)
-
-    # --- GT Pose Matrix aufbauen ---
-    gt_pose_matrix = None
-    if gt_data is not None:
-        scene_gt, label_to_obj_id, frame_id = gt_data
-        gt_obj_id = label_to_obj_id.get(best.object_id)
-        if gt_obj_id is not None:
-            frame_key = str(frame_id)
-            for gt_entry in scene_gt.get(frame_key, []):
-                if gt_entry.get("obj_id") == gt_obj_id:
-                    R_gt = np.array(gt_entry["cam_R_m2c"]).reshape(3, 3)
-                    t_gt = np.array(gt_entry["cam_t_m2c"]) / 1000.0  # mm → m
-                    gt_pose_matrix = np.eye(4)
-                    gt_pose_matrix[:3, :3] = R_gt
-                    gt_pose_matrix[:3, 3] = t_gt
-                    logger.info("  GT Pose gefunden für obj_id=%d (%s)", gt_obj_id, best.object_id)
-                    break
-            if gt_pose_matrix is None:
-                logger.info("  Kein GT-Eintrag für obj_id=%d in Frame %s", gt_obj_id, frame_key)
-        else:
-            logger.info("  Objekt '%s' nicht in id_to_label gefunden", best.object_id)
-
-    save_debug_step7_8(rgb_image, loc.bbox, scale_factor, best.object_id,
-                       args.reference_images, pose_info,
-                       obs_size, cad_size, out,
-                       pose_matrix=pr.pose_matrix if 'pr' in dir() else None,
-                       cad_model_path=resolved_mesh,
-                       cam=cam,
-                       pose_method=pr.method if 'pr' in dir() else "icp",
-                       gt_pose_matrix=gt_pose_matrix)
-    _done(out)
-
-
-def save_pointcloud_interactive(points: "np.ndarray", colors: "np.ndarray",
+def save_pointcloud_interactive(points: np.ndarray, colors: np.ndarray,
                                  output_dir: str) -> None:
     """Speichert die Punktwolke als PLY und als interaktives Plotly-HTML.
 
@@ -1377,6 +1056,10 @@ def save_pointcloud_interactive(points: "np.ndarray", colors: "np.ndarray",
         logger.warning("  [3D] plotly nicht installiert → nur PLY. Install: pip install plotly")
 
 
+# =============================================================================
+# Abschluss-Logging
+# =============================================================================
+
 def _done(out: str) -> None:
     logger.info("\n✓ Debug fertig. Gespeicherte Bilder:")
     for f in sorted(os.listdir(out)):
@@ -1385,88 +1068,3 @@ def _done(out: str) -> None:
     for f in sorted(os.listdir(out)):
         if f.endswith(".ply") or f.endswith(".html"):
             logger.info("    %s/%s", out, f)
-
-
-# =============================================================================
-# CLI
-# =============================================================================
-
-def _parse() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="OSCAR+ Schrittweiser Debug",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Beispiele:
-  # Nur mit Defaults laufen lassen (YCBV-GSO, Szene 000048, Schritt 1-6):
-  python -m pipeline.debug_steps
-
-  # Anderen Prompt testen:
-  python -m pipeline.debug_steps --prompt "banana"
-
-  # Nur Lokalisierung + Punktwolke (keine CLIP/DINO Modelle nötig):
-  python -m pipeline.debug_steps --until_step 2
-
-  # Komplett mit ULIP-2 (Schritt 5):
-  python -m pipeline.debug_steps --until_step 6 \\
-      --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
-
-  # Anderer Datensatz:
-  python -m pipeline.debug_steps \\
-      --rgb  eval/datasets/housecat6d/test/000001/rgb/000001.png \\
-      --depth eval/datasets/housecat6d/test/000001/depth/000001.png \\
-      --prompt "keyboard" \\
-      --descriptions object_database/housecat6d/descriptions_attributes.json \\
-      --reference_images object_images/housecat6d/ \\
-      --cad_models object_database/housecat6d/ \\
-      --camera eval/datasets/housecat6d/test/000001/scene_camera.json
-        """,
-    )
-    # ── Datei-Defaults: YCBV-GSO Szene 000048, Bild 000001 ────────────────
-    _RGB   = "eval/datasets/ycbv_gso/test/000048/rgb/000001.png"
-    _DEPTH = "eval/datasets/ycbv_gso/test/000048/depth/000001.png"
-    _CAM   = "eval/datasets/ycbv_gso/test/000048/scene_camera.json"
-    _DESC  = "object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json"
-    _REFS  = "object_images/ycbv_gso/"
-    _CADS  = "object_database/ycbv_gso/"
-    # ─────────────────────────────────────────────────────────────────────────
-
-    p.add_argument("--rgb",     default=_RGB,
-                   help=f"RGB-Bild (default: {_RGB})")
-    p.add_argument("--depth",   default=_DEPTH,
-                   help=f"Tiefenbild (default: {_DEPTH})")
-    p.add_argument("--prompt",  default="mustard bottle",
-                   help='Suchprompt (default: "mustard bottle")')
-    p.add_argument("--descriptions", default=_DESC,
-                   help=f"descriptions_attributes.json (default: {_DESC})")
-    p.add_argument("--reference_images", default=_REFS,
-                   help=f"Referenzbild-Verzeichnis (default: {_REFS})")
-    p.add_argument("--cad_models", default=_CADS,
-                   help=f"CAD-Modell-Verzeichnis (default: {_CADS})")
-    p.add_argument("--camera",  default=_CAM,
-                   help=f"scene_camera.json (default: {_CAM})")
-    p.add_argument("--output",  default="debug_output")
-    p.add_argument("--until_step", type=int, default=6,
-                   help="Bis welchem Schritt ausführen: 1-8 (default: 6)")
-    p.add_argument("--ulip_repo",       default="/ulip",
-                   help="ULIP-Repo-Pfad (default: /ulip)")
-    p.add_argument("--ulip_checkpoint", default="",
-                   help="ULIP-2 Checkpoint .pt (leer = Schritt 5 überspringen)")
-    p.add_argument("--ulip_mode", default="cross",
-                   choices=["pc", "cross", "both"],
-                   help="ULIP-2 Modus: 'cross'=Image→PC (default), 'pc'=PC→PC, 'both'=Mix")
-    p.add_argument("--ulip_image_weight", type=float, default=0.5,
-                   help="Gewicht des Image-Embeddings im Modus 'both' (default: 0.5)")
-    p.add_argument("--pose_method", default="icp",
-                   choices=["foundationpose", "megapose", "icp"],
-                   help="Pose-Backend fuer Schritt 8 (default: icp)")
-    p.add_argument("--foundationpose_url", default="http://foundationpose:5050",
-                   help="URL des FoundationPose HTTP-Service (default: http://foundationpose:5050)")
-    p.add_argument("--foundationpose_refine_iter", type=int, default=5,
-                   help="Refinement-Iterationen fuer FoundationPose register()")
-    p.add_argument("--foundationpose_debug", type=int, default=0,
-                   help="FoundationPose Debug-Level (0=headless)")
-    return p.parse_args()
-
-
-if __name__ == "__main__":
-    run_debug(_parse())

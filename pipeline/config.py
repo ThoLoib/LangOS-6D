@@ -31,9 +31,8 @@ class PipelineConfig:
     # SAM2: https://github.com/facebookresearch/segment-anything-2
     # LangSAM (Wrapper): https://github.com/luca-medeiros/lang-segment-anything
     grounding_dino_model: str = "IDEA-Research/grounding-dino-base"
-    sam_model: str = "facebook/sam-vit-large"
+    sam_model: str = "facebook/sam-vit-large" # SAM statt SAM2
     detection_confidence: float = 0.3   # Mindest-Konfidenz für Bounding Boxes
-    segmentation_threshold: float = 0.5  # SAM-Masken-Schwelle
 
     # -------------------------------------------------------------------------
     # Schritt 2 – Punktwolkenerzeugung
@@ -54,7 +53,7 @@ class PipelineConfig:
     # CLIP: https://github.com/openai/CLIP
     clip_model_name: str = "ViT-B/32"
     clip_top_k: int = 20         # Anzahl der CLIP-Kandidaten
-    clip_threshold: float = 0.25  # Alternativ: Schwellen-basierte Filterung
+    clip_threshold: float = 0.25  # Alternativ: Schwellen-basierte Filterung - noch nicht implementiert
 
     # Pfad zu den Objektbeschreibungen (JSON, erzeugt via description_generator)
     description_file: str = ""    # z.B. "object_database/ycbv_gso/descriptions_attributes.json"
@@ -117,6 +116,9 @@ class PipelineConfig:
     pose_method: str = "icp"  # "foundationpose" | "megapose" | "icp"
     icp_max_iterations: int = 50
     icp_threshold: float = 0.02          # Konvergenz-Schwelle (Meter)
+    foundationpose_url: str = "http://foundationpose:5050"  # FoundationPose service URL (docker-compose service name)
+    foundationpose_est_refine_iter: int = 5             # Register-Refinement-Iterationen
+    foundationpose_debug: int = 0                       # 0=keine GUI/Debug-Ausgaben
 
     # -------------------------------------------------------------------------
     # Prompt-Parsing (Ollama LLM)
@@ -125,7 +127,6 @@ class PipelineConfig:
     # Installiert im Docker-Container; Python-Client in requirements.txt
     ollama_host: str = "http://localhost:11434"  # Ollama läuft im Container (start.sh)
     ollama_model: str = "gemma3:4b"       # Modell für Prompt-Parsing (im Dockerfile gepullt)
-    ollama_timeout: float = 30.0                  # Sekunden bis Timeout (Fallback auf Heuristik)
 
     # -------------------------------------------------------------------------
     # Ein-/Ausgabepfade

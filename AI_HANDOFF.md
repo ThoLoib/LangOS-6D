@@ -1,6 +1,6 @@
 # AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-03-20
+> Zuletzt aktualisiert: 2026-03-26
 
 ## Projektziel
 
@@ -22,27 +22,61 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 
 ---
 
+## Update 2026-03-26 (Debug-Visualisierung refactored into main pipeline)
+
+### Refactoring: Debug als optionaler Modus der normalen Pipeline
+- **Removed** `pipeline/debug_steps.py` entirely (was ~1473 lines with duplicated pipeline logic).
+- **New** `pipeline/debug_viz.py` (~1070 lines): All rich visualization functions extracted as a standalone module.
+  - PIL helpers, `save_debug_step1()` … `save_debug_step7_8()`, `_project_cad_wireframe()`, `save_pointcloud_interactive()`, `_done()`.
+  - **Bug fix:** `_find_cad_mesh()` moved to module level (was nested inside `save_debug_step7_8`, unreachable from `run_debug()`).
+- **Modified** `pipeline/run_pipeline.py`:
+  - `OSCARPlusPipeline.__init__()` gains `debug_viz: bool = False` parameter.
+  - `OSCARPlusPipeline.run()` gains `gt_data=None` parameter for GT-wireframe overlay.
+  - Debug-viz hooks added after each step (only executed when `debug_viz=True`).
+  - Mesh-path resolution before step 7: detects image-paths (`.png/.jpg`) in `cad_model_path` and falls back to `_find_cad_mesh()` lookup. Used by both steps 7 and 8.
+  - New CLI flags: `--debug-viz`, `--until-step`.
+  - `main()` loads GT data from `scene_gt.json` + `id_to_label.json` when `--debug-viz` and `--camera` are set.
+  - **Bug fix:** `detection_prompt` (undefined variable) → `prompt_elements.detection_phrase` in step 1 visualization.
+- **Modified** `scripts/run_debug_pipeline_foundationpose.sh`: Now calls `pipeline.run_pipeline --debug-viz` instead of `pipeline.debug_steps`.
+- **New** `scripts/run_pipeline.sh`: Convenience script for normal pipeline with YCBV-GSO defaults.
+
+### Behavioral changes vs. old `debug_steps.py`
+1. CLIP `text_query`: old `run_debug()` called `clip.retrieve(roi)` without text query. The unified pipeline passes `visual_query` from prompt parsing — may give slightly different CLIP rankings.
+2. Prompt parsing: old `run_debug()` duplicated the Ollama+heuristic logic; now uses `OSCARPlusPipeline._extract_prompt_elements()` directly.
+
+### Start commands
+```bash
+# Debug mode (rich PNGs + PLY + HTML):
+./scripts/run_debug_pipeline_foundationpose.sh
+
+# Debug mode via run_pipeline.py:
+python3.11 -m pipeline.run_pipeline ... --debug-viz --until-step 6
+
+# Normal mode (no debug output):
+python3.11 -m pipeline.run_pipeline --rgb ... --depth ... --prompt "..."
+
+# Normal mode + simple viz:
+python3.11 -m pipeline.run_pipeline ... --visualize
+```
+
+---
+
 ## Update 2026-03-24 (GT overlay + intrinsics/depth fixes)
 
 ### GT pose overlay in debug_07_scale_pose.png
-- `pipeline/debug_steps.py`: loads `scene_gt.json` + `id_to_label.json` in `run_debug()` after camera intrinsics.
-- Builds 4×4 GT pose matrix from `cam_R_m2c` (reshape 3×3) and `cam_t_m2c` (mm → m).
-- Compensates for mesh bbox_center offset: subtracts `R_gt @ bbox_center` from GT translation before projection (BOP model frame ≠ pipeline OBJ frame).
-- Draws magenta GT wireframe via second `_project_cad_wireframe()` call alongside predicted (green).
-- Adds "Predicted" / "GT" legend labels to Panel A; Δt (mm) and ΔR (deg) error metrics to Panel C.
-- Panel C min height +90px when GT metrics are present.
+- GT wireframe overlay (magenta) drawn alongside predicted (green) via `_project_cad_wireframe()`.
+- Compensates for mesh bbox_center offset: subtracts `R_gt @ bbox_center` from GT translation.
+- Adds "Predicted" / "GT" legend labels; Δt (mm) and ΔR (deg) error metrics to info panel.
 
 ### Camera intrinsics priority fix
 - Camera loading moved **before** depth conversion so real `fx/fy/cx/cy` from `scene_camera.json` reach `generate()`.
 - `config` values used as fallback only when `--camera` is absent.
-- Affects both `pipeline/debug_steps.py` and `pipeline/run_pipeline.py`.
 
 ### BOP depth_scale convention mismatch (gotcha)
 - `scene_camera.json` `depth_scale` is a **multiplier** (e.g. 0.1 for this dataset).
 - Pipeline divides depth by `config.depth_scale` (default 10000.0) — a **divisor** convention.
 - Using the JSON value caused depths to be 100× too large, resulting in ~855mm translation error.
 - Decision: always use `config.depth_scale` as divisor; ignore the JSON field entirely.
-- Explanatory comment added in both `debug_steps.py` and `run_pipeline.py`.
 
 ---
 
@@ -78,14 +112,21 @@ docker compose up -d foundationpose
 
 # Run OSCAR with FoundationPose
 docker compose run --rm -it oscar bash
-python3.11 -m pipeline.debug_steps \
-  --until_step 8 \
+./scripts/run_debug_pipeline_foundationpose.sh
+# or manually:
+python3.11 -m pipeline.run_pipeline \
+  --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
+  --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
+  --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
   --prompt "I need the red mug" \
-  --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
-  --pose_method foundationpose \
+  --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
   --reference_images object_images/ycbv_gso/ \
   --cad_models object_database/ycbv_gso/ \
-  --output debug_output
+  --ulip_repo /ulip \
+  --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+  --pose_method foundationpose \
+  --output debug_output \
+  --debug-viz --until-step 8
 ```
 
 If FoundationPose service is down or fails, Step 8 falls back to ICP automatically.
@@ -152,7 +193,7 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
   8. `step8_pose_estimation.py` – FoundationPose (HTTP) oder ICP mit Coarse-Alignment
      - ICP: fitness=0.9895, RMSE=0.007m
 
-- **Debug-Visualisierung** (`pipeline/debug_steps.py`, ~1200 Zeilen):
+- **Debug-Visualisierung** (`pipeline/debug_viz.py`, ~1070 Zeilen, aktiviert via `--debug-viz`):
   - 7 diagnostische PNG-Bilder + interaktiver 3D-Viewer (HTML)
   - 3D-Wireframe-Overlay der CAD-Modell-Pose auf Szenenbild (via trimesh)
   - Automatische Panels: Lokalisierung, Punktwolke, CLIP, DINOv2, ULIP, Fusion, Scale+Pose
@@ -198,8 +239,8 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 |---|---|---|
 | `pipeline/__init__.py` | 21 | Package-Init mit Version `0.1.0` |
 | `pipeline/config.py` | ~140 | Zentrale `PipelineConfig` Dataclass |
-| `pipeline/run_pipeline.py` | ~750 | Orchestrator + CLI + LLM-Parsing |
-| `pipeline/debug_steps.py` | ~1200 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
+| `pipeline/run_pipeline.py` | ~1045 | Orchestrator + CLI + LLM-Parsing + Debug-Viz-Hooks |
+| `pipeline/debug_viz.py` | ~1070 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
 | `pipeline/foundationpose_bridge.py` | ~100 | HTTP client for FoundationPose service |
 | `pipeline/step1_localization.py` | ~240 | GroundingDINO + SAM |
 | `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Point Cloud |
@@ -296,23 +337,36 @@ docker compose run --rm -it oscar bash
 
 ### Debug-Modus (empfohlen zum Testen)
 ```bash
-python -m pipeline.debug_steps \
-    --prompt "i need the blue coffee can" \
-    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
-    --until_step 8
+./scripts/run_debug_pipeline_foundationpose.sh
 # → debug_output/debug_01_localization.png ... debug_07_scale_pose.png
+
+# oder manuell:
+python3.11 -m pipeline.run_pipeline \
+    --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
+    --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
+    --prompt "i need the blue coffee can" \
+    --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
+    --reference_images object_images/ycbv_gso/ \
+    --cad_models object_database/ycbv_gso/ \
+    --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
+    --ulip_repo /ulip \
+    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+    --output debug_output \
+    --debug-viz --until-step 8
 ```
 
 ### Volle Pipeline
 ```bash
-python -m pipeline.run_pipeline \
+./scripts/run_pipeline.sh
+# oder:
+python3.11 -m pipeline.run_pipeline \
     --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
     --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
     --prompt "pick up the mustard bottle" \
-    --descriptions object_database/ycbv_gso/descriptions_attributes.json \
+    --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
     --reference_images object_images/ycbv_gso/ \
     --cad_models object_database/ycbv_gso/ \
-    --camera_json eval/datasets/ycbv_gso/test/000048/scene_camera.json \
+    --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
     --ulip_repo /ulip \
     --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt
 ```
@@ -335,7 +389,7 @@ python retrieval_combi_eval.py  # → 75.95% Top-1
 | NaN in ULIP Similarity Scores | `torch.where(nan_mask, -1.0, sims)` | `step5_shape_matching.py` |
 | NaN in Fusion Min-Max Norm. | Filter NaN vor min/max | `step6_fusion.py` |
 | Camera intrinsics KeyError | Fallback auf ersten Key | `pipeline/utils.py` |
-| BOP `depth_scale` multiplier vs divisor mismatch | Always use `config.depth_scale` as divisor; ignore `scene_camera.json` field (it uses multiplier 0.1, not divisor) | `pipeline/debug_steps.py`, `pipeline/run_pipeline.py` |
+| BOP `depth_scale` multiplier vs divisor mismatch | Always use `config.depth_scale` as divisor; ignore `scene_camera.json` field (it uses multiplier 0.1, not divisor) | `pipeline/run_pipeline.py` |
 | Stale .pyc im Docker | `rm -rf /app/pipeline/__pycache__` nach Edits | manuell |
 
 ---

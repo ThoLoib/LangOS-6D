@@ -142,12 +142,6 @@ class PointCloudGenerator:
         mask_bool = np.asarray(mask, dtype=bool)
         segmented_depth = np.where(mask_bool, depth, 0.0)
 
-        # --- Rückprojektion via Open3D ---
-        h, w = segmented_depth.shape
-        intrinsic = o3d.camera.PinholeCameraIntrinsic(
-            width=w, height=h, fx=fx, fy=fy, cx=cx, cy=cy
-        )
-
         # Open3D erwartet uint16-Tiefe, also konvertieren wir manuell
         # Alternative: direkte Berechnung über Vektorisierung (effizienter)
         points, colors = self._backproject_manual(
@@ -174,7 +168,7 @@ class PointCloudGenerator:
 
         # --- Statistical Outlier Removal ---
         pcd, _ = pcd.remove_statistical_outlier(
-            nb_neighbors=20, std_ratio=2.0
+            nb_neighbors=10, std_ratio=2.0
         )
 
         # --- Bounding Box berechnen ---

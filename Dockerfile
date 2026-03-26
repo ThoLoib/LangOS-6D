@@ -30,8 +30,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN pip install --no-cache-dir \
     opencv-python \
-    accelerate && \
-    pip install --no-cache-dir git+https://github.com/openai/CLIP.git
+    accelerate \
+    trimesh \
+    open-clip-torch \
+    imageio && \
+    pip install --no-cache-dir git+https://github.com/openai/CLIP.git && \
+    python3 -c "import trimesh, open_clip, imageio; print('Dependency check OK: trimesh/open_clip/imageio')"
 
 # Download and extract Blender dataset
 RUN mkdir -p /blender && \

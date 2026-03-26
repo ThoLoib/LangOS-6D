@@ -5,6 +5,7 @@ ollama
 open3d
 open-clip-torch
 trimesh
+imageio
 easydict
 timm
 pyyaml_env_tag

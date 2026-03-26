@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-03-26 debug visualization as optional mode of the main pipeline
+
+Decision
+- Remove `pipeline/debug_steps.py` entirely.
+- Extract all visualization functions into `pipeline/debug_viz.py`.
+- Add `--debug-viz` and `--until-step` flags to `pipeline/run_pipeline.py`.
+- Shell scripts call `pipeline.run_pipeline --debug-viz` instead of `pipeline.debug_steps`.
+
+Rationale
+- `debug_steps.py` (~1473 lines) contained a complete duplicate of the 8-step pipeline logic (`run_debug()`) alongside the visualization functions. Any change to the pipeline had to be mirrored in two places.
+- Making debug a flag on the main pipeline eliminates the duplication and ensures debug mode always runs the same code path as production.
+
+Bug fixes included
+- `_find_cad_mesh()` was nested inside `save_debug_step7_8()` and unreachable from `run_debug()` at runtime (NameError when `cad_model_path` was a PNG). Now at module level in `debug_viz.py`.
+- `detection_prompt` (undefined variable) replaced with `prompt_elements.detection_phrase` in step 1 visualization call.
+- Mesh-path resolution (image-path → real mesh lookup) now runs unconditionally in steps 7+8, not only in debug mode.
+
+Alternatives Considered
+- Merge debug visualizations into the existing `visualization.py` — rejected; `debug_viz.py` is much richer (multi-panel PIL composites, trimesh wireframe projection, Plotly HTML) and would bloat the simple viz module with debug-only dependencies.
+- Keep `debug_steps.py` as a thin CLI wrapper — initially implemented but removed in favor of shell scripts, since the wrapper added no logic beyond what the shell script already provides.
+
 ## 2026-03-24 BOP depth_scale convention — always use config divisor
 
 Decision

@@ -1,5 +1,35 @@
 # AI Log
 
+## 2026-03-26 Debug visualization refactored into main pipeline
+
+Goal
+- Eliminate the duplicated pipeline logic in `debug_steps.py` by making debug visualization an optional mode of the normal pipeline.
+
+Changes
+- Deleted `pipeline/debug_steps.py` (~1473 lines, contained a full copy of the 8-step pipeline in `run_debug()`).
+- New `pipeline/debug_viz.py` (~1070 lines): all visualization functions extracted from the old file. `_find_cad_mesh()` promoted to module level (was nested inside `save_debug_step7_8()`, causing a NameError at runtime).
+- Modified `pipeline/run_pipeline.py`:
+  - `OSCARPlusPipeline.__init__()`: new `debug_viz: bool = False` parameter.
+  - `OSCARPlusPipeline.run()`: new `gt_data=None` parameter for GT wireframe overlay.
+  - Debug-viz hooks (calls to `_dbv.save_debug_step*()`) added after each of the 8 steps, guarded by `if self.debug_viz`.
+  - Mesh-path resolution added before step 7: detects image-paths (`.png/.jpg`) in `cad_model_path` and resolves via `_find_cad_mesh()`. Result shared with step 8.
+  - GT pose matrix built from `gt_data` parameter (same logic as old `run_debug()` lines 1294-1312).
+  - New CLI flags: `--debug-viz` (rich debug images), `--until-step N` (converted to `skip_steps`).
+  - `main()`: loads GT data from `scene_gt.json` + `id_to_label.json` when `--debug-viz` and `--camera` are set.
+  - Bug fix: `detection_prompt` (undefined) → `prompt_elements.detection_phrase` in step 1 viz call.
+- Modified `scripts/run_debug_pipeline_foundationpose.sh`: calls `pipeline.run_pipeline --debug-viz` with full YCBV-GSO defaults.
+- New `scripts/run_pipeline.sh`: convenience script for normal pipeline execution.
+
+Behavioral changes vs. old `debug_steps.py`
+1. CLIP retrieval now receives `text_query=visual_query` from prompt parsing (old code omitted it) — may produce slightly different rankings.
+2. Prompt parsing uses `_extract_prompt_elements()` (Ollama + heuristic) instead of duplicated logic.
+3. `_find_cad_mesh` bug fixed — was unreachable in old code due to nested scope.
+
+Impact
+- Single source of truth for pipeline logic (no more `run_debug()` copy).
+- `git grep "def run_debug"` returns no results.
+- Debug shell script remains compatible (same output files, same CLI flags via `"$@"`).
+
 ## 2026-03-24 GT overlay + intrinsics/depth fixes
 
 Goal

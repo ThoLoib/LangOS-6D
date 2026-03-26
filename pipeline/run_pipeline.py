@@ -48,6 +48,7 @@ from .step7_scale_estimation import ScaleEstimator
 from .step8_pose_estimation import PoseEstimator
 from .utils import load_depth_image, ensure_dir
 from . import visualization as viz
+from . import debug_viz as _dbv
 
 # =============================================================================
 # Logging konfigurieren
@@ -167,10 +168,11 @@ class OSCARPlusPipeline:
         >>> result = pipeline.run(rgb_image, depth_image, "greife nach der Mayonnaisetube")
     """
 
-    def __init__(self, config: PipelineConfig, visualize: bool = False):
+    def __init__(self, config: PipelineConfig, visualize: bool = False, debug_viz: bool = False):
         self.config = config
         self.output_dir = ensure_dir(config.output_dir)
         self.visualize = visualize
+        self.debug_viz = debug_viz
 
         # --- Module initialisieren (Lazy Loading, Modelle werden bei Bedarf geladen) ---
         self.localizer = ObjectLocalizer(config)
@@ -221,6 +223,7 @@ class OSCARPlusPipeline:
         prompt: str,
         camera_intrinsics: dict = None,
         skip_steps: list = None,
+        gt_data=None,
     ) -> dict:
         """Führt die gesamte Pipeline aus.
 
@@ -230,6 +233,8 @@ class OSCARPlusPipeline:
             prompt: Natürlichsprachiger Prompt, z.B. "greife nach der Mayonnaisetube".
             camera_intrinsics: Dict mit 'fx', 'fy', 'cx', 'cy' (optional).
             skip_steps: Liste von Schritt-Nummern die übersprungen werden sollen.
+            gt_data: Optionales Tuple (scene_gt_dict, label_to_obj_id, img_id)
+                     für GT-Wireframe-Overlay im Debug-Modus.
 
         Returns:
             Dict mit Ergebnissen aller Schritte:
@@ -291,9 +296,17 @@ class OSCARPlusPipeline:
             if self.visualize and loc_result:
                 viz.viz_step1_mask(
                     rgb_image, loc_result.mask, loc_result.bbox,
-                    loc_result.confidence, detection_prompt, self.output_dir
+                    loc_result.confidence, prompt_elements.detection_phrase, self.output_dir
                 )
                 viz.viz_step1_roi(loc_result.roi_image, self.output_dir)
+
+            if self.debug_viz and loc_result:
+                _dbv.save_debug_step1(
+                    rgb_image, loc_result.mask, loc_result.bbox,
+                    loc_result.roi_image, prompt,
+                    prompt_elements.detection_phrase, loc_result.confidence,
+                    self.output_dir,
+                )
 
         # =================================================================
         # Schritt 2: Punktwolke erzeugen
@@ -331,6 +344,18 @@ class OSCARPlusPipeline:
                         pc_result.points, pc_result.colors, self.output_dir
                     )
 
+                if self.debug_viz:
+                    loc = results["localization"]
+                    _dbv.save_debug_step2(
+                        depth_image, loc.mask,
+                        pc_result.points, pc_result.colors,
+                        pc_result.num_points, pc_result.bbox_size,
+                        self.output_dir,
+                    )
+                    _dbv.save_pointcloud_interactive(
+                        pc_result.points, pc_result.colors, self.output_dir
+                    )
+
         # =================================================================
         # Schritt 3: CLIP Retrieval
         # =================================================================
@@ -364,6 +389,13 @@ class OSCARPlusPipeline:
                     query_image=query_img.roi_image if query_img else None
                 )
 
+            if self.debug_viz:
+                loc = results["localization"]
+                _dbv.save_debug_step3(
+                    loc.roi_image, clip_result.candidates,
+                    self.config.reference_images_dir, self.output_dir,
+                )
+
         # =================================================================
         # Schritt 4: DINOv2 Re-Ranking
         # =================================================================
@@ -395,6 +427,13 @@ class OSCARPlusPipeline:
                     dino_result, self.config.reference_images_dir,
                     self.output_dir,
                     query_image=query_img.roi_image if query_img else None
+                )
+
+            if self.debug_viz:
+                loc = results["localization"]
+                _dbv.save_debug_step4(
+                    loc.roi_image, dino_result.candidates,
+                    self.config.reference_images_dir, self.output_dir,
                 )
 
         # =================================================================
@@ -439,6 +478,13 @@ class OSCARPlusPipeline:
                         self.output_dir
                     )
 
+                if self.debug_viz:
+                    _dbv.save_debug_step5(
+                        pc.points, pc.colors,
+                        shape_result.candidates,
+                        self.config.reference_images_dir, self.output_dir,
+                    )
+
         # =================================================================
         # Schritt 6: Score-Fusion
         # =================================================================
@@ -470,6 +516,20 @@ class OSCARPlusPipeline:
                     query_image=query_img.roi_image if query_img else None
                 )
 
+            if self.debug_viz:
+                loc = results.get("localization")
+                _dbv.save_debug_step6(
+                    fusion_result.candidates,
+                    self.config.reference_images_dir,
+                    loc.roi_image if loc else None,
+                    self.output_dir,
+                )
+
+        # Für Schritte 7+8 und Debug-Viz werden diese Variablen geteilt
+        resolved_mesh = None   # aufgelöster Mesh-Pfad (kein PNG-Fallback)
+        scale_result = None
+        pose_result = None
+
         # =================================================================
         # Schritt 7: Skalenbestimmung
         # =================================================================
@@ -486,10 +546,22 @@ class OSCARPlusPipeline:
             best_model = results["fusion"].best_match
             pc = results["point_cloud"]
 
-            if best_model.cad_model_path and pc:
-                scale_result = self.scale_estimator.estimate(
-                    pc, best_model.cad_model_path
+            # Mesh-Pfad auflösen: cad_model_path kann ein Referenzbild-Pfad (PNG) sein,
+            # wenn ULIP das Objekt nicht in seinen Top-K hatte.
+            _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+            resolved_mesh = best_model.cad_model_path
+            if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
+                resolved_mesh = _dbv._find_cad_mesh(
+                    best_model.object_id, self.config.cad_models_dir
                 )
+                if resolved_mesh:
+                    logger.info("  Mesh-Pfad aufgelöst: %s", resolved_mesh)
+                else:
+                    logger.warning("  Kein gültiger Mesh-Pfad für %s gefunden.",
+                                   best_model.object_id)
+
+            if resolved_mesh and pc:
+                scale_result = self.scale_estimator.estimate(pc, resolved_mesh)
                 results["scale_estimation"] = scale_result
                 timings["step7_scale"] = time.time() - t0
 
@@ -515,12 +587,22 @@ class OSCARPlusPipeline:
             scale_factor = scale.scale_factor if scale else 1.0
             loc = results.get("localization")
 
-            if best_model.cad_model_path:
+            # Mesh-Pfad auflösen falls Schritt 7 übersprungen wurde
+            if resolved_mesh is None:
+                _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+                resolved_mesh = best_model.cad_model_path
+                if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
+                    resolved_mesh = _dbv._find_cad_mesh(
+                        best_model.object_id, self.config.cad_models_dir
+                    )
+
+            mesh_to_use = resolved_mesh or best_model.cad_model_path
+            if mesh_to_use:
                 pose_result = self.pose_estimator.estimate(
                     rgb_image=np.array(rgb_image),
                     depth_image=depth_image,
                     mask=loc.mask if loc else np.ones_like(depth_image, dtype=bool),
-                    cad_model_path=best_model.cad_model_path,
+                    cad_model_path=mesh_to_use,
                     scale_factor=scale_factor,
                     observed_pc=results.get("point_cloud"),
                     fx=cam.get("fx"), fy=cam.get("fy"),
@@ -533,6 +615,54 @@ class OSCARPlusPipeline:
                 logger.info(
                     f"  ✓ Pose geschätzt (Methode: {pose_result.method}, "
                     f"Konfidenz: {pose_result.confidence:.4f})"
+                )
+
+        # --- Debug-Viz: Schritt 7+8 ---
+        if self.debug_viz and "fusion" in results and results["fusion"].best_match:
+            best_model = results["fusion"].best_match
+            loc = results.get("localization")
+            scale = results.get("scale_estimation")
+            scale_factor = scale.scale_factor if scale else 1.0
+            obs_size = scale.observed_size if scale else None
+            cad_size = scale.cad_size if scale else None
+
+            pose_info = {}
+            if pose_result is not None:
+                pose_info = {
+                    "Methode": pose_result.method,
+                    "Konfidenz": f"{pose_result.confidence:.4f}",
+                    "t [m]": np.round(pose_result.translation, 3).tolist()
+                               if hasattr(pose_result, "translation") else "N/A",
+                }
+
+            # GT-Pose-Matrix aufbauen
+            gt_pose_matrix = None
+            if gt_data is not None:
+                scene_gt, label_to_obj_id, frame_id = gt_data
+                gt_obj_id = label_to_obj_id.get(best_model.object_id)
+                if gt_obj_id is not None:
+                    frame_key = str(frame_id)
+                    for gt_entry in scene_gt.get(frame_key, []):
+                        if gt_entry.get("obj_id") == gt_obj_id:
+                            R_gt = np.array(gt_entry["cam_R_m2c"]).reshape(3, 3)
+                            t_gt = np.array(gt_entry["cam_t_m2c"]) / 1000.0  # mm → m
+                            gt_pose_matrix = np.eye(4)
+                            gt_pose_matrix[:3, :3] = R_gt
+                            gt_pose_matrix[:3, 3] = t_gt
+                            logger.info("  GT Pose gefunden für obj_id=%d (%s)",
+                                        gt_obj_id, best_model.object_id)
+                            break
+
+            if loc:
+                _dbv.save_debug_step7_8(
+                    rgb_image, loc.bbox, scale_factor, best_model.object_id,
+                    self.config.reference_images_dir, pose_info,
+                    obs_size, cad_size, self.output_dir,
+                    pose_matrix=pose_result.pose_matrix if pose_result is not None else None,
+                    cad_model_path=resolved_mesh or best_model.cad_model_path,
+                    cam=cam,
+                    pose_method=pose_result.method if pose_result is not None else "icp",
+                    gt_pose_matrix=gt_pose_matrix,
                 )
 
         # =================================================================
@@ -555,6 +685,9 @@ class OSCARPlusPipeline:
         if self.visualize:
             viz.viz_summary(self.output_dir, prompt, timings)
             logger.info(f"Visualisierungen gespeichert in: {self.output_dir}")
+
+        if self.debug_viz:
+            _dbv._done(self.output_dir)
 
         return results
 
@@ -713,7 +846,7 @@ class OSCARPlusPipeline:
 
     @staticmethod
     def _extract_object_name_heuristic(prompt: str) -> str:
-        """Kompatiblitäts-Wrapper (wird von debug_steps.py genutzt)."""
+        """Kompatiblitäts-Wrapper für externe Aufrufer."""
         return OSCARPlusPipeline._extract_prompt_elements_heuristic(prompt).object_name
 
     def _create_summary(self, results: dict) -> dict:
@@ -808,6 +941,10 @@ Beispiel:
     parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
     parser.add_argument("--visualize", action="store_true", help="Zwischenergebnisse als Bilder speichern (Masken, Punktwolken, Kandidaten)")
+    parser.add_argument("--debug-viz", action="store_true", dest="debug_viz",
+                        help="Reiche Debug-Bilder (debug_01…debug_07 PNGs + PLY + HTML) speichern")
+    parser.add_argument("--until-step", type=int, default=8, dest="until_step",
+                        help="Pipeline bis einschließlich Schritt N ausführen (1-8, default: 8)")
     return parser.parse_args()
 
 
@@ -857,15 +994,41 @@ def main():
     if depth_image.max() > 100:
         depth_image = depth_image.astype(np.float32) / config.depth_scale
 
+    # --- until_step → skip_steps ---
+    skip_steps = list(args.skip_steps)
+    if args.until_step < 8:
+        skip_steps = sorted(set(skip_steps) | set(range(args.until_step + 1, 9)))
+
+    # --- GT-Daten laden (nur bei --debug-viz) ---
+    gt_data = None
+    if args.debug_viz and args.camera:
+        import json as _json
+        scene_dir = os.path.dirname(args.camera)
+        gt_path = os.path.join(scene_dir, "scene_gt.json")
+        id_label_path = os.path.join(scene_dir, "..", "id_to_label.json")
+        if os.path.isfile(gt_path) and os.path.isfile(id_label_path):
+            try:
+                with open(gt_path) as f:
+                    scene_gt = _json.load(f)
+                with open(id_label_path) as f:
+                    id_to_label = _json.load(f)
+                label_to_obj_id = {v: int(k) for k, v in id_to_label.items()}
+                img_id = int(os.path.splitext(os.path.basename(args.rgb))[0])
+                gt_data = (scene_gt, label_to_obj_id, img_id)
+                logger.info("GT geladen: %s (%d Labels)", gt_path, len(label_to_obj_id))
+            except Exception as e:
+                logger.warning("GT laden fehlgeschlagen: %s", e)
+
     # --- Pipeline ausführen ---
-    pipeline = OSCARPlusPipeline(config, visualize=args.visualize)
+    pipeline = OSCARPlusPipeline(config, visualize=args.visualize, debug_viz=args.debug_viz)
     pipeline.initialize()
     result = pipeline.run(
         rgb_image=rgb_image,
         depth_image=depth_image,
         prompt=args.prompt,
         camera_intrinsics=camera_intrinsics,
-        skip_steps=args.skip_steps,
+        skip_steps=skip_steps,
+        gt_data=gt_data,
     )
 
     # --- Zusammenfassung ausgeben ---

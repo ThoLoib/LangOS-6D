@@ -3,18 +3,50 @@ version: '3.8'
 services:
   oscar:
     image: tholoi/oscar-plus
-    build: . 
+    build: .
     volumes:
       - .:/app
       - ../ULIP:/ulip
-      - ../FoundationPose:/foundationpose
-      - hf_cache:/root/.cache/huggingface   # HuggingFace-Modelle cached (kein Re-Download)
+      - hf_cache:/root/.cache/huggingface
+      - torch_cache:/root/.cache/torch
+      - clip_cache:/root/.cache/clip
+      - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"  # Expose ports if needed
+      - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # Linux: host-IP als host.docker.internal verfügbar machen
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  foundationpose:
+    image: shingarey/foundationpose_custom_cuda121:latest
+    volumes:
+      - ../FoundationPose:/workspace            # FP repo + server script + weights
+      - .:/oscar:ro                             # read-only access to OSCAR data (CAD models etc.)
+    ports:
+      - "5050:5050"
+    environment:
+      - OPENCV_IO_ENABLE_OPENEXR=1
+    entrypoint: >
+      bash -c "
+        source /opt/conda/etc/profile.d/conda.sh &&
+        conda activate my &&
+        cd /workspace &&
+        python foundationpose_server.py --port 5050
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     deploy:
       resources:
         reservations:
@@ -24,5 +56,7 @@ services:
               capabilities: [gpu]
 
 volumes:
-  hf_cache:   # Persistenter Cache für HuggingFace-Modelle (GroundingDINO, SAM, DINOv2 ...)
-
+  hf_cache:
+  torch_cache:
+  clip_cache:
+  ollama_data:

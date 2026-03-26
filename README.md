@@ -5,7 +5,7 @@ This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline wit
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
 New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-03-17):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes.
+> **Status (2026-03-26):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes. Debug visualization integrated as `--debug-viz` flag on the main pipeline.
 
 ## ULIP Modes (Step 5)
 
@@ -29,19 +29,25 @@ Step 5 now stores CAD embeddings in an on-disk cache (`.ulip_cache_<hash>.pt`) i
 - first run: computes all CAD embeddings (slow)
 - subsequent runs with same config+meshes: loads from cache (much faster)
 
-## FoundationPose Status
+## FoundationPose Integration
 
-- Repository cloned at host path: `~/thesis/FoundationPose`
-- Docker image installed locally: `foundationpose:latest`
-- OSCAR compose mount added: `../FoundationPose:/foundationpose`
-- Current pipeline status in `step8_pose_estimation.py`:
-  - `method="foundationpose"` is still a template path with fallback to ICP
-  - productive FoundationPose call interface is not wired yet
+FoundationPose runs in a **separate Docker container** and is called via HTTP from OSCAR.
 
-Notes for next switch step:
-- Download FoundationPose weights into `FoundationPose/weights/`
-- Build FoundationPose extensions (`build_all.sh`) in the FP environment
-- Implement concrete estimator call in Step 8 and validate on one debug scene
+- FoundationPose repo on host: `~/thesis/FoundationPose`
+- Docker image: `shingarey/foundationpose_custom_cuda121:latest`
+- Compose service: `foundationpose` (exposes port 5050)
+- OSCAR calls `http://foundationpose:5050/estimate_pose` from Step 8
+- If FoundationPose is unavailable or fails, Step 8 falls back to ICP automatically
+
+Architecture:
+- OSCAR container: `tholoi/oscar-plus` (CUDA 12.2, Python 3.11)
+- FP container: `shingarey/foundationpose_custom_cuda121` (CUDA 12.1, Python 3.8, pytorch3d, kaolin, nvdiffrast)
+- Communication: HTTP over Docker compose network
+- Shared data: OSCAR repo mounted read-only at `/oscar` in the FP container for CAD model access
+
+Important:
+- Do not force FoundationPose dependencies into OSCAR's main Python environment.
+- The two-container split exists because of incompatible CUDA/torch/pytorch3d versions.
 
 ---
 
@@ -61,7 +67,7 @@ Natural language prompt + RGB-D image
 | Step 6 | Score Fusion         | CLIP * DINO * ULIP -> rank   |
 |        |                      | (NaN-safe min-max norm.)     |
 | Step 7 | Scale Estimation     | RANSAC+ICP coarse alignment  |
-| Step 8 | Pose Estimation      | ICP with coarse init pose    |
+| Step 8 | Pose Estimation      | FoundationPose or ICP fallback |
 +--------------------------------------------------------------+
           |
           v
@@ -96,6 +102,37 @@ The `docker-compose.yml` mounts `../ULIP` as `/ulip` inside the container.
 docker compose build
 docker compose run --rm -it oscar bash
 ```
+
+### 3.1 FoundationPose Service
+
+FoundationPose runs as a separate compose service. Start both services:
+
+```bash
+docker compose up -d foundationpose   # start FP service (waits for health check)
+docker compose run --rm -it oscar bash # start OSCAR interactively
+```
+
+Verify the FP service is healthy:
+
+```bash
+curl http://localhost:5050/health
+# -> {"status": "ok"}
+```
+
+The FP service uses the pre-built `shingarey/foundationpose_custom_cuda121` image which already
+contains all compiled dependencies (pytorch3d, kaolin, nvdiffrast). No manual environment setup needed.
+
+### 4. Persistence (models, embeddings, caches)
+
+With the current compose mounts, the following data persists across container restarts/re-creation:
+
+- Ollama model store: `/root/.ollama` (named volume `ollama_data`)
+- HuggingFace cache: `/root/.cache/huggingface` (named volume `hf_cache`)
+- Torch/OpenCLIP caches: `/root/.cache/torch`, `/root/.cache/clip` (named volumes)
+- Project outputs and embedding caches (inside repo): persisted via `.:/app`
+  - Example: `pipeline_output/`, `debug_output/`
+  - Example: `.ulip_cache_*.pt` in `object_database/...`
+  - Example: `.dino_cache_*.pt` in `object_images/...`
 
 ---
 
@@ -136,11 +173,26 @@ python description_genertor/descriptions_ycbv_gso_attributes.py
 ### Debug mode (recommended for testing)
 Saves 7 diagnostic PNG images to `debug_output/`:
 ```bash
-python -m pipeline.debug_steps \
-    --prompt "i need the blue coffee can" \
-    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
-    --until_step 8
+# Via convenience script (YCBV-GSO defaults + FoundationPose):
+./scripts/run_debug_pipeline_foundationpose.sh
+
+# Or manually:
+python3.11 -m pipeline.run_pipeline \
+  --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
+  --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
+  --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
+  --prompt "I need the red mug" \
+  --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
+  --reference_images object_images/ycbv_gso/ \
+  --cad_models object_database/ycbv_gso/ \
+  --ulip_repo /ulip \
+  --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+  --pose_method foundationpose \
+  --output debug_output \
+  --debug-viz --until-step 8
 ```
+
+If FoundationPose is unavailable or fails, the pipeline falls back to ICP automatically.
 
 | Output File | Content |
 |-------------|---------|
@@ -155,14 +207,19 @@ python -m pipeline.debug_steps \
 
 ### Full pipeline (single image)
 ```bash
-python -m pipeline.run_pipeline \
+# Via convenience script:
+./scripts/run_pipeline.sh
+
+# Or manually:
+python3.11 -m pipeline.run_pipeline \
     --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
     --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
     --prompt "mustard bottle" \
-    --descriptions object_database/ycbv_gso/descriptions_attributes.json \
+    --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
     --reference_images object_images/ycbv_gso/ \
     --cad_models object_database/ycbv_gso/ \
-    --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json
+    --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
+    --pose_method foundationpose
 ```
 
 ---
