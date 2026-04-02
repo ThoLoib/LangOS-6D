@@ -107,6 +107,24 @@ def _load_thumb(obj_id: str, ref_dir: str, size: int = 160) -> Optional[Image.Im
     return None
 
 
+def _load_view_thumb(obj_id: str, ref_dir: str, view_idx: int,
+                     size: int = 160) -> Optional[Image.Image]:
+    """Lädt ein bestimmtes View-Referenzbild für ein Objekt."""
+    obj_dir = os.path.join(ref_dir, obj_id)
+    if not os.path.isdir(obj_dir):
+        return None
+    fname = f"{obj_id}_{view_idx}.png"
+    path = os.path.join(obj_dir, fname)
+    if not os.path.isfile(path):
+        return None
+    try:
+        img = Image.open(path).convert("RGB")
+        img.thumbnail((size, size), Image.LANCZOS)
+        return img
+    except Exception:
+        return None
+
+
 def _placeholder(size: int, label: str = "N/A") -> Image.Image:
     img = Image.new("RGB", (size, size), (50, 50, 50))
     draw = ImageDraw.Draw(img)
@@ -525,8 +543,12 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
                  f"#{i+1}  {c.object_id}",
                  transform=ax2.transAxes, color=col,
                  fontsize=12, fontweight="bold", va="top")
+        score_label = f"Shape Score: {c.shape_score:.4f}"
+        best_view_idx = getattr(c, "best_view_idx", -1)
+        if best_view_idx >= 0:
+            score_label += f"  (Best View: {best_view_idx})"
         ax2.text(0.02, yp - 0.07,
-                 f"Shape Score: {c.shape_score:.4f}",
+                 score_label,
                  transform=ax2.transAxes, color="white",
                  fontsize=11, va="top")
 
@@ -546,9 +568,17 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
     sd.text((4, 4), "Referenzbilder", fill=(180, 180, 180), font=_font(13))
     for i, c in enumerate(candidates[:top_n]):
         y = 24 + i * (th_size + 10)
-        t = _load_thumb(c.object_id, ref_dir, th_size) or _placeholder(th_size, "N/A")
+        best_view_idx = getattr(c, "best_view_idx", -1)
+        t = None
+        if best_view_idx >= 0:
+            t = _load_view_thumb(c.object_id, ref_dir, best_view_idx, th_size)
+        if t is None:
+            t = _load_thumb(c.object_id, ref_dir, th_size) or _placeholder(th_size, "N/A")
         side.paste(t, ((side_w - t.width) // 2, y))
-        sd.text((4, y + t.height + 1), f"#{i+1}", fill=RANK_COLORS[i], font=_font(12))
+        view_label = f"#{i+1}"
+        if best_view_idx >= 0:
+            view_label += f" v{best_view_idx}"
+        sd.text((4, y + t.height + 1), view_label, fill=RANK_COLORS[i], font=_font(12))
 
     final = _hstack([mpl_img, side], pad=4)
     final = _vstack([_banner("SCHRITT 5: ULIP-2 Shape Matching — 3D Geometrie-Vergleich",

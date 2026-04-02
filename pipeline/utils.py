@@ -7,7 +7,7 @@ import json
 import logging
 import numpy as np
 from PIL import Image
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -113,26 +113,3 @@ def load_camera_intrinsics(json_path: str, image_id: int = 0) -> Dict:
         "cy": K[5],
         "depth_scale": entry.get("depth_scale", 1.0),
     }
-
-
-def load_object_descriptions(desc_file: str) -> Tuple[List[str], List[str]]:
-    """Lädt Objektbeschreibungen aus einer OSCAR-kompatiblen JSON-Datei.
-
-    Format: {object_id: {"image_descriptions": {"view_name": "text", ...}}}
-
-    Args:
-        desc_file: Pfad zur JSON-Datei.
-
-    Returns:
-        (texts, labels) – Liste aller Beschreibungstexte und zugehörige Label-IDs.
-    """
-    with open(desc_file, "r") as f:
-        descriptions = json.load(f)
-
-    texts: List[str] = []
-    labels: List[str] = []
-    for obj_id, entry in descriptions.items():
-        for _, text in entry.get("image_descriptions", {}).items():
-            texts.append(text)
-            labels.append(obj_id)
-    return texts, labels

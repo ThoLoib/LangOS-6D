@@ -1,5 +1,21 @@
 # Decisions
 
+## 2026-03-26 partial-to-partial point cloud matching in Step 5
+
+Decision
+- Add a preprocessing script (`rendering/generate_partial_pointclouds.py`) that generates partial point clouds per view using front-face culling.
+- Add `ulip2_use_partial_views` config flag and `--ulip-partial-views` CLI flag.
+- When enabled, Step 5 loads per-view partial PCs and scores using best-of-8-views cosine similarity instead of a single full-mesh embedding.
+
+Rationale
+- The original Step 5 compared a partial observed PC (single depth view, ~4k points) against full CAD model PCs (uniformly sampled from the entire mesh surface). This domain mismatch is a known weakness: features from occluded sides of the CAD model dilute the embedding, reducing discriminative power for shape matching.
+- Partial-to-partial comparison aligns the reference representation with the query: both are single-view observations. The best-of-8-views scoring selects the reference view most similar to the observed viewpoint.
+
+Alternatives Considered
+- Raycasting (trimesh `intersects_location`): technically more accurate (handles self-occlusion) but orders of magnitude slower without an embree backend (~60h estimated vs ~10min for front-face culling on 1051 objects × 8 views). Rejected for practical reasons.
+- Depth buffer rendering via trimesh scene: more complex setup, requires OpenGL context, limited benefit over front-face culling for the target object types.
+- Keeping full-mesh-only: rejected; this is a known domain mismatch that the thesis aims to address.
+
 ## 2026-03-26 debug visualization as optional mode of the main pipeline
 
 Decision

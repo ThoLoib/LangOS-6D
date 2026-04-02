@@ -8,7 +8,7 @@
 #   Segmentierungsmaske erzeugen.
 #
 # Pipeline:
-#   prompt → GroundingDINO (Bounding Box) → SAM2 (Segmentierungsmaske)
+#   prompt → GroundingDINO (Bounding Box) → SAM2.1 (Segmentierungsmaske)
 #
 # Modelle:
 #   • GroundingDINO – Open-Set Object Detection mit Sprachprompts
@@ -16,8 +16,8 @@
 #     Paper: "Grounding DINO: Marrying DINO with Grounded Pre-Training
 #             for Open-Set Object Detection" (Liu et al., 2023)
 #
-#   • SAM2 – Segment Anything Model 2 (Meta)
-#     Ref: https://github.com/facebookresearch/segment-anything-2
+#   • SAM2.1 – Segment Anything Model 2.1 (Meta)
+#     Ref: https://github.com/facebookresearch/sam2
 #     Paper: "SAM 2: Segment Anything in Images and Videos" (Ravi et al., 2024)
 #
 #   Beide Modelle werden direkt via HuggingFace transformers geladen
@@ -102,8 +102,8 @@ class ObjectLocalizer:
         from transformers import (
             AutoProcessor,
             AutoModelForZeroShotObjectDetection,
-            SamModel,
-            SamProcessor,
+            Sam2Model,
+            Sam2Processor,
         )
 
         gdino_id = self.config.grounding_dino_model
@@ -118,8 +118,8 @@ class ObjectLocalizer:
         )
 
         logger.info("Lade SAM (%s)...", sam_id)
-        self._sam_processor = SamProcessor.from_pretrained(sam_id)
-        self._sam_model = SamModel.from_pretrained(sam_id).to(self.device).eval()
+        self._sam_processor = Sam2Processor.from_pretrained(sam_id)
+        self._sam_model = Sam2Model.from_pretrained(sam_id).to(self.device).eval()
 
         logger.info("GroundingDINO + SAM erfolgreich geladen.")
 
@@ -162,16 +162,15 @@ class ObjectLocalizer:
         """
         input_boxes = [[[bbox[0], bbox[1], bbox[2], bbox[3]]]]
         inputs = self._sam_processor(
-            rgb_image, input_boxes=input_boxes, return_tensors="pt"
+            images=rgb_image, input_boxes=input_boxes, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
             outputs = self._sam_model(**inputs)
 
-        masks = self._sam_processor.image_processor.post_process_masks(
+        masks = self._sam_processor.post_process_masks(
             outputs.pred_masks.cpu(),
-            inputs["original_sizes"].cpu(),
-            inputs["reshaped_input_sizes"].cpu(),
+            inputs["original_sizes"],
         )
         # masks[0] shape: (1, 3, H, W) – 3 Masken pro Box, beste wählen
         iou_scores = outputs.iou_scores.cpu()  # (1, 1, 3)

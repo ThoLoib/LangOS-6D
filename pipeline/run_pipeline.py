@@ -280,7 +280,7 @@ class OSCARPlusPipeline:
             logger.info(f"  Detektions-Phrase: '{prompt_elements.detection_phrase}'")
             logger.info(f"  CLIP-Query:        '{prompt_elements.visual_query}'")
 
-            loc_result = self.localizer.localize(rgb_image, prompt_elements.detection_phrase)
+            loc_result = self.localizer.localize(rgb_image, prompt_elements.visual_query)
             results["localization"] = loc_result
             timings["step1_localization"] = time.time() - t0
 
@@ -371,7 +371,7 @@ class OSCARPlusPipeline:
             elements = results.get("prompt_elements")
             visual_query = elements.visual_query if elements else None
             clip_result = self.clip_retriever.retrieve(
-                loc.roi_image, text_query=visual_query
+                loc.roi_image
             )
             results["clip_retrieval"] = clip_result
             timings["step3_clip"] = time.time() - t0
@@ -595,8 +595,11 @@ class OSCARPlusPipeline:
                     resolved_mesh = _dbv._find_cad_mesh(
                         best_model.object_id, self.config.cad_models_dir
                     )
+                if not resolved_mesh:
+                    logger.warning("Kein valider Mesh-Pfad gefunden.")
+                    mesh_to_use = None
 
-            mesh_to_use = resolved_mesh or best_model.cad_model_path
+            mesh_to_use = resolved_mesh
             if mesh_to_use:
                 pose_result = self.pose_estimator.estimate(
                     rgb_image=np.array(rgb_image),
@@ -937,6 +940,10 @@ Beispiel:
         "--ulip_image_weight", type=float, default=0.5,
         help="Gewicht des Image-Embeddings im Modus 'both' (PC-Gewicht = 1 - w)."
     )
+    parser.add_argument(
+        "--ulip-partial-views", action="store_true", dest="ulip_partial_views",
+        help="Use precomputed partial point clouds per view instead of full mesh sampling"
+    )
     parser.add_argument("--skip_steps", type=int, nargs="*", default=[], help="Schritte überspringen (z.B. --skip_steps 5 8)")
     parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
@@ -970,6 +977,7 @@ def main():
         ulip2_checkpoint=args.ulip_checkpoint,
         ulip2_mode=args.ulip_mode,
         ulip2_image_weight=args.ulip_image_weight,
+        ulip2_use_partial_views=args.ulip_partial_views,
         ollama_model=args.ollama_model,
         ollama_host=args.ollama_host,
     )

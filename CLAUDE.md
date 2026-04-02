@@ -65,6 +65,12 @@ The main reason for the split is repeated dependency incompatibility across:
 
 ## Current Technical Status
 
+### Partial-to-Partial Point Cloud Matching (Step 5)
+
+Step 5 now supports partial-view point clouds (`--ulip-partial-views`) as an alternative to full-mesh sampling. Preprocessing script: `rendering/generate_partial_pointclouds.py`. The partial PCs are stored as `.npz` files alongside the rendered images in `object_images/{dataset}/{object_id}/`. All three ULIP modes (pc, cross, both) work with partial views.
+
+### FoundationPose
+
 FoundationPose integration uses a **two-container HTTP architecture**:
 
 - `pipeline/step8_pose_estimation.py` — calls FoundationPose via HTTP, falls back to ICP
@@ -117,12 +123,9 @@ Claude should optimize for reproducibility and low fragility.
 
 ## Immediate Goal
 
-The two-container HTTP architecture is implemented. The immediate goals are:
-
-1. Validate the FoundationPose HTTP path end-to-end.
-2. Compare FoundationPose pose quality against ICP baseline on YCBV-GSO scenes.
-3. Clean up the obsolete `.venv` in `~/thesis/FoundationPose/`.
-4. Continue with evaluation scripts and thesis experiments.
+1. Evaluate partial-to-partial matching impact on retrieval accuracy across YCBV-GSO scenes.
+2. Compare ULIP modes (pc vs cross vs both) with and without partial views.
+3. Continue with evaluation scripts and thesis experiments.
 
 ## Definition of Success
 

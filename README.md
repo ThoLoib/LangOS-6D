@@ -5,7 +5,7 @@ This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline wit
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
 New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-03-26):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes. Debug visualization integrated as `--debug-viz` flag on the main pipeline.
+> **Status (2026-03-26):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes and partial-to-partial matching. Debug visualization integrated as `--debug-viz` flag on the main pipeline.
 
 ## ULIP Modes (Step 5)
 
@@ -15,19 +15,24 @@ Step 5 supports three retrieval modes:
 - `cross`: query ROI image -> OpenCLIP image encoder -> CAD point embeddings
 - `both`: weighted combination of `pc` and `cross` query embeddings
 
-Debug CLI supports:
+Additionally, `--ulip-partial-views` switches the reference side from full-mesh sampling to precomputed partial PCs per view (best-of-8-views scoring). This eliminates the domain mismatch between the partial observed PC and the full CAD model.
+
+CLI flags:
 
 ```bash
 --ulip_mode {pc,cross,both}
 --ulip_image_weight 0.5
+--ulip-partial-views          # use partial PCs per view instead of full mesh
 ```
 
 ## ULIP CAD Cache
 
-Step 5 now stores CAD embeddings in an on-disk cache (`.ulip_cache_<hash>.pt`) inside the CAD directory.
+Step 5 stores CAD embeddings in an on-disk cache inside the CAD/images directory.
 
-- first run: computes all CAD embeddings (slow)
-- subsequent runs with same config+meshes: loads from cache (much faster)
+- Full mesh mode: `.ulip_cache_<hash>.pt`
+- Partial views mode: `.ulip_partial_cache_<hash>.pt`
+- First run: computes all CAD embeddings (slow)
+- Subsequent runs with same config+meshes: loads from cache (much faster)
 
 ## FoundationPose Integration
 
@@ -63,7 +68,8 @@ Natural language prompt + RGB-D image
 | Step 3 | CLIP Retrieval       | Prompt/description matching  |
 | Step 4 | DINOv2 Re-Ranking    | Visual feature comparison    |
 |        |                      | (batch + disk cache)         |
-| Step 5 | ULIP-2 Shape Match   | 3D geometry similarity (new) |
+| Step 5 | ULIP-2 Shape Match   | 3D geometry similarity       |
+|        |                      | (partial views optional)     |
 | Step 6 | Score Fusion         | CLIP * DINO * ULIP -> rank   |
 |        |                      | (NaN-safe min-max norm.)     |
 | Step 7 | Scale Estimation     | RANSAC+ICP coarse alignment  |
@@ -145,11 +151,14 @@ The database must be rendered before retrieval. Each object needs multi-view ima
 OSCAR/
 +-- object_database/{dataset}/
 |   +-- {object_id}/
-|       +-- textured_simple.obj     <- CAD model
+|       +-- textured_simple.obj          <- CAD model (or meshes/model.obj)
+|       +-- texture_map.png              <- texture (optional)
 |       +-- descriptions_attributes.json
 +-- object_images/{dataset}/
     +-- {object_id}/
-        +-- *.png                   <- rendered views (8 angles)
+        +-- {obj_id}_0.png … _7.png            <- rendered views (8 angles)
+        +-- {obj_id}_view0_CamMatrix.npy … _7   <- 3x4 camera matrices
+        +-- {obj_id}_view0_partial.npz  … _7    <- partial point clouds (optional)
 ```
 
 **Render with Blender:**
@@ -165,6 +174,39 @@ unzip blender.zip
 ```bash
 python description_genertor/descriptions_ycbv_gso_attributes.py
 ```
+
+### Partial Point Cloud Preprocessing (for `--ulip-partial-views`)
+
+Generates view-dependent partial point clouds from CAD meshes using front-face culling.
+Each object gets one `.npz` file per viewpoint (8 views), stored alongside the rendered images.
+
+**Prerequisites:**
+- Rendered images and camera matrices must already exist (`rendering.py` output above)
+- CAD models in `object_database/{dataset}/{object_id}/` (supports nested layouts like `meshes/model.obj`)
+- `trimesh` and `rtree` installed in the Python environment
+
+**Run inside the OSCAR container:**
+```bash
+python3.11 rendering/generate_partial_pointclouds.py \
+    --cad_dir object_database/ycbv_gso/ \
+    --images_dir object_images/ycbv_gso/
+```
+
+**Arguments:**
+| Flag | Default | Description |
+|---|---|---|
+| `--cad_dir` | (required) | Path to CAD models directory |
+| `--images_dir` | (required) | Path to rendered images directory (output goes here) |
+| `--num_points` | 10000 | Points per partial PC (matches ULIP-2 expectation) |
+| `--overwrite` | false | Regenerate existing `.npz` files |
+
+**How it works:**
+1. Loads each CAD mesh via trimesh
+2. Normalizes to unit bounding box (same as `rendering.py`: center on bbox center, scale max dimension to 1.0)
+3. For each of the 8 views: loads the stored 3×4 camera matrix, computes the camera position, samples 50k points on the mesh surface, keeps only front-facing points (face normal · view direction > 0), resamples to `num_points`
+4. Saves as compressed `.npz` with keys `points` (N,3) and `colors` (N,3)
+
+**Performance:** ~1 second per object, ~10 minutes for 1051 YCBV-GSO objects (8 views each).
 
 ---
 
@@ -227,13 +269,15 @@ python3.11 -m pipeline.run_pipeline \
 ## Key Configuration (pipeline/config.py)
 
 ```python
-voxel_size     = 0.002          # Point cloud downsampling (2mm, ~4000 pts)
-depth_scale    = 10000.0        # BOP depth: 16-bit PNG, 0.1mm units
-weight_clip    = 0.3            # Fusion weights
-weight_dino    = 0.4
-weight_ulip    = 0.3
-ollama_model   = "gemma3:4b"    # LLM for prompt parsing
-pose_method    = "icp"          # Pose estimation method
+voxel_size              = 0.002     # Point cloud downsampling (2mm, ~4000 pts)
+depth_scale             = 10000.0   # BOP depth: 16-bit PNG, 0.1mm units
+weight_clip             = 0.3       # Fusion weights
+weight_dino             = 0.4
+weight_ulip             = 0.3
+ulip2_mode              = "cross"   # "pc" | "cross" | "both"
+ulip2_use_partial_views = False     # True = partial PCs per view
+ollama_model            = "gemma3:4b"  # LLM for prompt parsing
+pose_method             = "icp"     # Pose estimation method
 ```
 
 ---

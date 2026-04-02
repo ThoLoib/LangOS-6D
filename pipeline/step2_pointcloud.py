@@ -168,7 +168,7 @@ class PointCloudGenerator:
 
         # --- Statistical Outlier Removal ---
         pcd, _ = pcd.remove_statistical_outlier(
-            nb_neighbors=10, std_ratio=2.0
+            nb_neighbors=10, std_ratio=1.0
         )
 
         # --- Bounding Box berechnen ---

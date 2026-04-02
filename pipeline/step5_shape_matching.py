@@ -81,6 +81,7 @@ class ShapeCandidate:
     object_id: str
     shape_score: float
     cad_model_path: str = ""
+    best_view_idx: int = -1   # index of best matching partial view (-1 = full mesh)
 
 
 @dataclass
@@ -392,6 +393,7 @@ class ShapeMatcher:
         # Gecachte CAD-Modell-Embeddings
         self._cad_embeddings: Dict[str, torch.Tensor] = {}
         self._cad_paths: Dict[str, str] = {}
+        self._partial_mode: bool = False  # True when partial view embeddings are loaded
 
     def _collect_mesh_items(
         self,
@@ -732,24 +734,28 @@ class ShapeMatcher:
     def load_cad_models(
         self,
         cad_dir: Optional[str] = None,
+        partial_pc_dir: Optional[str] = None,
         allowed_extensions: Tuple[str, ...] = (".obj", ".ply", ".glb", ".gltf"),
     ) -> None:
         """Lädt und encodiert CAD-Modelle als Punktwolken.
 
-        Erwartete Ordnerstruktur:
+        Dual path:
+          - partial_pc_dir given + config.ulip2_use_partial_views: load precomputed
+            partial PCs per view, encode per-view embeddings (best-of-N scoring).
+          - Otherwise: full mesh sampling (legacy).
+
+        Erwartete Ordnerstruktur (full mesh):
             cad_dir/
-                object_label_1.obj
-                object_label_2.ply
-                ...
-            oder:
-            cad_dir/
-                object_label_1/
-                    model.obj
-                ...
+                object_label_1.obj | object_label_1/ ...
+
+        Erwartete Ordnerstruktur (partial views):
+            partial_pc_dir/{obj_id}/{obj_id}_view{N}_partial.npz
 
         Args:
             cad_dir: Pfad zum CAD-Modell-Ordner.
-                     Falls None, wird config.cad_models_dir verwendet.
+            partial_pc_dir: Pfad zum Ordner mit vorgerenderten Bildern + partial PCs
+                            (same as reference_images_dir). Falls None, wird
+                            config.reference_images_dir verwendet.
             allowed_extensions: Erlaubte Dateierweiterungen.
         """
         self._load_model()
@@ -758,6 +764,14 @@ class ShapeMatcher:
         if not cad_dir:
             raise ValueError("Kein cad_models_dir konfiguriert.")
 
+        partial_pc_dir = partial_pc_dir or self.config.reference_images_dir
+
+        # --- Partial views path ---
+        if self.config.ulip2_use_partial_views and partial_pc_dir:
+            self._load_cad_models_partial(cad_dir, partial_pc_dir, allowed_extensions)
+            return
+
+        # --- Full mesh path (legacy) ---
         logger.info(f"Lade CAD-Modelle aus: {cad_dir}")
         mesh_items = self._collect_mesh_items(cad_dir, allowed_extensions)
         if not mesh_items:
@@ -778,6 +792,205 @@ class ShapeMatcher:
         logger.info(f"CAD-Modell-Embeddings berechnet: {count} Modelle.")
         if count > 0:
             self._save_cache(cache_path)
+
+    # ------------------------------------------------------------------
+    # Partial-view loading and encoding
+    # ------------------------------------------------------------------
+
+    def _load_cad_models_partial(
+        self,
+        cad_dir: str,
+        partial_pc_dir: str,
+        allowed_extensions: Tuple[str, ...],
+    ) -> None:
+        """Load precomputed partial PCs per view, encode per-view embeddings."""
+        logger.info(
+            "Lade CAD-Modelle (partial views) aus: %s + %s",
+            cad_dir, partial_pc_dir,
+        )
+
+        # Discover objects and their partial .npz files
+        partial_items = self._collect_partial_items(partial_pc_dir)
+        if not partial_items:
+            logger.warning(
+                "Keine partial PCs gefunden in %s. Fallback auf full mesh.",
+                partial_pc_dir,
+            )
+            self.config.ulip2_use_partial_views = False
+            self.load_cad_models(cad_dir=cad_dir, allowed_extensions=allowed_extensions)
+            return
+
+        # Also need mesh paths for cad_model_path in results
+        mesh_items_dict = {
+            obj_id: path
+            for obj_id, path in self._collect_mesh_items(cad_dir, allowed_extensions)
+        }
+
+        # Cache
+        cache_path = self._get_partial_cache_path(partial_pc_dir, partial_items)
+        if self._try_load_partial_cache(cache_path):
+            # Restore mesh paths
+            for obj_id in self._cad_embeddings:
+                if obj_id not in self._cad_paths and obj_id in mesh_items_dict:
+                    self._cad_paths[obj_id] = mesh_items_dict[obj_id]
+            return
+
+        self._cad_embeddings = {}
+        self._cad_paths = {}
+        count = 0
+
+        for obj_id, view_files in partial_items.items():
+            view_embeddings = []
+            for view_idx, npz_path in sorted(view_files):
+                try:
+                    data = np.load(npz_path)
+                    points = data["points"]
+                    colors = data.get("colors", None)
+                    emb = self.encode_pointcloud(points, colors=colors)  # (1, embed_dim)
+                    view_embeddings.append(emb.squeeze(0).detach().cpu())
+                except Exception as e:
+                    logger.warning(
+                        "Fehler bei partial PC %s view %d: %s", obj_id, view_idx, e
+                    )
+
+            if not view_embeddings:
+                # Fallback: try full mesh for this object
+                mesh_path = mesh_items_dict.get(obj_id)
+                if mesh_path:
+                    logger.warning(
+                        "Keine partial view Embeddings für %s, Fallback auf full mesh.",
+                        obj_id,
+                    )
+                    if self._encode_and_cache(obj_id, mesh_path):
+                        count += 1
+                continue
+
+            # Stack to (num_views, embed_dim)
+            self._cad_embeddings[obj_id] = torch.stack(view_embeddings, dim=0)
+            self._cad_paths[obj_id] = mesh_items_dict.get(obj_id, "")
+            count += 1
+
+        self._partial_mode = True
+        logger.info(
+            "Partial-view CAD-Embeddings berechnet: %d Modelle.", count
+        )
+        if count > 0:
+            self._save_partial_cache(cache_path)
+
+    def _collect_partial_items(
+        self, partial_pc_dir: str
+    ) -> Dict[str, List[Tuple[int, str]]]:
+        """Discover partial .npz files grouped by object ID.
+
+        Returns:
+            {obj_id: [(view_idx, npz_path), ...]}
+        """
+        import re
+        result: Dict[str, List[Tuple[int, str]]] = {}
+
+        if not os.path.isdir(partial_pc_dir):
+            return result
+
+        for entry in sorted(os.listdir(partial_pc_dir)):
+            obj_dir = os.path.join(partial_pc_dir, entry)
+            if not os.path.isdir(obj_dir):
+                continue
+
+            views = []
+            for fname in os.listdir(obj_dir):
+                m = re.match(r".+_view(\d+)_partial\.npz$", fname)
+                if m:
+                    view_idx = int(m.group(1))
+                    views.append((view_idx, os.path.join(obj_dir, fname)))
+
+            if views:
+                result[entry] = views
+
+        return result
+
+    def _get_partial_cache_path(
+        self,
+        partial_pc_dir: str,
+        partial_items: Dict[str, List[Tuple[int, str]]],
+    ) -> str:
+        """Generate cache path for partial-view embeddings."""
+        ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
+        meta_parts = [
+            f"backbone={self.config.ulip2_backbone}",
+            f"npts={self.config.ulip2_num_points}",
+            f"colors={int(self.config.ulip2_use_colors)}",
+            f"edim={self.config.ulip2_embed_dim}",
+            f"ckpt={ckpt_tag}",
+            "partial=1",
+        ]
+
+        inv = []
+        for obj_id, views in sorted(partial_items.items()):
+            for view_idx, path in sorted(views):
+                try:
+                    st = os.stat(path)
+                    inv.append(
+                        f"{obj_id}|v{view_idx}|{int(st.st_mtime_ns)}|{st.st_size}"
+                    )
+                except OSError:
+                    inv.append(f"{obj_id}|v{view_idx}|missing")
+
+        raw = "\n".join(meta_parts + sorted(inv))
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        fname = f".ulip_partial_cache_{digest}.pt"
+        return os.path.join(partial_pc_dir, fname)
+
+    def _try_load_partial_cache(self, cache_path: str) -> bool:
+        """Load partial-view cache if it exists."""
+        if not os.path.isfile(cache_path):
+            return False
+
+        try:
+            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
+            if not payload.get("partial", False):
+                return False
+
+            emb = payload.get("embeddings", {})
+            paths = payload.get("paths", {})
+            if not isinstance(emb, dict):
+                return False
+
+            loaded_emb: Dict[str, torch.Tensor] = {}
+            for obj_id, tensor in emb.items():
+                if torch.is_tensor(tensor):
+                    loaded_emb[obj_id] = tensor.detach().cpu()
+
+            if not loaded_emb:
+                return False
+
+            self._cad_embeddings = loaded_emb
+            self._cad_paths = {k: v for k, v in paths.items() if isinstance(v, str)}
+            self._partial_mode = True
+            logger.info(
+                "Partial-view CAD-Embeddings aus Cache geladen: %d Modelle (%s)",
+                len(self._cad_embeddings), cache_path,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Konnte partial ULIP-Cache nicht laden (%s): %s", cache_path, exc
+            )
+            return False
+
+    def _save_partial_cache(self, cache_path: str) -> None:
+        """Save partial-view embeddings cache."""
+        try:
+            payload = {
+                "embeddings": {k: v.detach().cpu() for k, v in self._cad_embeddings.items()},
+                "paths": dict(self._cad_paths),
+                "partial": True,
+            }
+            torch.save(payload, cache_path)
+            logger.info("Partial-view CAD-Embeddings Cache gespeichert: %s", cache_path)
+        except Exception as exc:
+            logger.warning(
+                "Konnte partial ULIP-Cache nicht speichern (%s): %s", cache_path, exc
+            )
 
     def _find_mesh_in_dir(
         self, dir_path: str, extensions: Tuple[str, ...]
@@ -944,11 +1157,30 @@ class ShapeMatcher:
             )
 
         # --- Cosine Similarity ---
-        cad_embs = torch.stack(
-            [self._cad_embeddings[oid] for oid in obj_ids]
-        ).to(self.device)  # (K, embed_dim)
-
-        sims = (query_emb @ cad_embs.T).squeeze(0)  # (K,)
+        if self._partial_mode:
+            # Best-of-N-views scoring for partial view embeddings
+            sims_list = []
+            best_view_indices = []
+            for oid in obj_ids:
+                emb = self._cad_embeddings[oid].to(self.device)
+                if emb.dim() == 2:
+                    # (num_views, embed_dim)
+                    view_sims = (query_emb @ emb.T).squeeze(0)  # (num_views,)
+                    best_score, best_idx = view_sims.max(dim=0)
+                    sims_list.append(best_score)
+                    best_view_indices.append(best_idx.item())
+                else:
+                    # Fallback: single embedding (1D)
+                    sim = (query_emb @ emb.unsqueeze(0).T).squeeze()
+                    sims_list.append(sim)
+                    best_view_indices.append(-1)
+            sims = torch.stack(sims_list)  # (K,)
+        else:
+            cad_embs = torch.stack(
+                [self._cad_embeddings[oid] for oid in obj_ids]
+            ).to(self.device)  # (K, embed_dim)
+            sims = (query_emb @ cad_embs.T).squeeze(0)  # (K,)
+            best_view_indices = [-1] * len(obj_ids)
 
         # --- NaN-Scores filtern ---
         nan_mask = torch.isnan(sims)
@@ -970,6 +1202,7 @@ class ShapeMatcher:
                 object_id=obj_id,
                 shape_score=score,
                 cad_model_path=self._cad_paths.get(obj_id, ""),
+                best_view_idx=best_view_indices[idx],
             ))
 
         logger.info(

@@ -1,6 +1,6 @@
 # AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-03-26
+> Zuletzt aktualisiert: 2026-04-02
 
 ## Projektziel
 
@@ -19,6 +19,78 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `exp/oscar-repro` | OSCAR baseline reproduziert (d3098bdd) | ✅ abgeschlossen |
 | `exp/ulip2` | Shape-Aware Pipeline (PC-ULIP + Fusion) | ✅ stabil |
 | **`exp/ulip2-full`** | **ULIP full experiments (PC vs cross-modal image->PC)** | 🟢 aktiv |
+
+---
+
+## Update 2026-04-02 (SAM2.1 migration + audit fixes)
+
+- **SAM → SAM2.1**: Step 1 now uses `facebook/sam2.1-hiera-large` instead of `facebook/sam-vit-large`. Better mask quality, especially at ambiguous boundaries. API change: `Sam2Model`/`Sam2Processor`, simplified `post_process_masks()`.
+- **Step 2**: Tightened statistical outlier removal (`std_ratio` 2.0 → 1.0) for cleaner point clouds.
+- **Step 1 query**: Localization now uses `visual_query` (LLM-extracted) instead of `detection_phrase`.
+- **CLIP text fusion**: Intentionally disabled (`text_query` removed from `retrieve()` call) pending tuning.
+- **Mesh path fix**: Null guard in `run_pipeline.py` prevents crash when no valid mesh found.
+- **New**: `docs/PIPELINE_AUDIT.md` — comprehensive audit with 20 ranked findings and ablation recommendations.
+
+---
+
+## Update 2026-03-29 (Cleanup: load_object_descriptions → CLIPRetriever)
+
+- Moved `load_object_descriptions()` from `pipeline/utils.py` into `CLIPRetriever._load_object_descriptions()` (static method).
+- Aligns Step 3 with Step 4 pattern (data loading as class method, not standalone utility).
+- No behavioral change.
+
+---
+
+## Update 2026-03-26 (Partial-to-partial point cloud matching for Step 5)
+
+### Partial views preprocessing
+- **New** `rendering/generate_partial_pointclouds.py`: standalone script that generates partial PCs from CAD meshes using front-face culling from 8 camera viewpoints.
+  - Uses trimesh for mesh loading/normalization and surface sampling — no Blender needed.
+  - Converts texture visuals to per-face colors; replicates the same bbox normalization as `rendering.py`.
+  - Output: `{obj_id}_view{N}_partial.npz` files (keys: `points`, `colors`) alongside existing PNGs and camera matrices.
+  - Performance: ~1s per object, ~10 min for 1051 YCBV-GSO objects × 8 views.
+
+### Pipeline changes
+- **Modified** `pipeline/config.py`: new field `ulip2_use_partial_views: bool = False`.
+- **Modified** `pipeline/step5_shape_matching.py`:
+  - `ShapeCandidate` gains `best_view_idx: int` field.
+  - `ShapeMatcher.load_cad_models()` dual path: if partial views enabled, loads `.npz` files and encodes per-view embeddings `(num_views, embed_dim)`.
+  - `match()` uses best-of-N-views scoring (max cosine similarity over views).
+  - Separate cache: `.ulip_partial_cache_<hash>.pt` (distinct from full-mesh cache).
+  - Fallback: objects without `.npz` files fall back to full mesh sampling.
+- **Modified** `pipeline/debug_viz.py`: shows "Best View: N" label and loads matching view thumbnail.
+- **Modified** `pipeline/run_pipeline.py`: new `--ulip-partial-views` CLI flag.
+
+### How to use
+```bash
+# 1. Generate partial point clouds (one-time preprocessing, inside OSCAR container):
+python3.11 rendering/generate_partial_pointclouds.py \
+    --cad_dir object_database/ycbv_gso/ \
+    --images_dir object_images/ycbv_gso/
+
+# 2. Run pipeline with partial views:
+python3.11 -m pipeline.run_pipeline \
+    --rgb eval/datasets/ycbv_gso/test/000048/rgb/000001.png \
+    --depth eval/datasets/ycbv_gso/test/000048/depth/000001.png \
+    --camera eval/datasets/ycbv_gso/test/000048/scene_camera.json \
+    --prompt "I need the red mug" \
+    --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
+    --reference_images object_images/ycbv_gso/ \
+    --cad_models object_database/ycbv_gso/ \
+    --ulip_repo /ulip \
+    --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt \
+    --ulip_mode pc \
+    --ulip-partial-views \
+    --debug-viz --until-step 6 \
+    --output debug_output
+```
+
+### All three ULIP modes work with partial views
+| Mode | Query embedding | Reference embeddings | Scoring |
+|---|---|---|---|
+| `pc` | observed PC → ULIP PC encoder | 8 partial PCs → ULIP PC encoder | max over 8 views |
+| `cross` | ROI image → OpenCLIP image encoder | 8 partial PCs → ULIP PC encoder | max over 8 views |
+| `both` | weighted avg of pc + cross | 8 partial PCs → ULIP PC encoder | max over 8 views |
 
 ---
 
@@ -218,7 +290,7 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 
 ### Bekannte Limitierungen
 
-1. **ULIP-2 Shape Matching** liefert schwache Ergebnisse für partielle Punktwolken (single-view, ~4k Punkte vs. komplette 10k-CAD-Modelle). Fusion kompensiert durch CLIP+DINO.
+1. **ULIP-2 Shape Matching (full mesh)** liefert schwache Ergebnisse für partielle Punktwolken (single-view, ~4k Punkte vs. komplette 10k-CAD-Modelle). **Mitigation:** `--ulip-partial-views` schaltet auf partial-to-partial Vergleich um (best-of-8-views).
 2. **ICP auf symmetrischen Objekten** (z.B. Dosen) kann Rotation um Symmetrieachse nicht eindeutig bestimmen.
 
 ### Was noch fehlt
@@ -246,7 +318,8 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 | `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Point Cloud |
 | `pipeline/step3_clip_retrieval.py` | ~280 | CLIP Text-/Bild-Retrieval |
 | `pipeline/step4_dino_reranking.py` | ~350 | DINOv2 Re-Ranking + Batch-Cache |
-| `pipeline/step5_shape_matching.py` | ~680 | ULIP-2 Encoder + NaN-Filterung |
+| `pipeline/step5_shape_matching.py` | ~1100 | ULIP-2 Encoder + NaN-Filterung + Partial Views |
+| `rendering/generate_partial_pointclouds.py` | ~250 | Partial PC preprocessing (front-face culling) |
 | `pipeline/step6_fusion.py` | ~370 | Score-Fusion (weighted_sum, RRF, intersection) |
 | `pipeline/step7_scale_estimation.py` | ~300 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
 | `pipeline/step8_pose_estimation.py` | ~290 | FoundationPose (HTTP) + ICP fallback |

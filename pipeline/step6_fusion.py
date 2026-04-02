@@ -216,7 +216,7 @@ class ScoreFusion:
 
         # --- Fusion ---
         candidates = []
-        for i, (obj_id, raw) in enumerate(scores.items()):
+        for i, (obj_id, _) in enumerate(scores.items()):
             fused = (
                 w_clip * norm_clip[i]
                 + w_dino * norm_dino[i]

@@ -1,5 +1,80 @@
 # AI Log
 
+## 2026-04-02 Pipeline audit fixes and SAM2.1 migration
+
+Goal
+- Apply fixes identified by the pipeline audit (`docs/PIPELINE_AUDIT.md`) and migrate SAM to SAM2.1.
+
+Changes
+- `pipeline/step2_pointcloud.py`: tightened statistical outlier removal `std_ratio` from 2.0 to 1.0. The previous value was too lenient, keeping noisy depth points that degraded point cloud quality.
+- `pipeline/run_pipeline.py`:
+  - Localization now uses `visual_query` (LLM-extracted object name) instead of `detection_phrase` for GroundingDINO. This passes a cleaner, attribute-enriched query to detection.
+  - Removed `text_query=visual_query` from CLIP `retrieve()` call. Text-image fusion in CLIP is intentionally disabled pending proper tuning (see PIPELINE_AUDIT finding #4).
+  - Fixed mesh path resolution: added null guard (`if not resolved_mesh`) to prevent crash when no valid mesh is found.
+- `pipeline/step6_fusion.py`: renamed unused variable `raw` → `_` (cosmetic).
+- `scripts/run_debug_pipeline_foundationpose.sh`: updated to scene 000049 ("tuna can"), added `--ulip_mode pc` and `--ulip-partial-views` flags.
+- New `docs/PIPELINE_AUDIT.md`: comprehensive audit of all 8 pipeline steps with 20 ranked findings, parameter shortlist, and ablation recommendations.
+
+## 2026-04-02 Migrate SAM → SAM2.1 in Step 1
+
+Goal
+- Replace SAM ViT-L (`facebook/sam-vit-large`) with SAM2.1 Hiera-L (`facebook/sam2.1-hiera-large`) for better mask quality (especially in cluttered scenes) and faster inference.
+
+Changes
+- `pipeline/config.py`: updated `sam_model` default to `facebook/sam2.1-hiera-large`, corrected SAM2 GitHub URL.
+- `pipeline/step1_localization.py`:
+  - Imports: `SamModel`/`SamProcessor` → `Sam2Model`/`Sam2Processor`.
+  - `_load_model()`: uses SAM2 classes.
+  - `_segment()`: added explicit `images=` kwarg to processor call; switched to `processor.post_process_masks(pred, orig)` (SAM2 API drops `reshaped_input_sizes` and the `.image_processor` indirection).
+  - Updated header comments (SAM2 → SAM2.1, corrected GitHub URL).
+
+Rationale
+- SAM2.1 produces higher-quality masks, especially at ambiguous boundaries. The mask feeds into every downstream step (ROI crop, point cloud, pose estimation), so improvements compound. The change is API-compatible — output is still a `(H, W)` bool mask.
+
+## 2026-03-29 Move load_object_descriptions into CLIPRetriever
+
+Goal
+- Align Step 3 with Step 4 pattern: data loading as class method instead of standalone utility function.
+
+Changes
+- Moved `load_object_descriptions()` from `pipeline/utils.py` into `CLIPRetriever._load_object_descriptions()` as a static method in `pipeline/step3_clip_retrieval.py`.
+- Added `import json` to `step3_clip_retrieval.py`.
+- Removed unused `List` import from `pipeline/utils.py`.
+
+Rationale
+- `load_object_descriptions` was only used by `CLIPRetriever.load_descriptions()`. Step 4's analogous `load_reference_images` is already a method on `DINOReranker`. This makes both steps consistent.
+
+## 2026-03-26 Partial-to-partial point cloud matching for Step 5
+
+Goal
+- Replace the full-mesh CAD point cloud comparison in Step 5 with partial-view point clouds rendered from the same 8 viewpoints as the reference images. This eliminates the domain mismatch between the partial observed PC (single depth view) and the full CAD PC (uniformly sampled from entire surface).
+
+Changes
+- New `rendering/generate_partial_pointclouds.py`: standalone preprocessing script (no Blender needed). Uses trimesh to load and normalize CAD meshes, then samples visible surface points per camera viewpoint using front-face culling. Produces `{obj_id}_view{N}_partial.npz` files alongside existing PNGs and camera matrices.
+- Modified `pipeline/config.py`: added `ulip2_use_partial_views: bool = False` config field.
+- Modified `pipeline/step5_shape_matching.py`:
+  - `ShapeCandidate` gains `best_view_idx: int = -1` field (index of best matching partial view).
+  - `ShapeMatcher` gains `_partial_mode` flag and new methods: `_load_cad_models_partial()`, `_collect_partial_items()`, `_get_partial_cache_path()`, `_try_load_partial_cache()`, `_save_partial_cache()`.
+  - `load_cad_models()` now has a dual path: if `ulip2_use_partial_views=True`, loads partial `.npz` files and encodes per-view embeddings `(num_views, embed_dim)` per object.
+  - `match()` uses best-of-N-views scoring (max cosine similarity over 8 views) when in partial mode.
+  - Separate cache file (`.ulip_partial_cache_<hash>.pt`) with `"partial": True` flag to avoid collisions with full-mesh cache.
+  - Fallback: if no `.npz` files exist for an object, falls back to full mesh sampling with a logged warning.
+- Modified `pipeline/debug_viz.py`:
+  - New `_load_view_thumb()` helper to load a specific view image.
+  - `save_debug_step5()` shows "Best View: N" in score labels and loads the matching view thumbnail instead of the first alphabetical image.
+- Modified `pipeline/run_pipeline.py`: added `--ulip-partial-views` CLI flag, wired to config.
+
+Design decisions
+- Front-face culling was chosen over raycasting for performance: raycasting 262k rays/view with trimesh's rtree backend took ~2.6s per 5000 rays (estimated ~60h for full dataset), while front-face culling takes ~0.02s per view (~10 min for 1051 objects × 8 views).
+- Front-face culling is an approximation (no self-occlusion handling) but works well for convex and mildly concave objects typical of the YCBV-GSO dataset.
+- Blender camera coordinate convention (X right, Y up, -Z forward) differs from OpenCV (X right, Y down, +Z forward); camera matrix decomposition accounts for this when computing camera positions from stored RT matrices.
+- Texture-based mesh visuals are converted to per-face ColorVisuals before sampling to extract vertex colors from textured OBJ files.
+
+Preprocessing results (ycbv_gso)
+- 1051 objects × 8 views = 8408 partial point clouds generated in ~10 minutes.
+- Each `.npz` contains `points` (10000, 3) within [-0.5, 0.5] and `colors` (10000, 3) in [0, 1].
+- Different views produce distinct partial PCs (verified via per-view centroid comparison).
+
 ## 2026-03-26 Debug visualization refactored into main pipeline
 
 Goal

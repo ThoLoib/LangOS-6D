@@ -22,6 +22,7 @@
 #   - Liste von (object_id, similarity_score) Tupeln, sortiert nach Score
 # =============================================================================
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
@@ -31,7 +32,6 @@ import torch
 import torch.nn.functional as F
 
 from .config import PipelineConfig
-from .utils import load_object_descriptions
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,29 @@ class CLIPRetriever:
                 "Ref: https://github.com/openai/CLIP"
             )
 
+    @staticmethod
+    def _load_object_descriptions(desc_file: str) -> Tuple[List[str], List[str]]:
+        """Lädt Objektbeschreibungen aus einer OSCAR-kompatiblen JSON-Datei.
+
+        Format: {object_id: {"image_descriptions": {"view_name": "text", ...}}}
+
+        Args:
+            desc_file: Pfad zur JSON-Datei.
+
+        Returns:
+            (texts, labels) – Liste aller Beschreibungstexte und zugehörige Label-IDs.
+        """
+        with open(desc_file, "r") as f:
+            descriptions = json.load(f)
+
+        texts: List[str] = []
+        labels: List[str] = []
+        for obj_id, entry in descriptions.items():
+            for _, text in entry.get("image_descriptions", {}).items():
+                texts.append(text)
+                labels.append(obj_id)
+        return texts, labels
+
     def load_descriptions(
         self,
         desc_file: Optional[str] = None,
@@ -146,7 +169,7 @@ class CLIPRetriever:
             raise ValueError("Kein description_file konfiguriert.")
 
         logger.info(f"Lade Beschreibungen aus: {desc_file}")
-        self._desc_texts, self._desc_labels = load_object_descriptions(desc_file)
+        self._desc_texts, self._desc_labels = self._load_object_descriptions(desc_file)
 
         # Optional: IDs zu menschenlesbaren Labels umwandeln
         if id_to_label:

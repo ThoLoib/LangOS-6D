@@ -28,10 +28,10 @@ class PipelineConfig:
     # Schritt 1 – Objektlokalisierung (GroundingDINO + SAM)
     # -------------------------------------------------------------------------
     # GroundingDINO: https://github.com/IDEA-Research/GroundingDINO
-    # SAM2: https://github.com/facebookresearch/segment-anything-2
+    # SAM2.1: https://github.com/facebookresearch/sam2
     # LangSAM (Wrapper): https://github.com/luca-medeiros/lang-segment-anything
     grounding_dino_model: str = "IDEA-Research/grounding-dino-base"
-    sam_model: str = "facebook/sam-vit-large" # SAM statt SAM2
+    sam_model: str = "facebook/sam2.1-hiera-large"  # SAM2.1 (Ravi et al., 2024)
     detection_confidence: float = 0.3   # Mindest-Konfidenz für Bounding Boxes
 
     # -------------------------------------------------------------------------
@@ -89,6 +89,7 @@ class PipelineConfig:
     #   "both"  – Gewichteter Durchschnitt aus "pc" und "cross" Embeddings.
     ulip2_mode: str = "cross"         # "pc" | "cross" | "both"
     ulip2_image_weight: float = 0.5   # Gewicht für Image-Embedding in Modus "both" (PC-Gewicht = 1 - image_weight)
+    ulip2_use_partial_views: bool = False  # True = precomputed partial PCs per view; False = full mesh (legacy)
 
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
     cad_models_dir: str = ""       # z.B. "object_database/ycbv_gso/"
