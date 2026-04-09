@@ -323,10 +323,6 @@ class OSCARPlusPipeline:
                     f"  ✓ Punktwolke: {pc_result.num_points} Punkte, "
                     f"Größe: {pc_result.bbox_size}"
                 )
-                # Optional speichern
-                pc_path = os.path.join(self.output_dir, "object_pointcloud.ply")
-                self.pc_generator.save_pointcloud(pc_result, pc_path)
-
                 if self.debug_viz:
                     loc = results["localization"]
                     _dbv.save_debug_step2(
