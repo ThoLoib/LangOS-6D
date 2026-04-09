@@ -72,14 +72,14 @@ class LocalizationResult:
 # ---------------------------------------------------------------------------
 
 class ObjectLocalizer:
-    """Lokalisiert Objekte in RGB-Bildern mit GroundingDINO + SAM.
+    """Lokalisiert Objekte in RGB-Bildern mit GroundingDINO + SAM2.1.
 
     Nutzt HuggingFace transformers direkt (kein LangSAM nötig).
-    GroundingDINO liefert Bounding Boxes, SAM segmentiert präzise.
+    GroundingDINO liefert Bounding Boxes, SAM2.1 segmentiert präzise.
 
     Ref:
         GroundingDINO: https://huggingface.co/IDEA-Research/grounding-dino-base
-        SAM: https://huggingface.co/facebook/sam-vit-large
+        SAM2.1: https://huggingface.co/facebook/sam2.1-hiera-large
 
     Usage:
         >>> localizer = ObjectLocalizer(config)
@@ -95,13 +95,14 @@ class ObjectLocalizer:
         self._sam_processor = None
 
     def _load_model(self):
-        """Lädt GroundingDINO + SAM via HuggingFace transformers."""
+        """Lädt GroundingDINO + SAM2.1 via HuggingFace transformers."""
         if self._gdino_model is not None:
             return
 
         from transformers import (
             AutoProcessor,
             AutoModelForZeroShotObjectDetection,
+            Sam2Config,
             Sam2Model,
             Sam2Processor,
         )
@@ -117,11 +118,22 @@ class ObjectLocalizer:
             .eval()
         )
 
-        logger.info("Lade SAM (%s)...", sam_id)
+        logger.info("Lade SAM2.1 (%s)...", sam_id)
         self._sam_processor = Sam2Processor.from_pretrained(sam_id)
-        self._sam_model = Sam2Model.from_pretrained(sam_id).to(self.device).eval()
+        # The facebook/sam2.1-hiera-large checkpoint declares model_type
+        # "sam2_video" in its config.json, but Sam2Model (image segmentation)
+        # expects "sam2".  The architectures are compatible for single-image
+        # use; only the metadata differs.  Load config explicitly and fix
+        # model_type to suppress the spurious warning.
+        sam_config = Sam2Config.from_pretrained(sam_id)
+        sam_config.model_type = "sam2"
+        self._sam_model = (
+            Sam2Model.from_pretrained(sam_id, config=sam_config)
+            .to(self.device)
+            .eval()
+        )
 
-        logger.info("GroundingDINO + SAM erfolgreich geladen.")
+        logger.info("GroundingDINO + SAM2.1 erfolgreich geladen.")
 
     def _detect(self, rgb_image: Image.Image, prompt: str):
         """Führt GroundingDINO-Detektion aus.
@@ -151,7 +163,7 @@ class ObjectLocalizer:
         return results[0]  # single image
 
     def _segment(self, rgb_image: Image.Image, bbox: List[float]) -> np.ndarray:
-        """Erzeugt eine SAM-Maske aus einem Bounding-Box-Prompt.
+        """Erzeugt eine SAM2.1-Maske aus einem Bounding-Box-Prompt.
 
         Args:
             rgb_image: RGB-Bild.
@@ -214,7 +226,7 @@ class ObjectLocalizer:
             label, confidence, bbox,
         )
 
-        # SAM-Segmentierung mit BBox-Prompt
+        # SAM2.1-Segmentierung mit BBox-Prompt
         mask_np = self._segment(rgb_image, bbox)
 
         # --- ROI-Ausschnitt erzeugen ---

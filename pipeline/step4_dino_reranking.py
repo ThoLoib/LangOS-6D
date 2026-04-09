@@ -43,6 +43,62 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Multi-view aggregation (inspired by OPEN, Chu et al. TCSVT 2024)
+# ---------------------------------------------------------------------------
+
+def _aggregate_view_scores(
+    scores: torch.Tensor,
+    method: str = "topk_softmax",
+    top_k: int = 4,
+    temperature: float = 0.1,
+) -> Tuple[float, int]:
+    """Aggregate per-view similarity scores into a single object score.
+
+    Inspired by the query-guided multi-view attention in OPEN (Eq. 2-3):
+      alpha_k = softmax(sim_k / tau)
+      score_obj = sum_k alpha_k * sim_k
+
+    This is a practical inference-time approximation: instead of learned
+    attention, we use the raw cosine similarities as logits and apply a
+    temperature-controlled softmax to produce view weights.
+
+    Args:
+        scores: (V,) tensor of cosine similarities for V views of one object.
+        method: Aggregation strategy.
+            "max"           – hard best-view (legacy).
+            "mean"          – simple average of all views.
+            "softmax"       – softmax-weighted over all views.
+            "topk_softmax"  – softmax-weighted over top-k views only.
+        top_k: Number of top views to consider (topk_softmax only).
+        temperature: Softmax temperature (lower = sharper peaking).
+
+    Returns:
+        (aggregated_score, best_view_index)
+    """
+    best_idx = scores.argmax().item()
+
+    if len(scores) <= 1 or method == "max":
+        return scores[best_idx].item(), best_idx
+
+    if method == "mean":
+        return scores.mean().item(), best_idx
+
+    if method == "topk_softmax":
+        k = min(top_k, len(scores))
+        topk_vals, _ = scores.topk(k)
+        weights = torch.softmax(topk_vals / temperature, dim=0)
+        return (weights * topk_vals).sum().item(), best_idx
+
+    if method == "softmax":
+        weights = torch.softmax(scores / temperature, dim=0)
+        return (weights * scores).sum().item(), best_idx
+
+    # Unknown method — fall back to max
+    logger.warning("Unknown view aggregation method '%s', falling back to max.", method)
+    return scores[best_idx].item(), best_idx
+
+
+# ---------------------------------------------------------------------------
 # Datenstruktur fuer DINOv2-Re-Ranking-Ergebnisse
 # ---------------------------------------------------------------------------
 
@@ -427,20 +483,35 @@ class DINOReRanker:
         cand_tensor = torch.stack(candidate_embs).to(self.device)  # (K, D)
         sims = (query_emb @ cand_tensor.T).squeeze(0)  # (K,)
 
-        # --- Pro Objekt den besten DINOv2-Score finden ---
-        best_per_object: Dict[str, Tuple[float, str]] = {}
+        # --- Group view scores by object ---
+        obj_view_scores: Dict[str, List[Tuple[float, str]]] = {}
         for idx, (obj_id, path) in enumerate(candidate_keys):
-            score = sims[idx].item()
-            if obj_id not in best_per_object or score > best_per_object[obj_id][0]:
-                best_per_object[obj_id] = (score, path)
+            obj_view_scores.setdefault(obj_id, []).append(
+                (sims[idx].item(), path)
+            )
 
-        # --- Sortieren nach DINOv2-Score ---
-        sorted_objects = sorted(
-            best_per_object.items(), key=lambda x: x[1][0], reverse=True
-        )
+        # --- Aggregate per-object using configurable strategy ---
+        agg_method = self.config.dino_view_aggregation
+        agg_topk = self.config.dino_view_topk
+        agg_tau = self.config.dino_view_temperature
+
+        scored_objects: List[Tuple[str, float, str]] = []
+        for obj_id, view_list in obj_view_scores.items():
+            view_scores_t = torch.tensor(
+                [s for s, _ in view_list], device=self.device
+            )
+            agg_score, best_local_idx = _aggregate_view_scores(
+                view_scores_t, method=agg_method, top_k=agg_topk,
+                temperature=agg_tau,
+            )
+            best_path = view_list[best_local_idx][1]
+            scored_objects.append((obj_id, agg_score, best_path))
+
+        # --- Sort by aggregated score ---
+        scored_objects.sort(key=lambda x: x[1], reverse=True)
 
         candidates = []
-        for obj_id, (dino_score, best_path) in sorted_objects[:top_k]:
+        for obj_id, dino_score, best_path in scored_objects[:top_k]:
             candidates.append(DINOCandidate(
                 object_id=obj_id,
                 dino_score=dino_score,
@@ -449,8 +520,10 @@ class DINOReRanker:
             ))
 
         logger.info(
-            f"DINOv2 Re-Ranking: {len(candidates)} Kandidaten "
-            f"(Top: {candidates[0].object_id}, DINO={candidates[0].dino_score:.4f})"
+            "DINOv2 Re-Ranking (%s, k=%d, τ=%.2f): %d candidates "
+            "(Top: %s, DINO=%.4f)",
+            agg_method, agg_topk, agg_tau, len(candidates),
+            candidates[0].object_id, candidates[0].dino_score,
         )
 
         return DINOReRankingResult(

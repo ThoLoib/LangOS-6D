@@ -1,5 +1,67 @@
 # Decisions
 
+## 2026-04-09 GT bbox_center compensation made optional
+
+Decision
+- Add `gt_bbox_center_compensation` config flag (default: `False`) and `--gt-bbox-compensation` CLI arg. When OFF, GT wireframe overlay uses the BOP pose directly without subtracting `R_gt @ bbox_center`.
+
+Rationale
+- The tuna_can mesh has bbox_center only 4.2mm from origin. The compensation (subtracting R_gt @ bbox_center from translation) was introducing visible error (~5px shift) rather than correcting it.
+- BOP datasets vary: some meshes are well-centered, others are not. A one-size-fits-all compensation is incorrect.
+- Default OFF matches the common case for BOP datasets where meshes are near-centered. Users working with off-center meshes can opt in.
+
+Alternatives Considered
+- Always-on compensation (previous behavior) — rejected; incorrect for near-centered meshes.
+- Remove compensation entirely — rejected; some meshes genuinely need it.
+
+## 2026-04-09 SAM2 model_type warning fix
+
+Decision
+- Load `Sam2Config` explicitly and override `model_type = "sam2"` before passing to `Sam2Model.from_pretrained()`.
+
+Rationale
+- `facebook/sam2.1-hiera-large` declares `model_type: "sam2_video"` in its HuggingFace config.json, while `Sam2Model` expects `"sam2"`. The architectures are compatible for image segmentation — the mismatch is purely metadata. Overriding the config avoids the warning without forking the model or patching transformers.
+
+Alternatives Considered
+- Suppress the warning via `warnings.filterwarnings` — rejected; hides potentially useful warnings from other sources.
+- Wait for HuggingFace to fix the metadata — rejected; no control over upstream timeline.
+
+## 2026-04-03 multi-view aggregation for Steps 4 and 5
+
+Decision
+- Replace hard-max (single best view) object scoring in Step 4 (DINOv2) and Step 5 (ULIP-2 partial views) with a configurable multi-view aggregation strategy. Default: softmax-weighted top-k views (`topk_softmax`, k=4, τ=0.1).
+- Approach inspired by OPEN (Chu et al., TCSVT 2024, Eq. 2-3): softmax over query-to-view cosine similarities produces view weights; weighted sum of similarities becomes the object score.
+
+Rationale
+- Hard-max is brittle: a single noisy or lucky view determines the entire object score. Under occlusion or viewpoint mismatch, the best-matching view may still be poor, while multiple moderately-good views collectively provide stronger evidence.
+- The OPEN paper shows that query-guided multi-view attention (softmax over similarities) improves retrieval accuracy by 6-11% in occluded scenarios. Our adaptation is inference-time only (no training changes), using raw cosine similarities as logits instead of learned attention.
+- Top-k selection (k=4 out of typically 8 views) discards low-quality views that would dilute the score under mean aggregation, while still being more robust than hard-max.
+
+Alternatives Considered
+- Full softmax over all views: diluted by poor views when many are available. Rejected as default; available as `"softmax"` option.
+- Mean aggregation: simple but equally weights all views including bad ones. Available as `"mean"`.
+- Learned attention weights (full OPEN reproduction): requires training infrastructure and paired data. Out of scope for inference-time improvement.
+- Keeping hard-max only: rejected; too sensitive to single-view noise. Still available as `"max"`.
+
+## 2026-04-03 deterministic depth conversion and configurable point cloud filtering
+
+Decision
+- Remove the `if depth.max() > 100` heuristic from both `run_pipeline.py` and `step2_pointcloud.py`.
+- Convert depth to float32 meters once in `run_pipeline.py` before `pipeline.run()`, preferring BOP `depth_scale` from `scene_camera.json` when available.
+- Add 2D median-relative depth gating (`depth_gate_tolerance=0.3`) before backprojection.
+- Make SOR/ROR parameters configurable in `PipelineConfig`. Reduce `depth_trunc` default to 2.0m.
+
+Rationale
+- The heuristic `if depth.max() > 100` could trigger in both `run_pipeline.py` and `step2_pointcloud.py`, risking double division. It was also input-order-dependent (results differed for 16-bit vs already-converted depth).
+- BOP `depth_scale` (e.g. 0.1 for YCBV) is authoritative but was ignored in favor of `config.depth_scale` (10000.0). They happen to agree for YCBV (`raw × 0.1 / 1000 = raw / 10000`) but this is fragile for other datasets.
+- Depth outliers within the mask (sensor noise, transparent surfaces, mask bleed) passed through to the point cloud unchecked, degrading shape matching and scale estimation.
+- `depth_trunc=10.0m` was too permissive for tabletop scenes — passed far-plane noise.
+
+Alternatives Considered
+- Keep the heuristic with a guard against double application — rejected; brittle, hard to reason about.
+- Always use `config.depth_scale` and ignore BOP metadata — rejected; fails silently when config doesn't match dataset convention.
+- Z-score depth gating instead of median-relative — rejected; median-relative is more robust to non-Gaussian depth distributions in partially occluded objects.
+
 ## 2026-03-26 partial-to-partial point cloud matching in Step 5
 
 Decision

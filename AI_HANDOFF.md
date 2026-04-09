@@ -1,6 +1,6 @@
 # AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-04-02
+> Zuletzt aktualisiert: 2026-04-09
 
 ## Projektziel
 
@@ -19,6 +19,35 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 | `exp/oscar-repro` | OSCAR baseline reproduziert (d3098bdd) | ✅ abgeschlossen |
 | `exp/ulip2` | Shape-Aware Pipeline (PC-ULIP + Fusion) | ✅ stabil |
 | **`exp/ulip2-full`** | **ULIP full experiments (PC vs cross-modal image->PC)** | 🟢 aktiv |
+
+---
+
+## Update 2026-04-09 (SAM2 warning fix, GT bbox compensation toggle, README file reference)
+
+- **SAM2.1 model_type warning fix**: `step1_localization.py` now loads `Sam2Config` explicitly and overrides `model_type = "sam2"` before `Sam2Model.from_pretrained()`. This suppresses the spurious "model of type sam2_video to instantiate a model of type sam2" warning caused by HuggingFace metadata mismatch in `facebook/sam2.1-hiera-large`.
+- **GT bbox_center compensation toggle**: New config flag `gt_bbox_center_compensation` (default: `False`) and CLI arg `--gt-bbox-compensation`. When OFF, GT wireframe overlay uses the pose directly without adjusting for mesh bbox-center offset. Made optional because the tuna_can mesh is near-centered (4.2mm offset) and the compensation was introducing visible error.
+- **README pipeline file reference**: Added a table listing all 15 `pipeline/*.py` files with one-line descriptions, including `debug_viz.py`, `visualization.py`, `utils.py`, and `foundationpose_bridge.py`.
+
+---
+
+## Update 2026-04-03 (Multi-view aggregation for Steps 4 & 5)
+
+- **Query-conditioned multi-view scoring** (inspired by OPEN, Chu et al. TCSVT 2024): Steps 4 and 5 now aggregate multiple reference views per object instead of relying on a single hard-max winner.
+- **Step 4 (DINOv2)**: Object-level DINOv2 score is computed by selecting the top-k best-matching views for each candidate, applying a softmax with temperature over their cosine similarities, and computing a weighted sum. This replaces the previous hard-max over views.
+- **Step 5 (ULIP-2)**: Same aggregation strategy applied to partial point cloud views in partial-view mode. The hard `max(dim=0)` is replaced by configurable multi-view aggregation.
+- **Config**: New parameters `dino_view_aggregation`, `dino_view_topk`, `dino_view_temperature` (Step 4) and `ulip_view_aggregation`, `ulip_view_topk`, `ulip_view_temperature` (Step 5). Default: `topk_softmax` with k=4, τ=0.1.
+- **Legacy mode**: Setting aggregation to `"max"` restores previous behavior.
+- **Debuggability**: Best single view is still tracked for each object (`best_view_path` / `best_view_idx`).
+
+---
+
+## Update 2026-04-03 (Step 2 point cloud quality)
+
+- **Depth conversion fix**: `run_pipeline.py` now prefers BOP `depth_scale` from `scene_camera.json` when available (raw × depth_scale / 1000 = meters), falling back to `config.depth_scale` (raw / depth_scale = meters). Removes the `if depth.max() > 100` heuristic — conversion is now deterministic and happens once before `pipeline.run()`.
+- **Depth gating**: New 2D pre-filter (`depth_gate_enabled`, `depth_gate_tolerance=0.3`) removes depth outliers within the mask using median-relative gating before backprojection.
+- **Configurable SOR/ROR**: Statistical outlier removal params (`sor_nb_neighbors`, `sor_std_ratio`) and optional radius outlier removal (`ror_enabled`, `ror_nb_points`, `ror_radius`) are now config-driven.
+- **depth_trunc=2.0m**: Reduced from 10.0m default — 2m covers tabletop scenes without passing far-plane noise.
+- **step2_pointcloud.py**: Removed internal `if depth.max() > 100` heuristic. Caller guarantees float32 meters.
 
 ---
 
@@ -309,22 +338,22 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 
 | Datei | Zeilen | Beschreibung |
 |---|---|---|
-| `pipeline/__init__.py` | 21 | Package-Init mit Version `0.1.0` |
-| `pipeline/config.py` | ~140 | Zentrale `PipelineConfig` Dataclass |
-| `pipeline/run_pipeline.py` | ~1045 | Orchestrator + CLI + LLM-Parsing + Debug-Viz-Hooks |
-| `pipeline/debug_viz.py` | ~1070 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
-| `pipeline/foundationpose_bridge.py` | ~100 | HTTP client for FoundationPose service |
-| `pipeline/step1_localization.py` | ~240 | GroundingDINO + SAM |
-| `pipeline/step2_pointcloud.py` | ~280 | RGB-D → Point Cloud |
-| `pipeline/step3_clip_retrieval.py` | ~280 | CLIP Text-/Bild-Retrieval |
-| `pipeline/step4_dino_reranking.py` | ~350 | DINOv2 Re-Ranking + Batch-Cache |
-| `pipeline/step5_shape_matching.py` | ~1100 | ULIP-2 Encoder + NaN-Filterung + Partial Views |
+| `pipeline/__init__.py` | 19 | Package-Init mit Version `0.1.0` |
+| `pipeline/config.py` | ~170 | Zentrale `PipelineConfig` Dataclass |
+| `pipeline/run_pipeline.py` | ~1060 | Orchestrator + CLI + LLM-Parsing + Debug-Viz-Hooks |
+| `pipeline/debug_viz.py` | ~1105 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
+| `pipeline/foundationpose_bridge.py` | ~130 | HTTP client for FoundationPose service |
+| `pipeline/step1_localization.py` | ~320 | GroundingDINO + SAM2.1 |
+| `pipeline/step2_pointcloud.py` | ~340 | RGB-D → Point Cloud (depth gating, SOR/ROR) |
+| `pipeline/step3_clip_retrieval.py` | ~320 | CLIP Text-/Bild-Retrieval |
+| `pipeline/step4_dino_reranking.py` | ~530 | DINOv2 Re-Ranking + Multi-View Aggregation + Disk-Cache |
+| `pipeline/step5_shape_matching.py` | ~1270 | ULIP-2 Encoder + Partial Views + Multi-View Aggregation |
 | `rendering/generate_partial_pointclouds.py` | ~250 | Partial PC preprocessing (front-face culling) |
-| `pipeline/step6_fusion.py` | ~370 | Score-Fusion (weighted_sum, RRF, intersection) |
-| `pipeline/step7_scale_estimation.py` | ~300 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
-| `pipeline/step8_pose_estimation.py` | ~290 | FoundationPose (HTTP) + ICP fallback |
-| `pipeline/utils.py` | ~150 | Hilfsfunktionen |
-| `pipeline/visualization.py` | ~375 | Legacy-Visualization |
+| `pipeline/step6_fusion.py` | ~375 | Score-Fusion (weighted_sum, RRF, intersection) |
+| `pipeline/step7_scale_estimation.py` | ~340 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
+| `pipeline/step8_pose_estimation.py` | ~360 | FoundationPose (HTTP) + ICP fallback |
+| `pipeline/utils.py` | ~115 | Hilfsfunktionen (Kamera-Laden, BOP-Format) |
+| `pipeline/visualization.py` | ~375 | Legacy per-step Visualisierung (Masken, Depth, PC-Render) |
 
 ### Konfiguration (config.py Defaults)
 
@@ -332,12 +361,29 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 # Punktwolke
 voxel_size = 0.002              # Voxel-Downsampling (2mm, ~4000 Punkte)
 depth_scale = 10000.0           # BOP depth: 16-bit PNG, 0.1mm Einheiten
-depth_trunc = 10.0              # Max Tiefe in Metern
+depth_trunc = 2.0               # Max Tiefe in Metern (tabletop)
+
+# Depth gating (2D pre-filter)
+depth_gate_enabled = True
+depth_gate_tolerance = 0.3      # ±30% around median
+
+# SOR / ROR (3D post-filter)
+sor_nb_neighbors = 10
+sor_std_ratio = 1.0
+ror_enabled = False
 
 # ULIP-2
 ulip2_backbone = "pointbert_colored"
 ulip2_num_points = 10000
 ulip2_embed_dim = 1280
+
+# Multi-view aggregation (Steps 4 & 5)
+dino_view_aggregation = "topk_softmax"
+dino_view_topk = 4
+dino_view_temperature = 0.1
+ulip_view_aggregation = "topk_softmax"
+ulip_view_topk = 4
+ulip_view_temperature = 0.1
 
 # Fusion
 weight_clip = 0.3
@@ -351,6 +397,9 @@ ollama_model = "gemma3:4b"
 # Pose
 pose_method = "icp"
 foundationpose_url = "http://foundationpose:5050"
+
+# Debug
+gt_bbox_center_compensation = False
 ```
 
 ---

@@ -5,7 +5,7 @@ This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline wit
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
 New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-03-26):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO scene 000048, including ULIP `pc` vs `cross` modes and partial-to-partial matching. Debug visualization integrated as `--debug-viz` flag on the main pipeline.
+> **Status (2026-04-09):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO. Features: ULIP `pc`/`cross`/`both` modes, partial-to-partial matching, multi-view aggregation (Steps 4 & 5), SAM2.1 segmentation, depth gating, configurable SOR/ROR, FoundationPose HTTP integration with ICP fallback. Debug visualization via `--debug-viz`.
 
 ## ULIP Modes (Step 5)
 
@@ -81,6 +81,26 @@ Natural language prompt + RGB-D image
 ```
 
 All pipeline code lives in `pipeline/`. Each step is a self-contained module with a single dataclass result.
+
+### Pipeline File Reference
+
+| File | Description |
+|---|---|
+| `__init__.py` | Package marker, exports `__version__` |
+| `run_pipeline.py` | Main entry point (`OSCARPlusPipeline` class), CLI argument parsing, orchestrates Steps 1–8 |
+| `config.py` | Central `PipelineConfig` dataclass with all tunable parameters |
+| `step1_localization.py` | GroundingDINO + SAM2.1 object detection and segmentation |
+| `step2_pointcloud.py` | RGB-D backprojection, depth gating, voxel downsampling, SOR/ROR filtering |
+| `step3_clip_retrieval.py` | CLIP-based semantic candidate retrieval from text descriptions |
+| `step4_dino_reranking.py` | DINOv2 visual re-ranking with multi-view aggregation and disk cache |
+| `step5_shape_matching.py` | ULIP-2 shape matching (pc/cross/both modes, partial views, multi-view aggregation) |
+| `step6_fusion.py` | NaN-safe min-max score normalization and weighted CLIP/DINO/ULIP fusion |
+| `step7_scale_estimation.py` | RANSAC + ICP coarse alignment for scale factor estimation |
+| `step8_pose_estimation.py` | 6D pose via FoundationPose (HTTP) or ICP fallback |
+| `foundationpose_bridge.py` | HTTP client for the FoundationPose container (path translation, encoding, error handling) |
+| `utils.py` | Shared helpers: camera intrinsics loading, image I/O, BOP format parsing |
+| `debug_viz.py` | Debug visualization functions (`save_debug_step1`–`step7_8`), 3D projection, interactive point cloud HTML export |
+| `visualization.py` | Legacy per-step visualization (mask overlay, ROI crop, depth maps, point cloud renders) |
 
 ---
 

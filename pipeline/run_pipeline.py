@@ -255,6 +255,7 @@ class OSCARPlusPipeline:
         results = {}
         timings = {}
         cam = camera_intrinsics or {}
+        cam["gt_bbox_center_compensation"] = self.config.gt_bbox_center_compensation
 
         logger.info("=" * 60)
         logger.info(f"OSCAR+ Pipeline – Start")
@@ -952,6 +953,8 @@ Beispiel:
                         help="Reiche Debug-Bilder (debug_01…debug_07 PNGs + PLY + HTML) speichern")
     parser.add_argument("--until-step", type=int, default=8, dest="until_step",
                         help="Pipeline bis einschließlich Schritt N ausführen (1-8, default: 8)")
+    parser.add_argument("--gt-bbox-compensation", action="store_true", dest="gt_bbox_compensation",
+                        help="Enable bbox-center compensation for GT wireframe overlay (default: off)")
     return parser.parse_args()
 
 
@@ -980,6 +983,7 @@ def main():
         ulip2_use_partial_views=args.ulip_partial_views,
         ollama_model=args.ollama_model,
         ollama_host=args.ollama_host,
+        gt_bbox_center_compensation=args.gt_bbox_compensation,
     )
 
     # --- Bilder laden ---
@@ -995,12 +999,18 @@ def main():
         camera_intrinsics = load_camera_intrinsics(args.camera, image_id=image_id)
 
     logger.info(f"Lade Depth: {args.depth}")
-    depth_image = np.array(Image.open(args.depth))
-    # Konvertierung in Meter falls nötig.
-    # BOP depth_scale is a multiplier; our pipeline uses config.depth_scale as
-    # a divisor (raw / 10000 → metres).  Always use config value.
-    if depth_image.max() > 100:
-        depth_image = depth_image.astype(np.float32) / config.depth_scale
+    depth_image = np.array(Image.open(args.depth)).astype(np.float32)
+
+    # Determine depth_scale: prefer BOP scene_camera.json, fall back to config
+    # BOP convention: raw * depth_scale = mm → raw * depth_scale / 1000 = meters
+    # Config convention: raw / config.depth_scale = meters
+    if camera_intrinsics and camera_intrinsics.get("depth_scale", 0) > 0:
+        bop_ds = camera_intrinsics["depth_scale"]
+        depth_image = depth_image * bop_ds / 1000.0
+        logger.info("Depth: BOP depth_scale=%.4f → raw * %.4f / 1000 = meters", bop_ds, bop_ds)
+    else:
+        depth_image = depth_image / config.depth_scale
+        logger.info("Depth: config depth_scale=%.1f → raw / %.1f = meters", config.depth_scale, config.depth_scale)
 
     # --- until_step → skip_steps ---
     skip_steps = list(args.skip_steps)

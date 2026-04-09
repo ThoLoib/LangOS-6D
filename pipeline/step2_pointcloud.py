@@ -68,6 +68,9 @@ class PointCloudGenerator:
     Verwendet Open3D für die Rückprojektion von Tiefenpixeln in den
     3D-Raum unter Berücksichtigung der Kameraintrinsics.
 
+    The caller is responsible for converting the depth image to float32
+    meters before passing it to generate(). No internal heuristic is applied.
+
     Usage:
         >>> gen = PointCloudGenerator(config)
         >>> result = gen.generate(rgb, depth, mask)
@@ -89,6 +92,36 @@ class PointCloudGenerator:
                 "Ref: http://www.open3d.org/docs/release/"
             )
 
+    def _gate_depth(self, depth: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Remove depth outliers within the mask using median-relative gating.
+
+        Operates on the 2D depth image before backprojection.
+        """
+        valid = mask & (depth > 0)
+        n_valid = valid.sum()
+        if n_valid == 0:
+            return depth
+
+        valid_depths = depth[valid]
+        median_z = np.median(valid_depths)
+        tol = self.config.depth_gate_tolerance
+        z_min = median_z * (1.0 - tol)
+        z_max = median_z * (1.0 + tol)
+
+        gated = depth.copy()
+        out_of_range = mask & ((depth < z_min) | (depth > z_max))
+        gated[out_of_range] = 0.0
+
+        n_after = (mask & (gated > 0)).sum()
+        n_removed = n_valid - n_after
+        logger.info(
+            "  Depth gating: median=%.4fm, window=[%.4f, %.4f]m, "
+            "%d → %d valid pixels (removed %d, %.1f%%)",
+            median_z, z_min, z_max, n_valid, n_after, n_removed,
+            100.0 * n_removed / max(n_valid, 1),
+        )
+        return gated
+
     def generate(
         self,
         rgb_image: np.ndarray,
@@ -98,7 +131,6 @@ class PointCloudGenerator:
         fy: Optional[float] = None,
         cx: Optional[float] = None,
         cy: Optional[float] = None,
-        depth_scale: Optional[float] = None,
         depth_trunc: Optional[float] = None,
     ) -> Optional[PointCloudResult]:
         """Erzeugt eine Punktwolke aus RGB-D-Daten für den maskierten Bereich.
@@ -112,11 +144,10 @@ class PointCloudGenerator:
         Args:
             rgb_image: RGB-Bild als numpy-Array (H, W, 3), uint8.
             depth_image: Tiefenbild als numpy-Array (H, W), float32, in Metern.
-                         Falls roh (z.B. mm), wird depth_scale angewendet.
+                         The caller must convert to meters before calling.
             mask: Binäre Segmentierungsmaske (H, W), bool.
             fx, fy: Fokuslängen (überschreiben Config-Werte).
             cx, cy: Hauptpunkt (überschreiben Config-Werte).
-            depth_scale: Divisor für Rohwerte → Meter.
             depth_trunc: Max. Tiefe in Metern (Punkte darüber werden ignoriert).
 
         Returns:
@@ -129,24 +160,32 @@ class PointCloudGenerator:
         fy = fy or self.config.camera_fy
         cx = cx or self.config.camera_cx
         cy = cy or self.config.camera_cy
-        depth_scale = depth_scale or self.config.depth_scale
         depth_trunc = depth_trunc or self.config.depth_trunc
 
-        # --- Tiefenbild vorbereiten ---
+        # --- Tiefenbild vorbereiten (already in meters, no heuristic) ---
         depth = depth_image.astype(np.float32)
-        # Falls Tiefe noch nicht in Metern → konvertieren
-        if depth.max() > 100:  # Heuristik: Rohwerte sind > 100 (z.B. in mm)
-            depth = depth / depth_scale
+
+        # --- Maske anwenden ---
+        mask_bool = np.asarray(mask, dtype=bool)
+        n_mask_pixels = mask_bool.sum()
+        n_valid_depth = (mask_bool & (depth > 0) & (depth < depth_trunc)).sum()
+        logger.info(
+            "  Mask: %d pixels, %d with valid depth (before gating)",
+            n_mask_pixels, n_valid_depth,
+        )
+
+        # --- Depth gating (2D, before backprojection) ---
+        if self.config.depth_gate_enabled:
+            depth = self._gate_depth(depth, mask_bool)
 
         # --- Maske anwenden: nur Objektpixel behalten ---
-        mask_bool = np.asarray(mask, dtype=bool)
         segmented_depth = np.where(mask_bool, depth, 0.0)
 
-        # Open3D erwartet uint16-Tiefe, also konvertieren wir manuell
-        # Alternative: direkte Berechnung über Vektorisierung (effizienter)
+        # --- Rückprojektion ---
         points, colors = self._backproject_manual(
             rgb_image, segmented_depth, fx, fy, cx, cy, depth_trunc
         )
+        logger.info("  Backprojected: %d raw 3D points", len(points))
 
         if len(points) == 0:
             logger.warning("Keine gültigen Tiefenpunkte im maskierten Bereich.")
@@ -159,28 +198,52 @@ class PointCloudGenerator:
 
         # --- Optional: Voxel-Downsampling ---
         if self.config.voxel_size > 0:
-            pcd_down = pcd.voxel_down_sample(voxel_size=self.config.voxel_size)
+            n_before = len(pcd.points)
+            pcd = pcd.voxel_down_sample(voxel_size=self.config.voxel_size)
             logger.info(
-                f"Downsampling: {len(pcd.points)} → {len(pcd_down.points)} Punkte "
-                f"(Voxelgröße: {self.config.voxel_size}m)"
+                "  Downsampling: %d → %d points (voxel: %.3fm)",
+                n_before, len(pcd.points), self.config.voxel_size,
             )
-            pcd = pcd_down
 
-        # --- Statistical Outlier Removal ---
-        pcd, _ = pcd.remove_statistical_outlier(
-            nb_neighbors=10, std_ratio=1.0
-        )
+        # --- Statistical Outlier Removal (configurable) ---
+        if self.config.sor_nb_neighbors > 0:
+            n_before = len(pcd.points)
+            pcd, _ = pcd.remove_statistical_outlier(
+                nb_neighbors=self.config.sor_nb_neighbors,
+                std_ratio=self.config.sor_std_ratio,
+            )
+            logger.info(
+                "  SOR: %d → %d points (removed %d)",
+                n_before, len(pcd.points), n_before - len(pcd.points),
+            )
+
+        # --- Radius Outlier Removal (optional) ---
+        if self.config.ror_enabled:
+            n_before = len(pcd.points)
+            pcd, _ = pcd.remove_radius_outlier(
+                nb_points=self.config.ror_nb_points,
+                radius=self.config.ror_radius,
+            )
+            logger.info(
+                "  ROR: %d → %d points (removed %d)",
+                n_before, len(pcd.points), n_before - len(pcd.points),
+            )
 
         # --- Bounding Box berechnen ---
         pts = np.asarray(pcd.points)
         cols = np.asarray(pcd.colors)
+
+        if len(pts) == 0:
+            logger.warning("No points remaining after filtering.")
+            return None
+
         bbox_min = pts.min(axis=0)
         bbox_max = pts.max(axis=0)
         bbox_size = bbox_max - bbox_min
 
         logger.info(
-            f"Punktwolke erzeugt: {len(pts)} Punkte, "
-            f"BBox-Größe: [{bbox_size[0]:.4f}, {bbox_size[1]:.4f}, {bbox_size[2]:.4f}] m"
+            "  Final: %d points, BBox=[%.4f, %.4f, %.4f]m",
+            len(pts), bbox_size[0], bbox_size[1], bbox_size[2],
         )
 
         return PointCloudResult(

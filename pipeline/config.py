@@ -25,11 +25,11 @@ class PipelineConfig:
     seed: int = 42
 
     # -------------------------------------------------------------------------
-    # Schritt 1 – Objektlokalisierung (GroundingDINO + SAM)
+    # Schritt 1 – Objektlokalisierung (GroundingDINO + SAM2.1)
     # -------------------------------------------------------------------------
     # GroundingDINO: https://github.com/IDEA-Research/GroundingDINO
     # SAM2.1: https://github.com/facebookresearch/sam2
-    # LangSAM (Wrapper): https://github.com/luca-medeiros/lang-segment-anything
+    #   HF: https://huggingface.co/facebook/sam2.1-hiera-large
     grounding_dino_model: str = "IDEA-Research/grounding-dino-base"
     sam_model: str = "facebook/sam2.1-hiera-large"  # SAM2.1 (Ravi et al., 2024)
     detection_confidence: float = 0.3   # Mindest-Konfidenz für Bounding Boxes
@@ -44,8 +44,21 @@ class PipelineConfig:
     camera_cx: float = 320.0    # Hauptpunkt x
     camera_cy: float = 240.0    # Hauptpunkt y
     depth_scale: float = 10000.0  # Konversion: depth_raw / depth_scale = Meter
-    depth_trunc: float = 10.0     # Maximale Tiefe in Metern
+    depth_trunc: float = 2.0      # Maximale Tiefe in Metern (2m für Tabletop-Szenen)
     voxel_size: float = 0.002    # Voxel-Downsampling-Größe (Meter)
+
+    # Depth Gating (2D-Vorfilter auf maskierter Tiefe, vor Rückprojektion)
+    depth_gate_enabled: bool = True
+    depth_gate_tolerance: float = 0.3   # ±30% um den Median
+
+    # Statistical Outlier Removal (3D-Nachfilter)
+    sor_nb_neighbors: int = 10
+    sor_std_ratio: float = 1.0
+
+    # Radius Outlier Removal (3D-Nachfilter, optional)
+    ror_enabled: bool = False
+    ror_nb_points: int = 10       # Min. Nachbarn innerhalb des Radius
+    ror_radius: float = 0.01     # Suchradius in Metern
 
     # -------------------------------------------------------------------------
     # Schritt 3 – Semantische Kandidatensuche (CLIP)
@@ -64,6 +77,13 @@ class PipelineConfig:
     # DINOv2: https://github.com/facebookresearch/dinov2
     dino_model_name: str = "facebook/dinov2-base"
     dino_top_k: int = 5          # Anzahl der DINOv2-Kandidaten nach Re-Ranking
+
+    # Multi-view aggregation for DINOv2 re-ranking (inspired by OPEN, Chu et al. 2024)
+    # "max" = hard best-view (legacy), "mean" = average all views,
+    # "softmax" = softmax-weighted over all views, "topk_softmax" = softmax over top-k views
+    dino_view_aggregation: str = "topk_softmax"
+    dino_view_topk: int = 4       # Number of top views for topk_softmax
+    dino_view_temperature: float = 0.1  # Softmax temperature (lower = sharper)
 
     # Pfad zu vorgerenderten Referenzbildern
     reference_images_dir: str = ""  # z.B. "object_images/ycbv_gso/"
@@ -90,6 +110,12 @@ class PipelineConfig:
     ulip2_mode: str = "cross"         # "pc" | "cross" | "both"
     ulip2_image_weight: float = 0.5   # Gewicht für Image-Embedding in Modus "both" (PC-Gewicht = 1 - image_weight)
     ulip2_use_partial_views: bool = False  # True = precomputed partial PCs per view; False = full mesh (legacy)
+
+    # Multi-view aggregation for ULIP-2 partial views (inspired by OPEN, Chu et al. 2024)
+    # Same modes as dino_view_aggregation. Only applies when ulip2_use_partial_views=True.
+    ulip_view_aggregation: str = "topk_softmax"
+    ulip_view_topk: int = 4
+    ulip_view_temperature: float = 0.1
 
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
     cad_models_dir: str = ""       # z.B. "object_database/ycbv_gso/"
@@ -128,6 +154,11 @@ class PipelineConfig:
     # Installiert im Docker-Container; Python-Client in requirements.txt
     ollama_host: str = "http://localhost:11434"  # Ollama läuft im Container (start.sh)
     ollama_model: str = "gemma3:4b"       # Modell für Prompt-Parsing (im Dockerfile gepullt)
+
+    # -------------------------------------------------------------------------
+    # Debug-Visualisierung
+    # -------------------------------------------------------------------------
+    gt_bbox_center_compensation: bool = False  # Compensate GT wireframe for mesh bbox-center offset
 
     # -------------------------------------------------------------------------
     # Ein-/Ausgabepfade

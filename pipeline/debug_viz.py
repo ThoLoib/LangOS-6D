@@ -889,27 +889,32 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
             pose_method=pose_method,
         )
         # GT wireframe overlay (magenta).
-        # BOP GT poses reference centered models (bbox_center at origin).
-        # Our OBJ mesh may have a non-zero bbox_center offset, causing a
-        # systematic pixel shift.  Compensate by adjusting the GT translation:
-        #   t_adjusted = t_gt - R_gt @ bbox_center
-        # so the wireframe is drawn as if the mesh were centered.
+        # BOP GT poses reference the model coordinate frame as-is.
+        # If the OBJ mesh origin differs from the BOP model origin,
+        # a bbox-center compensation *may* help — but it can also
+        # introduce error when the mesh is already near-centered.
+        # Set gt_bbox_center_compensation=True in cam dict to enable.
         if gt_pose_matrix is not None and cad_model_path:
-            try:
-                import trimesh as _trimesh
-                _m = _trimesh.load(cad_model_path, force="mesh")
-                _v = np.array(_m.vertices)
-                _bbox_c = (_v.min(0) + _v.max(0)) / 2
-                _R_gt = gt_pose_matrix[:3, :3]
-                _gt_adj = gt_pose_matrix.copy()
-                _gt_adj[:3, 3] = gt_pose_matrix[:3, 3] - _R_gt @ _bbox_c
-                logger.info(
-                    "  [GT] bbox_center offset: %s m  → t adjustment: %s m",
-                    np.round(_bbox_c, 4),
-                    np.round(-_R_gt @ _bbox_c, 4),
-                )
-            except Exception:
-                _gt_adj = gt_pose_matrix
+            _gt_adj = gt_pose_matrix
+            if cam and cam.get("gt_bbox_center_compensation", False):
+                try:
+                    import trimesh as _trimesh
+                    _m = _trimesh.load(cad_model_path, force="mesh")
+                    _v = np.array(_m.vertices)
+                    _bbox_c = (_v.min(0) + _v.max(0)) / 2
+                    _R_gt = gt_pose_matrix[:3, :3]
+                    _gt_adj = gt_pose_matrix.copy()
+                    _gt_adj[:3, 3] = gt_pose_matrix[:3, 3] - _R_gt @ _bbox_c
+                    logger.info(
+                        "  [GT] bbox_center compensation ON: offset=%s m, "
+                        "t adjustment=%s m",
+                        np.round(_bbox_c, 4),
+                        np.round(-_R_gt @ _bbox_c, 4),
+                    )
+                except Exception:
+                    _gt_adj = gt_pose_matrix
+            else:
+                logger.info("  [GT] bbox_center compensation OFF (direct pose)")
             scene_s = _project_cad_wireframe(
                 scene_s, cad_model_path, _gt_adj, 1.0,
                 cam, color=(255, 100, 255), alpha=0.6, scene_scale=sc,

@@ -23,5 +23,7 @@ python3.11 -m pipeline.run_pipeline \
     --output debug_output/pc-mode \
     --debug-viz \
     --until-step 8 \
+    --gt-bbox-compensation \
+    # --skip_steps  \
 
     "$@"

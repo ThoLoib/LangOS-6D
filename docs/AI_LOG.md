@@ -1,5 +1,63 @@
 # AI Log
 
+## 2026-04-09 SAM2 warning fix, GT bbox compensation toggle, README file reference
+
+Goal
+- Fix spurious SAM2 model_type warning in Step 1.
+- Make GT bbox_center compensation optional (was always-on, caused visible shift for near-centered meshes).
+- Add pipeline file reference table to README.
+
+Changes
+- `pipeline/step1_localization.py`: Load `Sam2Config` explicitly, override `model_type = "sam2"` before `Sam2Model.from_pretrained()`. Suppresses warning from HuggingFace metadata mismatch (`sam2_video` in config.json vs expected `sam2`). Updated docstrings from "SAM" to "SAM2.1".
+- `pipeline/debug_viz.py`: Made bbox_center compensation conditional on `cam.get("gt_bbox_center_compensation", False)` instead of always-on.
+- `pipeline/run_pipeline.py`: Wires `config.gt_bbox_center_compensation` into camera dict. Added `--gt-bbox-compensation` CLI flag.
+- `pipeline/config.py`: Added `gt_bbox_center_compensation: bool = False` in Debug section. Updated SAM section header to "SAM2.1".
+- `README.md`: Added "Pipeline File Reference" table listing all 15 `pipeline/*.py` files with descriptions.
+
+Results
+- SAM2 warning no longer appears in pipeline output.
+- GT wireframe overlay defaults to direct pose (no bbox adjustment), which is correct for near-centered meshes like tuna_can. Users can opt in with `--gt-bbox-compensation` for meshes with significant origin offset.
+
+## 2026-04-03 Multi-view aggregation for Steps 4 and 5
+
+Goal
+- Replace brittle hard-max view scoring in Steps 4 (DINOv2) and 5 (ULIP-2 partial views) with a configurable, query-conditioned multi-view aggregation strategy. Inspired by OPEN (Chu et al., TCSVT 2024) Equations 2-3 (softmax attention over multi-view similarities).
+
+Changes
+- `pipeline/step4_dino_reranking.py`:
+  - Added `_aggregate_view_scores()` function supporting `max`, `mean`, `softmax`, `topk_softmax` modes.
+  - Replaced hard-max per-object aggregation with grouped view scores → configurable aggregation.
+  - Default: `topk_softmax` with k=4, τ=0.1.
+  - Best view path still tracked for debugging/visualization.
+- `pipeline/step5_shape_matching.py`:
+  - Added same `_aggregate_view_scores()` function.
+  - Replaced `view_sims.max(dim=0)` in partial mode with configurable aggregation.
+  - Default: `topk_softmax` with k=4, τ=0.1.
+- `pipeline/config.py`: Added `dino_view_aggregation`, `dino_view_topk`, `dino_view_temperature`, `ulip_view_aggregation`, `ulip_view_topk`, `ulip_view_temperature`.
+
+Results
+- Object-level scores now incorporate signal from multiple good views, reducing sensitivity to single-view noise or viewpoint mismatch.
+- Setting aggregation to `"max"` preserves previous behavior for A/B comparison.
+
+## 2026-04-03 Step 2 point cloud quality improvements
+
+Goal
+- Fix fragile depth conversion (double-scaling risk, BOP `depth_scale` ignored) and add configurable depth filtering for cleaner point clouds.
+
+Changes
+- `pipeline/run_pipeline.py`: Depth conversion now prefers BOP `depth_scale` from `scene_camera.json` (raw × depth_scale / 1000 = meters), falls back to `config.depth_scale` (raw / config.depth_scale = meters). Removed `if depth.max() > 100` heuristic — conversion is deterministic, runs once before `pipeline.run()`.
+- `pipeline/step2_pointcloud.py`:
+  - Removed internal `if depth.max() > 100` heuristic (caller guarantees meters).
+  - Added `_gate_depth()`: median-relative 2D depth gating before backprojection. Configurable via `depth_gate_enabled` and `depth_gate_tolerance`.
+  - SOR/ROR now config-driven: `sor_nb_neighbors`, `sor_std_ratio`, `ror_enabled`, `ror_nb_points`, `ror_radius`.
+  - Added logging at each filtering stage (mask stats, gating, backprojection, SOR, ROR, final bbox).
+- `pipeline/config.py`: Added `depth_gate_enabled`, `depth_gate_tolerance`, `sor_nb_neighbors`, `sor_std_ratio`, `ror_enabled`, `ror_nb_points`, `ror_radius`. Changed `depth_trunc` default from 10.0 to 2.0m.
+
+Results
+- Depth conversion is now deterministic and BOP-correct for YCBV (`depth_scale=0.1`).
+- Depth gating removes sensor noise / mask bleed outliers before they pollute the point cloud.
+- depth_trunc=2.0m eliminates far-plane points in tabletop scenes.
+
 ## 2026-04-02 Pipeline audit fixes and SAM2.1 migration
 
 Goal

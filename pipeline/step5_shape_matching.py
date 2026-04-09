@@ -66,6 +66,44 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Multi-view aggregation (inspired by OPEN, Chu et al. TCSVT 2024)
+# ---------------------------------------------------------------------------
+
+def _aggregate_view_scores(
+    scores: torch.Tensor,
+    method: str = "topk_softmax",
+    top_k: int = 8,
+    temperature: float = 0.1,
+) -> Tuple[float, int]:
+    """Aggregate per-view similarity scores into a single object score.
+
+    See step4_dino_reranking._aggregate_view_scores for full docstring.
+
+    Returns:
+        (aggregated_score, best_view_index)
+    """
+    best_idx = scores.argmax().item()
+
+    if len(scores) <= 1 or method == "max":
+        return scores[best_idx].item(), best_idx
+
+    if method == "mean":
+        return scores.mean().item(), best_idx
+
+    if method == "topk_softmax":
+        k = min(top_k, len(scores))
+        topk_vals, _ = scores.topk(k)
+        weights = torch.softmax(topk_vals / temperature, dim=0)
+        return (weights * topk_vals).sum().item(), best_idx
+
+    if method == "softmax":
+        weights = torch.softmax(scores / temperature, dim=0)
+        return (weights * scores).sum().item(), best_idx
+
+    return scores[best_idx].item(), best_idx
+
+
+# ---------------------------------------------------------------------------
 # Datenstruktur für Shape-Matching-Ergebnisse
 # ---------------------------------------------------------------------------
 
@@ -1157,8 +1195,12 @@ class ShapeMatcher:
             )
 
         # --- Cosine Similarity ---
+        agg_method = self.config.ulip_view_aggregation
+        agg_topk = self.config.ulip_view_topk
+        agg_tau = self.config.ulip_view_temperature
+
         if self._partial_mode:
-            # Best-of-N-views scoring for partial view embeddings
+            # Multi-view scoring for partial view embeddings
             sims_list = []
             best_view_indices = []
             for oid in obj_ids:
@@ -1166,15 +1208,23 @@ class ShapeMatcher:
                 if emb.dim() == 2:
                     # (num_views, embed_dim)
                     view_sims = (query_emb @ emb.T).squeeze(0)  # (num_views,)
-                    best_score, best_idx = view_sims.max(dim=0)
-                    sims_list.append(best_score)
-                    best_view_indices.append(best_idx.item())
+                    agg_score, best_idx = _aggregate_view_scores(
+                        view_sims, method=agg_method, top_k=agg_topk,
+                        temperature=agg_tau,
+                    )
+                    sims_list.append(torch.tensor(agg_score, device=self.device))
+                    best_view_indices.append(best_idx)
                 else:
                     # Fallback: single embedding (1D)
                     sim = (query_emb @ emb.unsqueeze(0).T).squeeze()
                     sims_list.append(sim)
                     best_view_indices.append(-1)
             sims = torch.stack(sims_list)  # (K,)
+            if agg_method != "max":
+                logger.info(
+                    "  ULIP partial-view aggregation: %s (k=%d, τ=%.2f)",
+                    agg_method, agg_topk, agg_tau,
+                )
         else:
             cad_embs = torch.stack(
                 [self._cad_embeddings[oid] for oid in obj_ids]
