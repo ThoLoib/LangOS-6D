@@ -99,8 +99,7 @@ All pipeline code lives in `pipeline/`. Each step is a self-contained module wit
 | `step8_pose_estimation.py` | 6D pose via FoundationPose (HTTP) or ICP fallback |
 | `foundationpose_bridge.py` | HTTP client for the FoundationPose container (path translation, encoding, error handling) |
 | `utils.py` | Shared helpers: camera intrinsics loading, image I/O, BOP format parsing |
-| `debug_viz.py` | Debug visualization functions (`save_debug_step1`–`step7_8`), 3D projection, interactive point cloud HTML export |
-| `visualization.py` | Legacy per-step visualization (mask overlay, ROI crop, depth maps, point cloud renders) |
+| `debug_viz.py` | Debug visualization functions (`save_debug_step1`–`step7_8`), 3D projection, interactive point cloud HTML export (`--debug-viz` only) |
 
 ---
 

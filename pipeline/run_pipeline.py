@@ -47,7 +47,6 @@ from .step6_fusion import ScoreFusion
 from .step7_scale_estimation import ScaleEstimator
 from .step8_pose_estimation import PoseEstimator
 from .utils import load_depth_image, ensure_dir
-from . import visualization as viz
 from . import debug_viz as _dbv
 
 # =============================================================================
@@ -168,10 +167,9 @@ class OSCARPlusPipeline:
         >>> result = pipeline.run(rgb_image, depth_image, "greife nach der Mayonnaisetube")
     """
 
-    def __init__(self, config: PipelineConfig, visualize: bool = False, debug_viz: bool = False):
+    def __init__(self, config: PipelineConfig, debug_viz: bool = False):
         self.config = config
         self.output_dir = ensure_dir(config.output_dir)
-        self.visualize = visualize
         self.debug_viz = debug_viz
 
         # --- Module initialisieren (Lazy Loading, Modelle werden bei Bedarf geladen) ---
@@ -293,14 +291,6 @@ class OSCARPlusPipeline:
                 f"  ✓ Objekt gefunden (Konfidenz: {loc_result.confidence:.3f})"
             )
 
-            # --- Visualisierung ---
-            if self.visualize and loc_result:
-                viz.viz_step1_mask(
-                    rgb_image, loc_result.mask, loc_result.bbox,
-                    loc_result.confidence, prompt_elements.detection_phrase, self.output_dir
-                )
-                viz.viz_step1_roi(loc_result.roi_image, self.output_dir)
-
             if self.debug_viz and loc_result:
                 _dbv.save_debug_step1(
                     rgb_image, loc_result.mask, loc_result.bbox,
@@ -336,14 +326,6 @@ class OSCARPlusPipeline:
                 # Optional speichern
                 pc_path = os.path.join(self.output_dir, "object_pointcloud.ply")
                 self.pc_generator.save_pointcloud(pc_result, pc_path)
-
-                # --- Visualisierung ---
-                if self.visualize:
-                    loc = results["localization"]
-                    viz.viz_step2_depth_masked(depth_image, loc.mask, self.output_dir)
-                    viz.viz_step2_pointcloud(
-                        pc_result.points, pc_result.colors, self.output_dir
-                    )
 
                 if self.debug_viz:
                     loc = results["localization"]
@@ -381,15 +363,6 @@ class OSCARPlusPipeline:
             for i, c in enumerate(clip_result.candidates[:5]):
                 logger.info(f"    {i+1}. {c.object_id} (Score: {c.score:.4f})")
 
-            # --- Visualisierung ---
-            if self.visualize:
-                query_img = results.get("localization", None)
-                viz.viz_step3_clip(
-                    clip_result, self.config.reference_images_dir,
-                    self.output_dir,
-                    query_image=query_img.roi_image if query_img else None
-                )
-
             if self.debug_viz:
                 loc = results["localization"]
                 _dbv.save_debug_step3(
@@ -419,15 +392,6 @@ class OSCARPlusPipeline:
                 logger.info(
                     f"    {i+1}. {c.object_id} "
                     f"(DINO: {c.dino_score:.4f}, CLIP: {c.clip_score:.4f})"
-                )
-
-            # --- Visualisierung ---
-            if self.visualize:
-                query_img = results.get("localization", None)
-                viz.viz_step4_dino(
-                    dino_result, self.config.reference_images_dir,
-                    self.output_dir,
-                    query_image=query_img.roi_image if query_img else None
                 )
 
             if self.debug_viz:
@@ -472,13 +436,6 @@ class OSCARPlusPipeline:
                         f"    {i+1}. {c.object_id} (Shape: {c.shape_score:.4f})"
                     )
 
-                # --- Visualisierung ---
-                if self.visualize:
-                    viz.viz_step5_shape(
-                        shape_result, self.config.reference_images_dir,
-                        self.output_dir
-                    )
-
                 if self.debug_viz:
                     _dbv.save_debug_step5(
                         pc.points, pc.colors,
@@ -506,15 +463,6 @@ class OSCARPlusPipeline:
                 logger.info(
                     f"  ✓ Bestes Modell: {fusion_result.best_match.object_id} "
                     f"(Fusionierter Score: {fusion_result.best_match.fused_score:.4f})"
-                )
-
-            # --- Visualisierung ---
-            if self.visualize:
-                query_img = results.get("localization", None)
-                viz.viz_step6_fusion(
-                    fusion_result, self.config.reference_images_dir,
-                    self.output_dir,
-                    query_image=query_img.roi_image if query_img else None
                 )
 
             if self.debug_viz:
@@ -684,11 +632,6 @@ class OSCARPlusPipeline:
 
         # Ergebnisse speichern
         self._save_results(results)
-
-        # --- Summary-Visualisierung ---
-        if self.visualize:
-            viz.viz_summary(self.output_dir, prompt, timings)
-            logger.info(f"Visualisierungen gespeichert in: {self.output_dir}")
 
         if self.debug_viz:
             _dbv._done(self.output_dir)
@@ -948,7 +891,6 @@ Beispiel:
     parser.add_argument("--skip_steps", type=int, nargs="*", default=[], help="Schritte überspringen (z.B. --skip_steps 5 8)")
     parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
-    parser.add_argument("--visualize", action="store_true", help="Zwischenergebnisse als Bilder speichern (Masken, Punktwolken, Kandidaten)")
     parser.add_argument("--debug-viz", action="store_true", dest="debug_viz",
                         help="Reiche Debug-Bilder (debug_01…debug_07 PNGs + PLY + HTML) speichern")
     parser.add_argument("--until-step", type=int, default=8, dest="until_step",
@@ -1038,7 +980,7 @@ def main():
                 logger.warning("GT laden fehlgeschlagen: %s", e)
 
     # --- Pipeline ausführen ---
-    pipeline = OSCARPlusPipeline(config, visualize=args.visualize, debug_viz=args.debug_viz)
+    pipeline = OSCARPlusPipeline(config, debug_viz=args.debug_viz)
     pipeline.initialize()
     result = pipeline.run(
         rgb_image=rgb_image,
