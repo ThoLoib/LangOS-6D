@@ -212,23 +212,23 @@ def save_debug_step1(rgb_image: Image.Image, mask: np.ndarray, bbox: list,
           (x1, max(0, y1 - 24)), fg=(0, 255, 100), bg=(0, 0, 0), size=15)
     ratio = tw / scene.width
     pa = scene.resize((tw, int(scene.height * ratio)), Image.LANCZOS)
-    pa = _label_top(pa, "1.: Szene + Segmentierungsmaske + BBox", fg="cyan")
+    pa = _label_top(pa, "1.: Scene + Masked ROI + BBox", fg="cyan")
 
     # --- Panel B: Segmentierter ROI-Ausschnitt ---
     roi_r = roi_image.copy()
     roi_r.thumbnail((tw, tw), Image.LANCZOS)
     pb = Image.new("RGB", (tw, pa.height), (22, 22, 22))
     pb.paste(roi_r, ((tw - roi_r.width) // 2, (pa.height - roi_r.height - 20) // 2 + 20))
-    pb = _label_top(pb, "2.: Segmentierter Objektausschnitt (ROI)", fg="cyan")
+    pb = _label_top(pb, "2.: Segmented ROI", fg="cyan")
     pb = pb.crop((0, 0, pb.width, pa.height))
 
     # --- Panel C: Text-Info ---
     pc = Image.new("RGB", (tw, pa.height), (14, 14, 18))
     draw_t = ImageDraw.Draw(pc)
-    draw_t.text((10, 14), "SCHRITT 1 - LOKALISIERUNG", fill=(0, 200, 255), font=_font(19))
+    draw_t.text((10, 14), "STEP 1 - LOCALIZATION", fill=(0, 200, 255), font=_font(19))
 
     y = 60
-    draw_t.text((10, y), "Eingabe-Prompt:", fill=(170, 170, 170), font=_font(13))
+    draw_t.text((10, y), "Query-Prompt:", fill=(170, 170, 170), font=_font(13))
     y += 20
     # Zeilenumbruch bei langen Prompts
     words = original_prompt.split()
@@ -245,33 +245,28 @@ def save_debug_step1(rgb_image: Image.Image, mask: np.ndarray, bbox: list,
         y += 20
     y += 10
 
-    draw_t.text((10, y), "Extrahierter Objektname (with GroundingDINO):",
+    draw_t.text((10, y), "Extracted Object Name (with GroundingDINO):",
                 fill=(170, 170, 170), font=_font(13))
     y += 20
     draw_t.text((14, y), f'"{extracted_name}"', fill=(255, 220, 0), font=_font(17))
     y += 36
 
-    draw_t.text((10, y), "Detektions-Ergebnis:", fill=(170, 170, 170), font=_font(13))
+    draw_t.text((10, y), "Detection Result:", fill=(170, 170, 170), font=_font(13))
     y += 20
     conf_col = (60, 230, 100) if confidence > 0.55 else (255, 165, 0) if confidence > 0.35 else (255, 60, 60)
-    draw_t.text((14, y), f"Konfidenz: {confidence:.3f}", fill=conf_col, font=_font(16))
+    draw_t.text((14, y), f"Confidence: {confidence:.3f}", fill=conf_col, font=_font(16))
     y += 22
     draw_t.text((14, y),
-                f"BBox: [{x1}, {y1}] → [{x2}, {y2}] ({x2-x1}×{y2-y1}px)",
+                f"BBox: [{x1}, {y1}] - [{x2}, {y2}] ({x2-x1}x{y2-y1}px)",
                 fill=(190, 190, 190), font=_font(13))
     y += 22
     draw_t.text((14, y),
-                f"Bildgröße: {rgb_image.width} × {rgb_image.height} px",
+                f"Imagesize: {rgb_image.width} x {rgb_image.height} px",
                 fill=(150, 150, 150), font=_font(13))
     y += 36
 
-    qual = ("✓ Gute Detektion" if confidence > 0.6
-            else "⚠  Detektion unsicher" if confidence > 0.35
-            else "✗  Schwache Detektion")
-    draw_t.text((10, y), qual, fill=conf_col, font=_font(16))
-
     final = _hstack([pa, pb, pc], pad=6)
-    final = _vstack([_banner("SCHRITT 1: Prompt-Analyse + Objektlokalisierung",
+    final = _vstack([_banner("STEP 1: Prompt-Extraction + Object Localization",
                              final.width), final], pad=0)
     path = os.path.join(output_dir, "debug_01_localization.png")
     final.save(path)
@@ -299,7 +294,7 @@ def save_debug_step2(depth_image: np.ndarray, mask: np.ndarray,
     ax.set_facecolor("#141414")
     im = ax.imshow(depth_image, cmap="turbo")
     plt.colorbar(im, ax=ax, label="mm", fraction=0.046)
-    ax.set_title("Tiefenbild (vollständig)", color="white", fontsize=12)
+    ax.set_title("Depthimage (complete)", color="white", fontsize=12)
     ax.axis("off")
 
     # Depth masked
@@ -307,14 +302,14 @@ def save_debug_step2(depth_image: np.ndarray, mask: np.ndarray,
     ax.set_facecolor("#141414")
     im = ax.imshow(np.where(mask, depth_image, 0), cmap="turbo")
     plt.colorbar(im, ax=ax, label="mm", fraction=0.046)
-    ax.set_title("Tiefenbild maskiert (Objekt)", color="white", fontsize=12)
+    ax.set_title("Depthimage (masked)", color="white", fontsize=12)
     ax.axis("off")
 
     # PC frontal (XY)
     ax = axes[1, 0]
     ax.set_facecolor("#0d0d0d")
     ax.scatter(points[::step, 0], points[::step, 1], c=c_norm[::step], s=0.8, alpha=0.85)
-    ax.set_title(f"Punktwolke — Frontal (X/Y) | {num_points} Punkte",
+    ax.set_title(f"Pointcloud — Front View (X/Y) | {num_points} points",
                  color="white", fontsize=12)
     ax.set_xlabel("X (m)", color="gray"); ax.set_ylabel("Y (m)", color="gray")
     ax.invert_yaxis()
@@ -324,13 +319,13 @@ def save_debug_step2(depth_image: np.ndarray, mask: np.ndarray,
     ax = axes[1, 1]
     ax.set_facecolor("#0d0d0d")
     ax.scatter(points[::step, 0], -points[::step, 2], c=c_norm[::step], s=0.8, alpha=0.85)
-    ax.set_title("Punktwolke — Draufsicht (X / -Z)", color="white", fontsize=12)
+    ax.set_title("Pointcloud — Top View (X / -Z)", color="white", fontsize=12)
     ax.set_xlabel("X (m)", color="gray"); ax.set_ylabel("-Z (m)", color="gray")
     ax.tick_params(colors="gray"); [s.set_color("gray") for s in ax.spines.values()]
 
     sz = (f"BBox: {bbox_size[0]:.3f} × {bbox_size[1]:.3f} × {bbox_size[2]:.3f} m"
           if hasattr(bbox_size, "__len__") else f"BBox: {bbox_size}")
-    fig.suptitle(f"SCHRITT 2: Punktwolkenerzeugung — {sz}",
+    fig.suptitle(f"STEP 2: Pointcloud Generation — {sz}",
                  color="white", fontsize=14, y=1.01)
     plt.tight_layout()
     path = os.path.join(output_dir, "debug_02_pointcloud.png")
@@ -356,7 +351,7 @@ def save_debug_step3(roi_image: Image.Image, candidates: list,
     roi.thumbnail((280, 320), Image.LANCZOS)
     roi_panel = Image.new("RGB", (280, thumb * top_n + pad * (top_n + 1) + 36), (16, 16, 16))
     roi_d = ImageDraw.Draw(roi_panel)
-    roi_d.text((8, 8), "Query-Bild (ROI)", fill=(0, 200, 255), font=_font(15))
+    roi_d.text((8, 8), "Query Image (ROI)", fill=(0, 200, 255), font=_font(15))
     roi_panel.paste(roi, ((280 - roi.width) // 2, 36))
 
     # Kandidaten Panel
@@ -364,7 +359,7 @@ def save_debug_step3(roi_image: Image.Image, candidates: list,
     ch = thumb * top_n + pad * (top_n + 1) + 36
     cand = Image.new("RGB", (cw, ch), (20, 20, 20))
     cd = ImageDraw.Draw(cand)
-    cd.text((8, 8), "CLIP Kandidaten (semantische Ähnlichkeit der Beschreibungen)",
+    cd.text((8, 8), "CLIP Candidates (semantic similarity of descriptions)",
             fill=(255, 180, 60), font=_font(14))
 
     for i, c in enumerate(candidates[:top_n]):
@@ -391,7 +386,7 @@ def save_debug_step3(roi_image: Image.Image, candidates: list,
         cd.text((tx + 224, y + thumb - 17), f"{c.score:.3f}", fill=rc, font=_font(11))
 
     final = _hstack([roi_panel, cand], pad=pad)
-    final = _vstack([_banner("SCHRITT 3: CLIP Retrieval — Semantische Kandidatensuche",
+    final = _vstack([_banner("STEP 3: CLIP Retrieval — Semantic Candidate Search",
                              final.width, bg=(25, 20, 10)), final], pad=0)
     path = os.path.join(output_dir, "debug_03_clip.png")
     final.save(path)
@@ -439,7 +434,10 @@ def save_debug_step4(roi_image: Image.Image, candidates: list,
                     fill=(255, 215, 0), font=_font(13))
 
     arrow = Image.new("RGB", (60, thumb2 + 36), (18, 18, 18))
-    ImageDraw.Draw(arrow).text((10, thumb2 // 2 - 10), "→", fill="white", font=_font(34))
+    _ad = ImageDraw.Draw(arrow)
+    _cy = (thumb2 + 36) // 2
+    _ad.line([(8, _cy), (44, _cy)], fill="white", width=3)
+    _ad.polygon([(38, _cy - 8), (52, _cy), (38, _cy + 8)], fill="white")
 
     row1 = _hstack([p_roi, arrow, p_best], pad=6)
 
@@ -448,10 +446,13 @@ def save_debug_step4(roi_image: Image.Image, candidates: list,
     tw = w_total
     table = Image.new("RGB", (tw, rh * top_n + 36), (18, 18, 18))
     td = ImageDraw.Draw(table)
-    td.text((10, 8), "DINOv2 Ranking — alle Kandidaten",
+    td.text((10, 8), "DINOv2 Ranking — Candidates",
             fill=(100, 200, 255), font=_font(15))
-    td.text((tw - 250, 10), "██ DINO-Score  ██ CLIP-Score",
-            fill=(160, 160, 160), font=_font(12))
+    tx_x = rh + 10
+    td.text((tx_x + 315, 10), "DINO-Score",
+            fill=(100, 180, 255), font=_font(12))
+    td.text((tx_x + 705, 10), "CLIP-Score",
+            fill=(255, 180, 60), font=_font(12))
 
     for i, c in enumerate(candidates[:top_n]):
         y = 36 + i * rh
@@ -489,7 +490,7 @@ def save_debug_step4(roi_image: Image.Image, candidates: list,
         bg_full.paste(table, (0, row1.height + 8))
         final = bg_full
 
-    final = _vstack([_banner("SCHRITT 4: DINOv2 Re-Ranking — Bildbasiertes Verfeinern",
+    final = _vstack([_banner("STEP 4: DINOv2 Re-Ranking — Image-based Pre-Filtering",
                              final.width, bg=(10, 25, 15)), final], pad=0)
     path = os.path.join(output_dir, "debug_04_dino.png")
     final.save(path)
@@ -519,12 +520,14 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
     ax3d.set_facecolor("#141414")
     ax3d.scatter(points[::step, 0], points[::step, 1], points[::step, 2],
                  c=c_norm[::step], s=1.5, alpha=0.85, depthshade=True)
-    ax3d.set_title(f"Beobachtete Punktwolke\n({len(points)} Punkte)",
+    ax3d.set_title(f"Observed Pointcloud\n({len(points)} points)",
                    color="white", fontsize=12, pad=4)
     for axis in [ax3d.xaxis, ax3d.yaxis, ax3d.zaxis]:
         axis.pane.fill = False
-        axis.label.set_color("gray")
-        axis._axinfo["tick"]["color"] = "gray"
+        axis.label.set_color("white")
+        axis._axinfo["tick"]["color"] = (1.0, 1.0, 1.0, 1.0)
+        axis._axinfo["axisline"]["color"] = (1.0, 1.0, 1.0, 1.0) 
+    ax3d.tick_params(colors="white", labelsize=8)
     ax3d.set_xlabel("X", color="gray", fontsize=9)
     ax3d.set_ylabel("Y", color="gray", fontsize=9)
     ax3d.set_zlabel("Z", color="gray", fontsize=9)
@@ -565,7 +568,7 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
     side_w = th_size + 30
     side = Image.new("RGB", (side_w, mpl_img.height), (16, 16, 16))
     sd = ImageDraw.Draw(side)
-    sd.text((4, 4), "Referenzbilder", fill=(180, 180, 180), font=_font(13))
+    sd.text((4, 4), "Reference Images", fill=(180, 180, 180), font=_font(13))
     for i, c in enumerate(candidates[:top_n]):
         y = 24 + i * (th_size + 10)
         best_view_idx = getattr(c, "best_view_idx", -1)
@@ -574,14 +577,15 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
             t = _load_view_thumb(c.object_id, ref_dir, best_view_idx, th_size)
         if t is None:
             t = _load_thumb(c.object_id, ref_dir, th_size) or _placeholder(th_size, "N/A")
-        side.paste(t, ((side_w - t.width) // 2, y))
-        view_label = f"#{i+1}"
+        # Overlay rank + view labels directly on the thumbnail
+        td = ImageDraw.Draw(t)
+        td.text((2, 2), f"Rank {i+1}", fill=RANK_COLORS[i], font=_font(11))
         if best_view_idx >= 0:
-            view_label += f" v{best_view_idx}"
-        sd.text((4, y + t.height + 1), view_label, fill=RANK_COLORS[i], font=_font(12))
+            td.text((2, t.height - 15), f"View {best_view_idx}", fill=(200, 200, 200), font=_font(11))
+        side.paste(t, ((side_w - t.width) // 2, y))
 
     final = _hstack([mpl_img, side], pad=4)
-    final = _vstack([_banner("SCHRITT 5: ULIP-2 Shape Matching — 3D Geometrie-Vergleich",
+    final = _vstack([_banner("STEP 5: ULIP-2 3D Shape Matching",
                              final.width, bg=(15, 15, 30)), final], pad=0)
     path = os.path.join(output_dir, "debug_05_ulip.png")
     final.save(path)
@@ -617,7 +621,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
 
     # Spalten-Header
     draw.text((10, 10), "# ", fill="white", font=_font(14))
-    draw.text((th + 20, 10), "Objekt-ID", fill="white", font=_font(14))
+    draw.text((th + 20, 10), "Object-ID", fill="white", font=_font(14))
     cx_h = th + 14 + col_id
     for label, col in [("CLIP", (255, 180, 60)), ("DINO", (100, 200, 255)),
                         ("ULIP", (180, 255, 100)), ("FUSION", (255, 80, 80))]:
@@ -662,7 +666,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
     cmp_h = 220
     compare = Image.new("RGB", (canvas_w, cmp_h), (12, 12, 18))
     cd = ImageDraw.Draw(compare)
-    cd.text((10, 8), "Gegenüberstellung: Query (ROI)  ↔  Bestes Modell",
+    cd.text((10, 8), "Comparison: Query (ROI) to Best Model",
             fill=(255, 215, 0), font=_font(16))
     cd.line([(0, 34), (canvas_w, 34)], fill=(50, 50, 60))
 
@@ -670,7 +674,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
     compare.paste(qr, (16, 42))
     cd.text((16, 42 + qr.height + 4), "Query", fill=(0, 200, 255), font=_font(13))
 
-    cd.text((210, 100), "→", fill="gray", font=_font(36))
+    cd.text((210, 100), "->", fill="gray", font=_font(36))
 
     best = candidates[0]
     bt = _load_thumb(best.object_id, ref_dir, 180) or _placeholder(180)
@@ -690,7 +694,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
         bx += 100
 
     full = _vstack([canvas, compare], pad=4)
-    full = _vstack([_banner("SCHRITT 6: Score-Fusion — CLIP · DINO · ULIP → Finales Ranking",
+    full = _vstack([_banner("STEP 6: Score-Fusion — CLIP · DINO · ULIP -> Final Ranking",
                             full.width, bg=(30, 10, 10)), full], pad=0)
     path = os.path.join(output_dir, "debug_06_fusion.png")
     full.save(path)
@@ -920,7 +924,7 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
                 cam, color=(255, 100, 255), alpha=0.6, scene_scale=sc,
                 pose_method="foundationpose",
             )
-        overlay_label = "A — Szene + 3D-Wireframe (Pose)"
+        overlay_label = "A - Szene + 3D-Wireframe (Pose)"
     else:
         best_t = _load_thumb(best_object_id, ref_dir, max(bw, bh))
         if best_t:
@@ -928,7 +932,7 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
             best_r = best_t.resize((bw, bh), Image.LANCZOS)
             blended = Image.blend(region, best_r, alpha=0.5)
             scene_s.paste(blended, (x1, y1))
-        overlay_label = "A — Szene + Thumbnail-Überlagerung"
+        overlay_label = "A - Szene + Thumbnail-Overlay (no Pose)"
 
     draw_s = ImageDraw.Draw(scene_s)
     draw_s.rectangle([x1, y1, x1 + bw, y1 + bh], outline=(255, 215, 0), width=3)
@@ -946,40 +950,40 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
 
     # --- Panel B: Modell-Referenzbild ---
     ref_img = _load_thumb(best_object_id, ref_dir, 300) or _placeholder(300, best_object_id[:8])
-    pb = _label_top(ref_img, f"B — Referenzbild: {best_object_id[:30]}", fg=(255, 215, 0))
+    pb = _label_top(ref_img, f"B - Reference Image: {best_object_id[:30]}", fg=(255, 215, 0))
 
     # --- Panel C: Infos ---
     gt_extra = 90 if (gt_pose_matrix is not None and pose_matrix is not None) else 0
     pc_h = max(pa.height, pb.height, 350 + gt_extra)
     pc = Image.new("RGB", (340, pc_h), (12, 12, 18))
     td = ImageDraw.Draw(pc)
-    td.text((10, 14), "SCHRITT 7 + 8", fill=(0, 200, 255), font=_font(20))
-    td.text((10, 42), "Skalenbestimmung + Pose", fill=(160, 160, 200), font=_font(15))
+    td.text((10, 14), "STEP 7 + 8", fill=(0, 200, 255), font=_font(20))
+    td.text((10, 42), "Scale Determination + Pose", fill=(160, 160, 200), font=_font(15))
     td.line([(10, 65), (330, 65)], fill=(50, 50, 80), width=1)
 
     y = 78
-    td.text((10, y), "Skalierungsfaktor:", fill=(170, 170, 170), font=_font(14))
+    td.text((10, y), "Scale Factor:", fill=(170, 170, 170), font=_font(14))
     y += 22
     sc_col = (60, 230, 100) if 0.5 < scale_factor < 3.0 else (255, 100, 50)
-    td.text((16, y), f"× {scale_factor:.4f}", fill=sc_col, font=_font(20))
+    td.text((16, y), f"x {scale_factor:.4f}", fill=sc_col, font=_font(20))
     y += 34
 
     if obs_size is not None:
-        td.text((10, y), "Beob. Objekt-BBox (m):", fill=(150, 150, 150), font=_font(13))
+        td.text((10, y), "Observed Object-BBox (m):", fill=(150, 150, 150), font=_font(13))
         y += 18
-        td.text((16, y), f"  {obs_size[0]:.3f} × {obs_size[1]:.3f} × {obs_size[2]:.3f}",
+        td.text((16, y), f"  {obs_size[0]:.3f} x {obs_size[1]:.3f} x {obs_size[2]:.3f}",
                 fill="white", font=_font(13))
         y += 20
     if cad_size is not None:
-        td.text((10, y), "CAD-Modell-BBox:", fill=(150, 150, 150), font=_font(13))
+        td.text((10, y), "CAD Model-BBox:", fill=(150, 150, 150), font=_font(13))
         y += 18
-        td.text((16, y), f"  {cad_size[0]:.3f} × {cad_size[1]:.3f} × {cad_size[2]:.3f}",
+        td.text((16, y), f"  {cad_size[0]:.3f} x {cad_size[1]:.3f} x {cad_size[2]:.3f}",
                 fill="white", font=_font(13))
         y += 22
 
     td.line([(10, y), (330, y)], fill=(50, 50, 80), width=1)
     y += 10
-    td.text((10, y), "Pose-Ergebnis:", fill=(170, 170, 170), font=_font(14))
+    td.text((10, y), "Pose-Result:", fill=(170, 170, 170), font=_font(14))
     y += 22
     if pose_info:
         for k, v in pose_info.items():
@@ -988,21 +992,21 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
             td.text((20, y), str(v), fill="white", font=_font(13))
             y += 18
     else:
-        td.text((16, y), "(Pose nicht berechnet)", fill=(100, 100, 100), font=_font(13))
+        td.text((16, y), "(Pose not estimated)", fill=(100, 100, 100), font=_font(13))
 
     # GT error metrics
     if gt_pose_matrix is not None and pose_matrix is not None:
         y += 26
         td.line([(10, y), (330, y)], fill=(50, 50, 80), width=1)
         y += 8
-        td.text((10, y), "GT-Vergleich:", fill=(255, 100, 255), font=_font(14))
+        td.text((10, y), "GT-Comparison:", fill=(255, 100, 255), font=_font(14))
         y += 22
 
         # Translation error (mm)
         t_pred = pose_matrix[:3, 3] if pose_method == "foundationpose" else np.linalg.inv(pose_matrix)[:3, 3]
         t_gt = gt_pose_matrix[:3, 3]
         t_err_mm = np.linalg.norm(t_pred - t_gt) * 1000.0
-        td.text((16, y), f"Δt: {t_err_mm:.1f} mm", fill="white", font=_font(14))
+        td.text((16, y), f"translation error: {t_err_mm:.1f} mm", fill="white", font=_font(14))
         y += 20
 
         # Rotation error (deg)
@@ -1011,7 +1015,7 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
         R_rel = R_pred @ R_gt.T
         cos_angle = np.clip((np.trace(R_rel) - 1) / 2, -1.0, 1.0)
         rot_err_deg = np.degrees(np.arccos(cos_angle))
-        td.text((16, y), f"ΔR: {rot_err_deg:.1f}°", fill="white", font=_font(14))
+        td.text((16, y), f"rotation error: {rot_err_deg:.1f}°", fill="white", font=_font(14))
         y += 20
 
     h_max = max(pa.height, pb.height, pc.height)
@@ -1024,7 +1028,7 @@ def save_debug_step7_8(rgb_image: Image.Image, bbox: list,
         return out
 
     final = _hstack([pad_h(pa, h_max), pad_h(pb, h_max), pad_h(pc, h_max)], pad=pad)
-    final = _vstack([_banner("SCHRITT 7+8: Skalenbestimmung & Modellüberlagerung",
+    final = _vstack([_banner("STEP 7+8: Scale Determination & Model Overlay",
                              final.width, bg=(30, 10, 10)), final], pad=0)
     path = os.path.join(output_dir, "debug_07_scale_pose.png")
     final.save(path)
@@ -1051,7 +1055,7 @@ def save_pointcloud_interactive(points: np.ndarray, colors: np.ndarray,
     if colors is not None and len(colors) == len(points):
         pcd.colors = o3d.utility.Vector3dVector(colors)
     o3d.io.write_point_cloud(ply_path, pcd)
-    logger.info("  [3D] PLY gespeichert: %s", ply_path)
+    logger.info("  [3D] PLY saved: %s", ply_path)
 
     try:
         import plotly.graph_objects as go
@@ -1074,7 +1078,7 @@ def save_pointcloud_interactive(points: np.ndarray, colors: np.ndarray,
             marker=dict(size=1.5, color=rgb_str, opacity=0.85),
         )])
         fig.update_layout(
-            title="OSCAR+ Punktwolke (Schritt 2)",
+            title="OSCAR+ Pointcloud (Step 2)",
             scene=dict(
                 xaxis_title="X (m)", yaxis_title="Z (m)", zaxis_title="-Y (m)",
                 aspectmode="data",
@@ -1086,9 +1090,9 @@ def save_pointcloud_interactive(points: np.ndarray, colors: np.ndarray,
         )
         html_path = os.path.join(output_dir, "debug_02_pointcloud_3d.html")
         fig.write_html(html_path, include_plotlyjs="cdn")
-        logger.info("  [3D] Interaktives HTML gespeichert: %s  (im Browser öffnen!)", html_path)
+        logger.info("  [3D] Interactive HTML saved: %s  (open in browser!)", html_path)
     except ImportError:
-        logger.warning("  [3D] plotly nicht installiert → nur PLY. Install: pip install plotly")
+        logger.warning("  [3D] plotly not installed → only PLY. Install: pip install plotly")
 
 
 # =============================================================================

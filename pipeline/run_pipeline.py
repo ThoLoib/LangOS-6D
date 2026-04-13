@@ -120,41 +120,40 @@ class OSCARPlusPipeline:
     │  │    → Maske, ROI     │                                         │
     │  └────────┬────────────┘                                         │
     │           │                                                      │
-    │      ┌────┴────┐                                                 │
-    │      ▼         ▼                                                 │
-    │  ┌────────┐ ┌────────────┐                                       │
-    │  │2. Point│ │3. CLIP     │ Top-K (K=20)                          │
-    │  │  Cloud │ │  Retrieval │                                       │
-    │  └───┬────┘ └─────┬──────┘                                       │
-    │      │            ▼                                              │
-    │      │     ┌────────────┐                                        │
-    │      │     │4. DINOv2   │ Top-K (K=5)                            │
-    │      │     │  Re-Ranking│                                        │
-    │      │     └─────┬──────┘                                        │
-    │      │           │                                               │
-    │      ▼           │                                               │
-    │  ┌────────┐      │                                               │
-    │  │5. ULIP │      │                                               │
-    │  │  Shape │      │                                               │
-    │  │  Match │      │                                               │
-    │  └───┬────┘      │                                               │
-    │      │           │                                               │
-    │      └─────┬─────┘                                               │
-    │            ▼                                                     │
-    │     ┌────────────┐                                               │
-    │     │6. Fusion   │ Gewichtete Summe / RRF / Intersection         │
-    │     └─────┬──────┘                                               │
-    │           ▼                                                      │
-    │     ┌────────────┐                                               │
-    │     │7. Scale    │ BBox-Vergleich                                │
-    │     └─────┬──────┘                                               │
-    │           ▼                                                      │
-    │     ┌────────────┐                                               │
-    │     │8. Pose     │ FoundationPose / MegaPose / ICP               │
-    │     └────────────┘                                               │
-    │           │                                                      │
-    │           ▼                                                      │
-    │     6D Pose [R|t] + skaliertes CAD-Modell                        │
+    │           ├──────────────────────────────┐                       │
+    │           ▼                              ▼                       │
+    │  ┌────────────────────┐     ┌────────────────────┐               │
+    │  │ 3. CLIP Retrieval  │     │ 2. Punktwolke       │ nur wenn     │
+    │  │    → Top-20        │     │    (lazy, nur wenn  │ Step 5/7/8   │
+    │  └────────┬───────────┘     │    5/7/8 aktiv)     │ aktiv        │
+    │           ▼                 └──────────┬──────────┘              │
+    │  ┌────────────────────┐                │                         │
+    │  │ 4. DINOv2 Re-Rank  │                │                         │
+    │  │    → Top-5         │                │                         │
+    │  └────────┬───────────┘                │                         │
+    │           │              ┌─────────────┘                         │
+    │           ▼              ▼                                       │
+    │      ┌──────────────────────┐                                    │
+    │      │ 5. ULIP-2 Shape Match│ re-rankt CLIP-Kandidaten           │
+    │      └──────────┬───────────┘                                    │
+    │                 │                                                │
+    │                 └──┐                                             │
+    │                    | (+ CLIP + DINO scores)                      │
+    │                    ▼                                             │
+    │              ┌────────────┐                                      │
+    │              │6. Fusion   │ Gewichtete Summe / RRF / Intersection│
+    │              └─────┬──────┘                                      │
+    │                    ▼                                             │
+    │              ┌────────────┐                                      │
+    │              │7. Scale    │ BBox-Vergleich                       │
+    │              └─────┬──────┘                                      │
+    │                    ▼                                             │
+    │              ┌────────────┐                                      │
+    │              │8. Pose     │ FoundationPose / ICP                 │
+    │              └────────────┘                                      │
+    │                    │                                             │
+    │                    ▼                                             │
+    │              6D Pose [R|t] + skaliertes CAD-Modell               │
     └──────────────────────────────────────────────────────────────────┘
 
     Usage:
@@ -295,45 +294,9 @@ class OSCARPlusPipeline:
                 _dbv.save_debug_step1(
                     rgb_image, loc_result.mask, loc_result.bbox,
                     loc_result.roi_image, prompt,
-                    prompt_elements.detection_phrase, loc_result.confidence,
+                    prompt_elements.visual_query, loc_result.confidence,
                     self.output_dir,
                 )
-
-        # =================================================================
-        # Schritt 2: Punktwolke erzeugen
-        # =================================================================
-        if 2 not in skip_steps and "localization" in results:
-            t0 = time.time()
-            logger.info("─" * 40)
-            logger.info("Schritt 2: Punktwolke erzeugen")
-
-            loc = results["localization"]
-            rgb_np = np.array(rgb_image)
-
-            pc_result = self.pc_generator.generate(
-                rgb_np, depth_image, loc.mask,
-                fx=cam.get("fx"), fy=cam.get("fy"),
-                cx=cam.get("cx"), cy=cam.get("cy"),
-            )
-            results["point_cloud"] = pc_result
-            timings["step2_pointcloud"] = time.time() - t0
-
-            if pc_result:
-                logger.info(
-                    f"  ✓ Punktwolke: {pc_result.num_points} Punkte, "
-                    f"Größe: {pc_result.bbox_size}"
-                )
-                if self.debug_viz:
-                    loc = results["localization"]
-                    _dbv.save_debug_step2(
-                        depth_image, loc.mask,
-                        pc_result.points, pc_result.colors,
-                        pc_result.num_points, pc_result.bbox_size,
-                        self.output_dir,
-                    )
-                    _dbv.save_pointcloud_interactive(
-                        pc_result.points, pc_result.colors, self.output_dir
-                    )
 
         # =================================================================
         # Schritt 3: CLIP Retrieval
@@ -396,6 +359,43 @@ class OSCARPlusPipeline:
                     loc.roi_image, dino_result.candidates,
                     self.config.reference_images_dir, self.output_dir,
                 )
+
+        # =================================================================
+        # Schritt 2: Punktwolke erzeugen (lazy — nur wenn Step 5/7/8 aktiv)
+        # =================================================================
+        _needs_pc = any(s not in skip_steps for s in [5, 7, 8])
+        if 2 not in skip_steps and _needs_pc and "localization" in results:
+            t0 = time.time()
+            logger.info("─" * 40)
+            logger.info("Schritt 2: Punktwolke erzeugen")
+
+            loc = results["localization"]
+            rgb_np = np.array(rgb_image)
+
+            pc_result = self.pc_generator.generate(
+                rgb_np, depth_image, loc.mask,
+                fx=cam.get("fx"), fy=cam.get("fy"),
+                cx=cam.get("cx"), cy=cam.get("cy"),
+            )
+            results["point_cloud"] = pc_result
+            timings["step2_pointcloud"] = time.time() - t0
+
+            if pc_result:
+                logger.info(
+                    f"  ✓ Punktwolke: {pc_result.num_points} Punkte, "
+                    f"Größe: {pc_result.bbox_size}"
+                )
+                if self.debug_viz:
+                    loc = results["localization"]
+                    _dbv.save_debug_step2(
+                        depth_image, loc.mask,
+                        pc_result.points, pc_result.colors,
+                        pc_result.num_points, pc_result.bbox_size,
+                        self.output_dir,
+                    )
+                    _dbv.save_pointcloud_interactive(
+                        pc_result.points, pc_result.colors, self.output_dir
+                    )
 
         # =================================================================
         # Schritt 5: ULIP-2 Shape Matching
