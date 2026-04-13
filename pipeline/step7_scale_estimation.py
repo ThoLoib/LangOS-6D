@@ -157,6 +157,22 @@ class ScaleEstimator:
             ratios[0], ratios[1], ratios[2], confidence,
         )
 
+        # --- Fallback: ICP-Alignment unreliable -> use sorted-bbox estimate ---
+        # When confidence is very low the ICP alignment was degenerate (common
+        # for heavily truncated partial views).  The sorted-bbox scale is
+        # rotation-invariant and gives a better estimate in that case.
+        # The ICP transformation T is still returned for coarse alignment.
+        _min_conf = getattr(self.config, "scale_icp_min_confidence", 0.15)
+        if confidence < _min_conf:
+            fast_scale, fast_conf = self.estimate_fast(observed_pc, cad_model_path)
+            logger.warning(
+                "ICP scale confidence %.2f < %.2f — overriding with sorted-bbox "
+                "scale=%.4f (conf=%.2f); keeping ICP transform for alignment.",
+                confidence, _min_conf, fast_scale, fast_conf,
+            )
+            scale_factor = fast_scale
+            confidence = fast_conf
+
         return ScaleEstimationResult(
             scale_factor=scale_factor,
             scale_per_axis=ratios,
@@ -167,6 +183,72 @@ class ScaleEstimator:
             coarse_alignment=np.array(T),
             visible_axes=best_2,
         )
+
+    def estimate_fast(
+        self,
+        observed_pc: PointCloudResult,
+        cad_model_path: str,
+    ) -> Tuple[float, float]:
+        """Fast, deterministic scale estimate for scale gate screening.
+
+        Compares sorted bounding box dimensions without any ICP or RANSAC.
+        Sorting the dimensions makes the comparison rotation-invariant and
+        partial-view robust: the two largest dimensions are most likely to
+        be fully visible in a single-depth-view partial point cloud.
+
+        This method is intentionally cheap — it is called once per fused
+        candidate during the scale gate pass. The full RANSAC+ICP estimate()
+        is still used in Step 7 to produce the coarse alignment for Step 8.
+
+        Args:
+            observed_pc: Observed partial point cloud (Step 2).
+            cad_model_path: Path to the CAD mesh.
+
+        Returns:
+            (scale_factor, confidence)
+            confidence in [0, 1] — based on how consistently the two
+            largest dimensions agree on the same scale ratio.
+        """
+        import open3d as o3d
+
+        obs_size = observed_pc.bbox_size
+        if obs_size is None or float(obs_size.max()) < 1e-6:
+            return 1.0, 0.0
+
+        try:
+            mesh = o3d.io.read_triangle_mesh(cad_model_path)
+            if mesh.is_empty():
+                return 1.0, 0.0
+            cad_size = np.asarray(
+                mesh.get_axis_aligned_bounding_box().get_extent()
+            )
+        except Exception as exc:
+            logger.warning("estimate_fast: CAD load failed (%s): %s",
+                           cad_model_path, exc)
+            return 1.0, 0.0
+
+        if float(cad_size.max()) < 1e-6:
+            return 1.0, 0.0
+
+        # Sort dimensions largest-first; partial-view robust — largest
+        # two dims are most reliably observed from a single depth view.
+        obs_sorted = np.sort(obs_size)[::-1]
+        cad_sorted = np.sort(cad_size)[::-1]
+
+        safe_cad = np.where(cad_sorted[:2] > 1e-6, cad_sorted[:2], 1.0)
+        ratios = obs_sorted[:2] / safe_cad
+
+        scale_factor = float(np.median(ratios))
+        ratio_spread = float(abs(ratios[0] - ratios[1]))
+        confidence = max(0.0, 1.0 - ratio_spread / (scale_factor + 1e-8))
+
+        logger.debug(
+            "estimate_fast: obs=%s cad=%s ratios=%s → scale=%.4f conf=%.2f",
+            np.round(obs_sorted[:2], 4), np.round(cad_sorted[:2], 4),
+            np.round(ratios, 4), scale_factor, confidence,
+        )
+
+        return scale_factor, confidence
 
     # -----------------------------------------------------------------------
     # Coarse Alignment: RANSAC + ICP

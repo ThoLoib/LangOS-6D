@@ -82,8 +82,8 @@ class PipelineConfig:
     # "max" = hard best-view (legacy), "mean" = average all views,
     # "softmax" = softmax-weighted over all views, "topk_softmax" = softmax over top-k views
     dino_view_aggregation: str = "topk_softmax"
-    dino_view_topk: int = 4       # Number of top views for topk_softmax
-    dino_view_temperature: float = 0.1  # Softmax temperature (lower = sharper)
+    dino_view_topk: int = 8       # Number of top views for topk_softmax
+    dino_view_temperature: float = 0.5  # Softmax temperature (lower = sharper)
 
     # Pfad zu vorgerenderten Referenzbildern
     reference_images_dir: str = ""  # z.B. "object_images/ycbv_gso/"
@@ -114,8 +114,14 @@ class PipelineConfig:
     # Multi-view aggregation for ULIP-2 partial views (inspired by OPEN, Chu et al. 2024)
     # Same modes as dino_view_aggregation. Only applies when ulip2_use_partial_views=True.
     ulip_view_aggregation: str = "topk_softmax"
-    ulip_view_topk: int = 4
-    ulip_view_temperature: float = 0.1
+    ulip_view_topk: int = 8
+    ulip_view_temperature: float = 0.5
+
+    # Rotation sensitivity evaluation for ULIP Top-K candidates
+    ulip2_rotation_eval: bool = False
+    ulip2_rotation_eval_top_k: int = 5
+    ulip2_rotation_eval_method: str = "icp"  # initially only "icp"
+    ulip2_rotation_eval_weight: float = 0.0  # 0.0 = debug-only, >0 = optional rerank contribution
 
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
     cad_models_dir: str = ""       # z.B. "object_database/ycbv_gso/"
@@ -130,10 +136,25 @@ class PipelineConfig:
     fusion_top_k: int = 1               # Finale Anzahl Kandidaten
 
     # -------------------------------------------------------------------------
+    # Candidate scale gate (after fusion, before pose estimation)
+    # -------------------------------------------------------------------------
+    # Tries fused candidates in rank order; accepts the first whose estimated
+    # scale factor falls within [scale_gate_min, scale_gate_max].
+    scale_gate_enabled: bool = False
+    scale_gate_min: float = 0.8
+    scale_gate_max: float = 1.2
+    scale_gate_min_confidence: float = 0.0
+    scale_gate_max_candidates: int = 5
+    scale_gate_reject_policy: str = "fallback_best"  # "fallback_best" | "fail"
+
+    # -------------------------------------------------------------------------
     # Schritt 7 – Skalenbestimmung
     # -------------------------------------------------------------------------
-    # Keine spezifischen Hyperparameter – nutzt die Punktwolke aus Schritt 2
-    # und die Bounding Box des ausgewählten CAD-Modells.
+    # When the ICP-based scale confidence falls below this threshold the result
+    # is overridden with the rotation-invariant sorted-bbox estimate (same
+    # method used by the scale gate).  The ICP transformation is still kept
+    # for coarse alignment in Step 8.
+    scale_icp_min_confidence: float = 0.15
 
     # -------------------------------------------------------------------------
     # Schritt 8 – Pose Estimation

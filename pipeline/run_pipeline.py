@@ -25,6 +25,7 @@
 # =============================================================================
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -332,7 +333,7 @@ class OSCARPlusPipeline:
         # =================================================================
         # Schritt 4: DINOv2 Re-Ranking
         # =================================================================
-        if 4 not in skip_steps and "clip_retrieval" in results:
+        if 4 not in skip_steps and "localization" in results:
             t0 = time.time()
             logger.info("─" * 40)
             logger.info("Schritt 4: DINOv2 Re-Ranking")
@@ -341,7 +342,7 @@ class OSCARPlusPipeline:
                 self.dino_reranker.load_reference_images()
 
             loc = results["localization"]
-            clip_res = results["clip_retrieval"]
+            clip_res = results.get("clip_retrieval")  # None if Step 3 was skipped
             dino_result = self.dino_reranker.rerank(loc.roi_image, clip_res)
             results["dino_reranking"] = dino_result
             timings["step4_dino"] = time.time() - t0
@@ -474,31 +475,72 @@ class OSCARPlusPipeline:
         resolved_mesh = None   # aufgelöster Mesh-Pfad (kein PNG-Fallback)
         scale_result = None
         pose_result = None
+        effective_best_model = None  # may differ from fusion best_match after scale gate
+        scale_gate_failed = False    # set to True when policy=fail and no candidate passes
+
+        # =================================================================
+        # Scale gate (between fusion and scale estimation)
+        # =================================================================
+        if (
+            self.config.scale_gate_enabled
+            and "fusion" in results
+            and results["fusion"].best_match
+            and "point_cloud" in results
+            and 7 not in skip_steps
+        ):
+            t0 = time.time()
+            logger.info("─" * 40)
+            logger.info("Scale Gate: candidate selection by scale plausibility")
+
+            selected, sg_mesh, sg_rank, sg_log = (
+                self._select_candidate_with_scale_gate(
+                    results["fusion"], results["point_cloud"],
+                )
+            )
+            fallback_used = selected is not None and sg_rank is None
+            results["scale_gate"] = {
+                "enabled": True,
+                "policy": self.config.scale_gate_reject_policy,
+                "selected_object_id": selected.object_id if selected else None,
+                "selected_rank": sg_rank,
+                "fallback_used": fallback_used,
+                "candidates_checked": len(sg_log),
+                "rejections": sg_log,
+            }
+            if selected is not None:
+                effective_best_model = selected
+                resolved_mesh = sg_mesh
+                # scale_result stays None so Step 7 still runs full RANSAC+ICP
+                # (which is needed for coarse alignment in Step 8)
+            else:
+                scale_gate_failed = True
+            timings["scale_gate"] = time.time() - t0
 
         # =================================================================
         # Schritt 7: Skalenbestimmung
         # =================================================================
+        if scale_gate_failed:
+            logger.warning(
+                "Scale gate policy=fail: no candidate passed — skipping Steps 7 and 8."
+            )
+
         if (
             7 not in skip_steps
+            and not scale_gate_failed
             and "fusion" in results
             and results["fusion"].best_match
             and "point_cloud" in results
+            and scale_result is None  # not already computed by scale gate
         ):
             t0 = time.time()
             logger.info("─" * 40)
             logger.info("Schritt 7: Skalenbestimmung")
 
-            best_model = results["fusion"].best_match
+            best_model = effective_best_model or results["fusion"].best_match
             pc = results["point_cloud"]
 
-            # Mesh-Pfad auflösen: cad_model_path kann ein Referenzbild-Pfad (PNG) sein,
-            # wenn ULIP das Objekt nicht in seinen Top-K hatte.
-            _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-            resolved_mesh = best_model.cad_model_path
-            if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
-                resolved_mesh = _dbv._find_cad_mesh(
-                    best_model.object_id, self.config.cad_models_dir
-                )
+            if resolved_mesh is None:
+                resolved_mesh = self._resolve_mesh_path_for_candidate(best_model)
                 if resolved_mesh:
                     logger.info("  Mesh-Pfad aufgelöst: %s", resolved_mesh)
                 else:
@@ -520,6 +562,7 @@ class OSCARPlusPipeline:
         # =================================================================
         if (
             8 not in skip_steps
+            and not scale_gate_failed
             and "fusion" in results
             and results["fusion"].best_match
         ):
@@ -527,22 +570,16 @@ class OSCARPlusPipeline:
             logger.info("─" * 40)
             logger.info("Schritt 8: Pose Estimation")
 
-            best_model = results["fusion"].best_match
+            best_model = effective_best_model or results["fusion"].best_match
             scale = results.get("scale_estimation")
             scale_factor = scale.scale_factor if scale else 1.0
             loc = results.get("localization")
 
             # Mesh-Pfad auflösen falls Schritt 7 übersprungen wurde
             if resolved_mesh is None:
-                _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-                resolved_mesh = best_model.cad_model_path
-                if not resolved_mesh or os.path.splitext(resolved_mesh)[1].lower() in _IMG_EXTS:
-                    resolved_mesh = _dbv._find_cad_mesh(
-                        best_model.object_id, self.config.cad_models_dir
-                    )
+                resolved_mesh = self._resolve_mesh_path_for_candidate(best_model)
                 if not resolved_mesh:
                     logger.warning("Kein valider Mesh-Pfad gefunden.")
-                    mesh_to_use = None
 
             mesh_to_use = resolved_mesh
             if mesh_to_use:
@@ -567,7 +604,7 @@ class OSCARPlusPipeline:
 
         # --- Debug-Viz: Schritt 7+8 ---
         if self.debug_viz and "fusion" in results and results["fusion"].best_match:
-            best_model = results["fusion"].best_match
+            best_model = effective_best_model or results["fusion"].best_match
             loc = results.get("localization")
             scale = results.get("scale_estimation")
             scale_factor = scale.scale_factor if scale else 1.0
@@ -633,6 +670,101 @@ class OSCARPlusPipeline:
             _dbv._done(self.output_dir)
 
         return results
+
+    # ------------------------------------------------------------------
+    # Scale-gate helpers
+    # ------------------------------------------------------------------
+
+    _IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+
+    def _resolve_mesh_path_for_candidate(self, candidate):
+        """Resolve the real CAD mesh path for a fused candidate.
+
+        Falls back to recursive mesh search when cad_model_path points to an
+        image file (which can happen when ULIP did not have the object in
+        its Top-K).
+        """
+        resolved = getattr(candidate, "cad_model_path", "")
+        if not resolved or os.path.splitext(resolved)[1].lower() in self._IMG_EXTS:
+            resolved = _dbv._find_cad_mesh(
+                candidate.object_id, self.config.cad_models_dir
+            )
+        return resolved or None
+
+    def _select_candidate_with_scale_gate(self, fusion_result, observed_pc):
+        """Try fused candidates in rank order; accept the first with plausible scale.
+
+        Uses estimate_fast (sorted-bbox, no ICP) for a fast, deterministic
+        gate decision. Step 7 still runs full RANSAC+ICP for coarse alignment.
+
+        Returns:
+            (selected_candidate, resolved_mesh, selected_rank, rejection_log)
+            selected_rank is 1-based; None signals the fallback-best path.
+        """
+        rejection_log = []
+        max_cands = self.config.scale_gate_max_candidates
+        candidates = fusion_result.candidates[:max_cands]
+
+        for rank, cand in enumerate(candidates, start=1):
+            mesh_path = self._resolve_mesh_path_for_candidate(cand)
+            if not mesh_path:
+                rejection_log.append({
+                    "rank": rank,
+                    "object_id": cand.object_id,
+                    "fused_score": round(float(cand.fused_score), 6),
+                    "mesh_path": None,
+                    "reason": "missing_mesh",
+                })
+                logger.info(
+                    "  Scale gate [%d/%d]: %s — rejected (missing mesh)",
+                    rank, len(candidates), cand.object_id,
+                )
+                continue
+
+            scale_factor, confidence = self.scale_estimator.estimate_fast(
+                observed_pc, mesh_path
+            )
+            ok_scale = self.config.scale_gate_min <= scale_factor <= self.config.scale_gate_max
+            ok_conf  = confidence >= self.config.scale_gate_min_confidence
+
+            if ok_scale and ok_conf:
+                logger.info(
+                    "  Scale gate [%d/%d]: %s — ACCEPTED (scale=%.4f, conf=%.2f)",
+                    rank, len(candidates), cand.object_id, scale_factor, confidence,
+                )
+                return cand, mesh_path, rank, rejection_log
+
+            reason = "scale_out_of_range" if not ok_scale else "low_confidence"
+            rejection_log.append({
+                "rank": rank,
+                "object_id": cand.object_id,
+                "fused_score": round(float(cand.fused_score), 6),
+                "mesh_path": mesh_path,
+                "scale_factor": round(scale_factor, 6),
+                "confidence": round(confidence, 4),
+                "reason": reason,
+            })
+            logger.info(
+                "  Scale gate [%d/%d]: %s — rejected (%s, scale=%.4f, conf=%.2f)",
+                rank, len(candidates), cand.object_id, reason, scale_factor, confidence,
+            )
+
+        # No candidate accepted
+        logger.warning(
+            "  Scale gate: 0/%d candidates passed (policy=%s)",
+            len(candidates), self.config.scale_gate_reject_policy,
+        )
+
+        if self.config.scale_gate_reject_policy == "fallback_best":
+            fallback = fusion_result.candidates[0]
+            mesh_path = self._resolve_mesh_path_for_candidate(fallback)
+            logger.warning(
+                "  Scale gate: falling back to rank-1 fusion candidate (%s)",
+                fallback.object_id,
+            )
+            return fallback, mesh_path, None, rejection_log  # rank=None signals fallback
+
+        return None, None, None, rejection_log
 
     def _extract_prompt_elements(self, prompt: str) -> "PromptElements":
         """Extrahiert Objekt + visuelle Attribute (Farbe, Form, Material) aus dem Prompt.
@@ -810,6 +942,11 @@ class OSCARPlusPipeline:
             summary["fusion_score"] = best.fused_score
             summary["fusion_method"] = results["fusion"].method
 
+        if "scale_gate" in results:
+            sg = results["scale_gate"]
+            summary["scale_gate_selected"] = sg["selected_object_id"]
+            summary["scale_gate_rejections"] = len(sg["rejections"])
+
         if "scale_estimation" in results:
             scale = results["scale_estimation"]
             summary["scale_factor"] = scale.scale_factor
@@ -825,6 +962,85 @@ class OSCARPlusPipeline:
 
         return summary
 
+    def _write_ranking_csvs(self, results: dict) -> None:
+        """Write per-step ranking CSVs to output_dir for post-hoc analysis."""
+
+        def _write(filename, fieldnames, rows):
+            path = os.path.join(self.output_dir, filename)
+            with open(path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                w.writeheader()
+                w.writerows(rows)
+            logger.info("  [CSV] %s (%d rows)", filename, len(rows))
+
+        # --- CLIP ---
+        if "clip_retrieval" in results:
+            cands = results["clip_retrieval"].candidates
+            _write("rankings_clip.csv",
+                   ["rank", "object_id", "score", "description"],
+                   [{"rank": i + 1, "object_id": c.object_id,
+                     "score": round(float(c.score), 6),
+                     "description": getattr(c, "description", "")}
+                    for i, c in enumerate(cands)])
+
+        # --- DINOv2 ---
+        if "dino_reranking" in results:
+            cands = results["dino_reranking"].candidates
+            _write("rankings_dino.csv",
+                   ["rank", "object_id", "dino_score", "clip_score", "best_view_path"],
+                   [{"rank": i + 1, "object_id": c.object_id,
+                     "dino_score": round(float(c.dino_score), 6),
+                     "clip_score": round(float(getattr(c, "clip_score", 0.0)), 6),
+                     "best_view_path": getattr(c, "best_view_path", "")}
+                    for i, c in enumerate(cands)])
+
+        # --- ULIP-2 ---
+        if "shape_matching" in results:
+            cands = results["shape_matching"].candidates
+            _write("rankings_ulip.csv",
+                   ["rank", "object_id", "shape_score", "best_view_idx",
+                    "registration_fitness", "registration_rmse", "cad_model_path"],
+                   [{"rank": i + 1, "object_id": c.object_id,
+                     "shape_score": round(float(c.shape_score), 6),
+                     "best_view_idx": getattr(c, "best_view_idx", -1),
+                     "registration_fitness": round(float(getattr(c, "registration_fitness", 0.0)), 6),
+                     "registration_rmse": round(float(getattr(c, "registration_rmse", 0.0)), 8),
+                     "cad_model_path": getattr(c, "cad_model_path", "")}
+                    for i, c in enumerate(cands)])
+
+        # --- Fusion ---
+        if "fusion" in results:
+            cands = results["fusion"].candidates
+            method = getattr(results["fusion"], "method", "")
+            _write("rankings_fusion.csv",
+                   ["rank", "object_id", "fused_score", "clip_score",
+                    "dino_score", "ulip_score", "fusion_method", "cad_model_path"],
+                   [{"rank": i + 1, "object_id": c.object_id,
+                     "fused_score": round(float(c.fused_score), 6),
+                     "clip_score": round(float(getattr(c, "clip_score", 0.0)), 6),
+                     "dino_score": round(float(getattr(c, "dino_score", 0.0)), 6),
+                     "ulip_score": round(float(getattr(c, "ulip_score", 0.0)), 6),
+                     "fusion_method": method,
+                     "cad_model_path": getattr(c, "cad_model_path", "")}
+                    for i, c in enumerate(cands)])
+
+        # --- Scale gate rejections ---
+        if "scale_gate" in results:
+            rejections = results["scale_gate"].get("rejections", [])
+            if rejections:
+                _write("rankings_scale_gate.csv",
+                       ["rank", "object_id", "fused_score", "scale_factor",
+                        "confidence", "reason", "mesh_path"],
+                       [{
+                           "rank": r.get("rank", ""),
+                           "object_id": r.get("object_id", ""),
+                           "fused_score": r.get("fused_score", ""),
+                           "scale_factor": r.get("scale_factor", ""),
+                           "confidence": r.get("confidence", ""),
+                           "reason": r.get("reason", ""),
+                           "mesh_path": r.get("mesh_path", ""),
+                       } for r in rejections])
+
     def _save_results(self, results: dict) -> None:
         """Speichert die Pipeline-Zusammenfassung als JSON."""
         summary = results.get("summary", {})
@@ -832,6 +1048,7 @@ class OSCARPlusPipeline:
         with open(out_path, "w") as f:
             json.dump(summary, f, indent=2, default=str)
         logger.info(f"Ergebnisse gespeichert: {out_path}")
+        self._write_ranking_csvs(results)
 
 
 # =============================================================================
@@ -884,6 +1101,22 @@ Beispiel:
         "--ulip-partial-views", action="store_true", dest="ulip_partial_views",
         help="Use precomputed partial point clouds per view instead of full mesh sampling"
     )
+    # Scale gate
+    parser.add_argument("--scale-gate", action="store_true", dest="scale_gate_enabled",
+                        help="Enable scale-gated candidate selection after fusion")
+    parser.add_argument("--scale-gate-min", type=float, default=0.8, dest="scale_gate_min")
+    parser.add_argument("--scale-gate-max", type=float, default=1.2, dest="scale_gate_max")
+    parser.add_argument("--scale-gate-min-confidence", type=float, default=0.0, dest="scale_gate_min_confidence")
+    parser.add_argument("--scale-gate-max-candidates", type=int, default=5, dest="scale_gate_max_candidates")
+    parser.add_argument("--scale-gate-reject-policy", choices=["fallback_best", "fail"],
+                        default="fallback_best", dest="scale_gate_reject_policy")
+    # Rotation evaluation
+    parser.add_argument("--ulip-rotation-eval", action="store_true", dest="ulip_rotation_eval",
+                        help="Run ICP rotation evaluation for ULIP Top-K candidates")
+    parser.add_argument("--ulip-rotation-eval-top-k", type=int, default=5, dest="ulip_rotation_eval_top_k")
+    parser.add_argument("--ulip-rotation-eval-weight", type=float, default=0.0, dest="ulip_rotation_eval_weight",
+                        help="Rerank weight for ICP fitness (0.0 = debug-only)")
+
     parser.add_argument("--skip_steps", type=int, nargs="*", default=[], help="Schritte überspringen (z.B. --skip_steps 5 8)")
     parser.add_argument("--ollama_model", default="gemma3:4b", help="Ollama-Modell für Prompt-Parsing (default: gemma3:4b)")
     parser.add_argument("--ollama_host", default="http://localhost:11434", help="Ollama-Serveradresse")
@@ -919,6 +1152,15 @@ def main():
         ulip2_mode=args.ulip_mode,
         ulip2_image_weight=args.ulip_image_weight,
         ulip2_use_partial_views=args.ulip_partial_views,
+        ulip2_rotation_eval=args.ulip_rotation_eval,
+        ulip2_rotation_eval_top_k=args.ulip_rotation_eval_top_k,
+        ulip2_rotation_eval_weight=args.ulip_rotation_eval_weight,
+        scale_gate_enabled=args.scale_gate_enabled,
+        scale_gate_min=args.scale_gate_min,
+        scale_gate_max=args.scale_gate_max,
+        scale_gate_min_confidence=args.scale_gate_min_confidence,
+        scale_gate_max_candidates=args.scale_gate_max_candidates,
+        scale_gate_reject_policy=args.scale_gate_reject_policy,
         ollama_model=args.ollama_model,
         ollama_host=args.ollama_host,
         gt_bbox_center_compensation=args.gt_bbox_compensation,

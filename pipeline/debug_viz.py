@@ -506,13 +506,13 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
                      candidates: list, ref_dir: str, output_dir: str) -> str:
     """
     Links: 3D-Punktwolke des beobachteten Objekts (Matplotlib 3D)
-    Rechts: Top-3 ULIP-2 Matches mit Thumbnail + Score
+    Rechts: Top-5 ULIP-2 Matches mit Thumbnail + Score
     """
-    top_n = min(3, len(candidates))
+    top_n = min(5, len(candidates))
     c_norm = np.clip(colors / 255.0 if colors.max() > 1.0 else colors, 0, 1)
     step = max(1, len(points) // 2500)
 
-    fig = plt.figure(figsize=(15, 6))
+    fig = plt.figure(figsize=(15, 9))
     fig.patch.set_facecolor("#141414")
 
     # 3D Scatter
@@ -526,7 +526,7 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
         axis.pane.fill = False
         axis.label.set_color("white")
         axis._axinfo["tick"]["color"] = (1.0, 1.0, 1.0, 1.0)
-        axis._axinfo["axisline"]["color"] = (1.0, 1.0, 1.0, 1.0) 
+        axis._axinfo["axisline"]["color"] = (1.0, 1.0, 1.0, 1.0)
     ax3d.tick_params(colors="white", labelsize=8)
     ax3d.set_xlabel("X", color="gray", fontsize=9)
     ax3d.set_ylabel("Y", color="gray", fontsize=9)
@@ -536,24 +536,27 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
     ax2 = fig.add_subplot(1, 2, 2)
     ax2.set_facecolor("#141414")
     ax2.axis("off")
-    ax2.set_title("ULIP-2 Top-3 Shape Matches", color="white", fontsize=13)
+    ax2.set_title("ULIP-2 Top-5 Shape Matches", color="white", fontsize=13)
 
-    rank_mpl = ["gold", "silver", "#cd7f32"]
+    rank_mpl = ["gold", "silver", "#cd7f32", "white", "white"]
     for i, c in enumerate(candidates[:top_n]):
-        col = rank_mpl[i] if i < 3 else "white"
-        yp = 0.92 - i * 0.30
+        col = rank_mpl[i] if i < len(rank_mpl) else "white"
+        yp = 0.93 - i * 0.175
         ax2.text(0.02, yp,
                  f"#{i+1}  {c.object_id}",
                  transform=ax2.transAxes, color=col,
-                 fontsize=12, fontweight="bold", va="top")
+                 fontsize=11, fontweight="bold", va="top")
         score_label = f"Shape Score: {c.shape_score:.4f}"
         best_view_idx = getattr(c, "best_view_idx", -1)
         if best_view_idx >= 0:
-            score_label += f"  (Best View: {best_view_idx})"
-        ax2.text(0.02, yp - 0.07,
+            score_label += f"  (View {best_view_idx})"
+        reg_fitness = getattr(c, "registration_fitness", 0.0)
+        if reg_fitness > 0.0:
+            score_label += f"  ICP fit: {reg_fitness:.3f}"
+        ax2.text(0.02, yp - 0.065,
                  score_label,
-                 transform=ax2.transAxes, color="white",
-                 fontsize=11, va="top")
+                 transform=ax2.transAxes, color="lightgray",
+                 fontsize=10, va="top")
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     tmp = os.path.join(output_dir, "_tmp_s5.png")

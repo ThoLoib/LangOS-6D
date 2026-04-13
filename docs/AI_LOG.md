@@ -1,5 +1,70 @@
 # AI Log
 
+## 2026-04-13 Scale gate reliability fixes, Step 7 ICP fallback, debug CSV + ULIP top-5
+
+Goal
+- Make the scale gate deterministic and reliable for partial/cut-off objects.
+- Prevent Step 7's RANSAC+ICP from producing a degenerate scale factor (observed: 2.25× for cut-off scissors, confidence 0.00) that corrupts FoundationPose input.
+- Add full ranking CSVs and upgrade ULIP debug viz from top-3 to top-5.
+
+Changes
+- `pipeline/step7_scale_estimation.py`:
+  - `estimate_fast()` added (previous session): rotation-invariant sorted-bbox scale estimate; no ICP or point sampling; returns `(scale_factor, confidence)`. Used by scale gate.
+  - `estimate()` now checks computed ICP confidence against `config.scale_icp_min_confidence` (default 0.15). When confidence is too low (degenerate alignment), scale factor is overridden with `estimate_fast()` result. ICP transformation T is still returned for coarse alignment in Step 8.
+- `pipeline/config.py`:
+  - Added `scale_icp_min_confidence: float = 0.15` under Schritt 7 section.
+- `pipeline/run_pipeline.py`:
+  - `_select_candidate_with_scale_gate()` rewritten to use `estimate_fast()` instead of the full `estimate()`. Now returns 4-tuple `(candidate, mesh_path, selected_rank, rejection_log)` — no `scale_result` returned, so Step 7 always runs its full RANSAC+ICP for coarse alignment.
+  - Scale gate block updated: unpacks 4-tuple, sets `scale_gate_failed` flag, enriches `results["scale_gate"]` with `policy`, `selected_rank`, `fallback_used`, `candidates_checked`.
+  - Steps 7 and 8 both guarded with `and not scale_gate_failed`. Warning logged when skipping.
+  - `scale_gate_failed = False` initialized alongside other shared vars.
+  - Added `import csv`.
+  - New method `_write_ranking_csvs(results)`: writes `rankings_clip.csv`, `rankings_dino.csv`, `rankings_ulip.csv`, `rankings_fusion.csv`, and (when rejections exist) `rankings_scale_gate.csv` to `output_dir`. Called at the end of `_save_results()`.
+- `pipeline/debug_viz.py`:
+  - `save_debug_step5()`: top_n increased from 3 to 5, figure height 6→9, row spacing adjusted (0.30→0.175), title updated to "Top-5", score label now includes ICP `registration_fitness` when > 0.
+
+Diagnosed during session
+- FoundationPose CUDA error (`unknown error`) on first call after container idle: stale GPU context. Fix: `docker compose restart foundationpose`. Not a code issue.
+- Scale 2.25 confidence 0.00 for scissors: RANSAC+ICP gave degenerate alignment on a heavily cut-off partial view. Ratios were spread across [~3.0, ~1.5, ~0.5]; best-2-mean = 2.25. Now caught by `scale_icp_min_confidence` fallback.
+
+## 2026-04-13 Branch `exp/ulip2v2`: Scale gate + rotation variance evaluation
+
+Goal
+- Address two weaknesses of ULIP-2 shape matching: scale invariance (ULIP intentionally normalizes scale away, so top-1 fusion may be wrong size) and rotation sensitivity (ULIP is not guaranteed rotation-invariant in pc mode).
+- Branch `exp/ulip2v2` created from `exp/ulip2-full` commit `d629a47a`.
+
+Changes
+- `pipeline/config.py`:
+  - Added scale gate fields: `scale_gate_enabled` (False), `scale_gate_min` (0.8), `scale_gate_max` (1.2), `scale_gate_min_confidence` (0.0), `scale_gate_max_candidates` (5), `scale_gate_reject_policy` ("fallback_best").
+  - Added rotation eval fields: `ulip2_rotation_eval` (False), `ulip2_rotation_eval_top_k` (5), `ulip2_rotation_eval_method` ("icp"), `ulip2_rotation_eval_weight` (0.0).
+- `pipeline/run_pipeline.py`:
+  - New helper `_resolve_mesh_path_for_candidate()`: single source of truth for image-path detection and `_find_cad_mesh()` fallback. Replaces duplicated code in Steps 7 and 8.
+  - New helper `_select_candidate_with_scale_gate()`: iterates fused candidates in rank order, runs `ScaleEstimator.estimate()` on each, returns first that passes the scale check. Returns 5-tuple `(candidate, scale_result, mesh_path, selected_rank, rejection_log)`.
+  - New scale gate block between Step 6 and Step 7: calls `_select_candidate_with_scale_gate`, sets `effective_best_model`, stores `results["scale_gate"]` with `selected_object_id`, `selected_rank`, `fallback_used`, `policy`, `candidates_checked`, `rejections`.
+  - `scale_gate_failed` flag: set when `policy=fail` and no candidate passes; prevents Steps 7 and 8 from running with a rejected candidate.
+  - Steps 7 and 8 now use `effective_best_model or results["fusion"].best_match` so scale-gate-selected candidate propagates through.
+  - `_create_summary()` includes `scale_gate_selected` and `scale_gate_rejections`.
+  - CLI flags added: `--scale-gate`, `--scale-gate-min`, `--scale-gate-max`, `--scale-gate-min-confidence`, `--scale-gate-max-candidates`, `--scale-gate-reject-policy`, `--ulip-rotation-eval`, `--ulip-rotation-eval-top-k`, `--ulip-rotation-eval-weight`.
+  - All new flags wired into `PipelineConfig(...)` construction.
+- `pipeline/step5_shape_matching.py`:
+  - `ShapeCandidate` extended with `best_partial_pc_path: str = ""`, `registration_fitness: float = 0.0`, `registration_rmse: float = 0.0`.
+  - `ShapeMatcher.__init__()`: added `_partial_view_paths: Dict[str, List[Tuple[int, str]]] = {}`.
+  - `_load_cad_models_partial()`: stores discovered partial view paths in `_partial_view_paths` for later use by rotation eval.
+  - `match()`: populates `best_partial_pc_path` on each `ShapeCandidate` by looking up `best_view_idx` in `_partial_view_paths`.
+  - `_run_rotation_eval()`: runs ICP for top-K candidates, logs fitness/RMSE per candidate, optionally adjusts `shape_score` if `ulip2_rotation_eval_weight > 0` and re-sorts.
+  - `_register_partial_pointclouds_icp()` (module-level): loads reference `.npz`, normalizes both PCs to unit sphere, voxel-downsamples, estimates normals, runs Open3D point-to-plane ICP (50 iterations). Returns `(fitness, rmse, 4×4 transform)`.
+- `scripts/run_debug_pipeline_foundationpose.sh`:
+  - Fixed trailing whitespace after `\` on several lines (shell was treating `\ ` as a literal argument, causing `unrecognized arguments: ` error).
+  - Updated to include `--scale-gate`, `--scale-gate-min 0.8`, `--scale-gate-max 1.2`, `--ulip-rotation-eval`, `--ulip-rotation-eval-top-k 5`, `--ulip-rotation-eval-weight 0.1`.
+
+Known limitation discovered during implementation
+- `fusion_top_k=1` (config default) truncates `FusionResult.candidates` to 1 entry before the scale gate sees it. The scale gate loop therefore iterates over 1 candidate and the fallback is also candidates[0]. Fix planned: override `top_k` at the fusion call site to `max(fusion_top_k, scale_gate_max_candidates)` when scale gate is enabled.
+
+Results
+- Scale gate and rotation eval are off by default; no behavioral change for existing runs.
+- With `--scale-gate`, the pipeline tries up to 5 fusion candidates before falling back to top-1.
+- With `--ulip-rotation-eval` and `--ulip-partial-views`, ICP fitness/RMSE is logged per top-K candidate for diagnostic purposes.
+
 ## 2026-04-09 SAM2 warning fix, GT bbox compensation toggle, README file reference
 
 Goal

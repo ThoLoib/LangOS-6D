@@ -1,5 +1,89 @@
 # Decisions
 
+## 2026-04-13 Step 7 scale: ICP confidence fallback to sorted-bbox estimate
+
+Decision
+- After RANSAC+ICP scale estimation in `estimate()`, if the computed confidence is below `config.scale_icp_min_confidence` (default 0.15), override the scale factor with `estimate_fast()` (rotation-invariant sorted-bbox). The ICP transformation T is still returned for use as coarse alignment initial pose in Step 8.
+
+Rationale
+- For heavily truncated partial views (objects cut off at image boundary), RANSAC+ICP produces degenerate alignments where axis ratios become wildly inconsistent (e.g. [3.0, 1.5, 0.5]). The Partial-Aware Scale logic picks the two highest ratios, yielding a scale factor far from ground truth (observed: 2.25× for scissors). Confidence = 0.00 in this case.
+- `estimate_fast()` (sorted-bbox, no ICP) was already added for the scale gate and is reliable precisely because it does not depend on alignment quality.
+- Keeping T from ICP even when scale is overridden preserves the coarse orientation estimate for Step 8. The scale and the alignment transform are independent outputs.
+
+Alternatives Considered
+- Use `estimate_fast()` for Step 7 entirely — rejected; for fully-visible objects RANSAC+ICP gives a better, axis-aware scale that accounts for the partial-view depth underestimation.
+- Lower the `best_2` threshold to require a minimum ratio similarity — equivalent to the confidence check, but less interpretable.
+- Make `scale_icp_min_confidence` un-configurable — rejected; the right threshold depends on object type and dataset.
+
+## 2026-04-13 scale gate uses estimate_fast, not full ICP
+
+Decision
+- `_select_candidate_with_scale_gate()` now calls `estimate_fast()` (sorted-bbox) for gate decisions instead of `estimate()` (RANSAC+ICP). Step 7 still runs `estimate()` afterward for coarse alignment.
+
+Rationale
+- Using full RANSAC+ICP per candidate in the gate loop was the original design, but it was non-deterministic and slow. The same ICP degeneration that caused 2.25× scale for scissors also caused the gate to reject the correct candidate (conf=0.00 < threshold) on some runs but accept it on others. `estimate_fast()` is deterministic, cheap, and already available. The gate only needs a plausibility check, not a precise metric.
+
+Alternatives Considered
+- Keep full ICP in gate — rejected; non-deterministic behavior makes results session-dependent.
+- Use `max_extent` fallback — less accurate than sorted-bbox for elongated objects.
+
+## 2026-04-13 scale gate after fusion for metric candidate selection
+
+Decision
+- Add an optional post-fusion candidate selection step ("scale gate") that iterates over fused candidates in rank order and accepts the first whose `ScaleEstimator` result falls within a configurable scale range (`[scale_gate_min, scale_gate_max]`). Disabled by default (`scale_gate_enabled=False`).
+
+Rationale
+- ULIP-2 intentionally normalizes scale away (unit-sphere normalization before encoding). Objects with similar shape but different physical size therefore receive similar ULIP similarity scores. Scale estimation belongs to the metric RGB-D/CAD alignment stage (Step 7), not the embedding stage.
+- The existing pipeline always used the top-1 fusion candidate unconditionally for Steps 7 and 8. The scale gate allows the pipeline to skip implausibly-sized candidates and use the next best match instead, without changing the ULIP scoring logic.
+- Scale estimation via RANSAC+ICP is already available in `ScaleEstimator`; reusing it here avoids adding a new metric.
+
+Alternatives Considered
+- Inject a size feature into the ULIP embedding or fusion score — rejected; ULIP's scale invariance is intentional and scale estimation depends on the observed metric point cloud which is not available during ULIP scoring.
+- Hard-code a fixed scale range — kept configurable (`scale_gate_min`, `scale_gate_max`) since valid ranges differ per dataset and object class.
+- Enable by default — rejected; the gate assumes CAD meshes have consistent real-world scale. Datasets with arbitrarily-normalized CAD models would have all candidates rejected.
+
+## 2026-04-13 scale gate reject policy
+
+Decision
+- Two reject policies: `fallback_best` (default) returns the top-1 fusion candidate when no candidate passes the scale check; `fail` skips Steps 7 and 8 entirely.
+
+Rationale
+- `fallback_best` preserves the previous behavior (always use top-1) as the safe fallback. The scale gate then acts as an upgrade path rather than a hard failure condition.
+- `fail` is useful in evaluation contexts where an incorrect pose estimate is worse than no estimate.
+
+Alternatives Considered
+- Single hard-fail behavior — rejected; would break existing experiments when the gate finds no plausible candidate.
+- Silent fallback without logging — rejected; the rejection log is essential for debugging and analysis.
+
+## 2026-04-13 rotation evaluation via ICP on partial views, not random SO(3) augmentation
+
+Decision
+- Evaluate rotation sensitivity by running lightweight ICP between the observed partial PC and each Top-K candidate's best partial reference PC. Record `registration_fitness` and `registration_rmse` per candidate. Default weight 0.0 means debug-only (no ranking change).
+
+Rationale
+- The alternative (random SO(3) augmentation of the query PC before ULIP encoding) was rejected for several reasons:
+  - Non-deterministic unless seeded; makes scores session-dependent.
+  - Taking the max over random rotations can reward accidental alignments.
+  - In `both` mode, the image embedding stays fixed while the PC embedding is rotated — conceptually inconsistent.
+  - Expensive: requires multiple ULIP forward passes per query.
+- ICP on known partial views is deterministic, cheap (per Top-K not all candidates), and directly answers the research question: does geometric alignment to the candidate's reference view improve match confidence?
+
+Alternatives Considered
+- Random SO(3) augmentation — rejected; see above. May be added later as an explicit ablation flag if needed.
+- RANSAC+ICP with full mesh — more expensive and less targeted than partial-view ICP; full mesh ICP is already used in Step 7.
+- FoundationPose for multi-candidate validation — too expensive for per-candidate evaluation; ICP is the right diagnostic tool here.
+
+## 2026-04-13 DRY mesh-path resolution helper
+
+Decision
+- Extract the repeated image-path fallback logic (detect `.png/.jpg` in `cad_model_path`, fall back to recursive `_find_cad_mesh()`) into a single `_resolve_mesh_path_for_candidate()` method on `OSCARPlusPipeline`. Use it in Steps 7, 8, scale gate, and debug viz.
+
+Rationale
+- The same 5-line logic was duplicated in Step 7 and Step 8 in `run_pipeline.py`. A third copy would have appeared in the scale gate loop. A single helper reduces the chance of the copies diverging.
+
+Alternatives Considered
+- Keep duplication — rejected; the fallback logic evolves (e.g. supported extensions) and duplicated copies are a maintenance hazard.
+
 ## 2026-04-09 GT bbox_center compensation made optional
 
 Decision

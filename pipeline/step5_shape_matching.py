@@ -73,7 +73,7 @@ def _aggregate_view_scores(
     scores: torch.Tensor,
     method: str = "topk_softmax",
     top_k: int = 8,
-    temperature: float = 0.1,
+    temperature: float = 1.0,
 ) -> Tuple[float, int]:
     """Aggregate per-view similarity scores into a single object score.
 
@@ -120,6 +120,9 @@ class ShapeCandidate:
     shape_score: float
     cad_model_path: str = ""
     best_view_idx: int = -1   # index of best matching partial view (-1 = full mesh)
+    best_partial_pc_path: str = ""  # path to best matching partial PC .npz
+    registration_fitness: float = 0.0  # ICP fitness (0..1), populated by rotation eval
+    registration_rmse: float = 0.0     # ICP inlier RMSE, populated by rotation eval
 
 
 @dataclass
@@ -432,6 +435,8 @@ class ShapeMatcher:
         self._cad_embeddings: Dict[str, torch.Tensor] = {}
         self._cad_paths: Dict[str, str] = {}
         self._partial_mode: bool = False  # True when partial view embeddings are loaded
+        # Partial-view .npz paths per object: {obj_id: [(view_idx, npz_path), ...]}
+        self._partial_view_paths: Dict[str, List[Tuple[int, str]]] = {}
 
     def _collect_mesh_items(
         self,
@@ -847,8 +852,9 @@ class ShapeMatcher:
             cad_dir, partial_pc_dir,
         )
 
-        # Discover objects and their partial .npz files
+        # Discover objects and their partial .npz files (also stored for rotation eval)
         partial_items = self._collect_partial_items(partial_pc_dir)
+        self._partial_view_paths = dict(partial_items)
         if not partial_items:
             logger.warning(
                 "Keine partial PCs gefunden in %s. Fallback auf full mesh.",
@@ -1248,11 +1254,20 @@ class ShapeMatcher:
         candidates = []
         for score, idx in zip(topk_scores.tolist(), topk_indices.tolist()):
             obj_id = obj_ids[idx]
+            bvi = best_view_indices[idx]
+            # Resolve best partial PC path if available
+            best_pc_path = ""
+            if bvi >= 0 and obj_id in self._partial_view_paths:
+                for vi, vp in self._partial_view_paths[obj_id]:
+                    if vi == bvi:
+                        best_pc_path = vp
+                        break
             candidates.append(ShapeCandidate(
                 object_id=obj_id,
                 shape_score=score,
                 cad_model_path=self._cad_paths.get(obj_id, ""),
-                best_view_idx=best_view_indices[idx],
+                best_view_idx=bvi,
+                best_partial_pc_path=best_pc_path,
             ))
 
         logger.info(
@@ -1261,7 +1276,133 @@ class ShapeMatcher:
             f"Score={candidates[0].shape_score:.4f})"
         )
 
+        # --- Optional: rotation sensitivity evaluation via ICP ---
+        if (self.config.ulip2_rotation_eval
+                and self._partial_mode
+                and observed_pc is not None):
+            self._run_rotation_eval(candidates, observed_pc)
+
         return ShapeMatchingResult(
             candidates=candidates,
             query_embedding=query_emb.cpu().numpy(),
         )
+
+    # ------------------------------------------------------------------
+    # Rotation evaluation helpers
+    # ------------------------------------------------------------------
+
+    def _run_rotation_eval(
+        self,
+        candidates: List[ShapeCandidate],
+        observed_pc: "PointCloudResult",
+    ) -> None:
+        """Run ICP registration between observed PC and each candidate's
+        best partial reference PC.  Populates registration_fitness /
+        registration_rmse on each candidate in-place.
+
+        If ulip2_rotation_eval_weight > 0, also adjusts shape_score.
+        """
+        top_k = min(self.config.ulip2_rotation_eval_top_k, len(candidates))
+        weight = self.config.ulip2_rotation_eval_weight
+        logger.info(
+            "  Rotation eval: running ICP for top-%d candidates (weight=%.2f)",
+            top_k, weight,
+        )
+
+        for cand in candidates[:top_k]:
+            if not cand.best_partial_pc_path:
+                logger.debug("    %s: no partial PC path, skipping", cand.object_id)
+                continue
+
+            try:
+                fitness, rmse, _ = _register_partial_pointclouds_icp(
+                    query_points=observed_pc.points,
+                    query_colors=getattr(observed_pc, "colors", None),
+                    ref_npz_path=cand.best_partial_pc_path,
+                )
+                cand.registration_fitness = fitness
+                cand.registration_rmse = rmse
+                logger.info(
+                    "    %s: fitness=%.4f, rmse=%.6f",
+                    cand.object_id, fitness, rmse,
+                )
+
+                if weight > 0:
+                    cand.shape_score = (
+                        cand.shape_score + weight * fitness
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "    %s: ICP registration failed: %s", cand.object_id, exc,
+                )
+
+        # Re-sort if weight > 0
+        if weight > 0:
+            candidates.sort(key=lambda c: c.shape_score, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# ICP registration utility
+# ---------------------------------------------------------------------------
+
+def _register_partial_pointclouds_icp(
+    query_points: np.ndarray,
+    query_colors: Optional[np.ndarray],
+    ref_npz_path: str,
+    voxel_size: float = 0.005,
+) -> Tuple[float, float, np.ndarray]:
+    """Lightweight ICP alignment of observed partial PC to reference partial PC.
+
+    Both point clouds are downsampled and centered before alignment.
+
+    Args:
+        query_points: Observed partial point cloud (N, 3).
+        query_colors: Optional observed colors (N, 3).
+        ref_npz_path: Path to reference partial PC .npz file.
+        voxel_size: Voxel size for downsampling (in normalized units).
+
+    Returns:
+        (fitness, inlier_rmse, 4x4_transformation)
+    """
+    import open3d as o3d
+
+    # Load reference
+    data = np.load(ref_npz_path)
+    ref_pts = data["points"].astype(np.float64)
+
+    # Normalize both to unit sphere (same as ULIP preprocessing)
+    def _to_unit_sphere(pts):
+        centroid = pts.mean(axis=0)
+        pts = pts - centroid
+        max_d = np.linalg.norm(pts, axis=1).max()
+        if max_d > 0:
+            pts = pts / max_d
+        return pts
+
+    q_pts = _to_unit_sphere(query_points.astype(np.float64))
+    r_pts = _to_unit_sphere(ref_pts)
+
+    # Build Open3D point clouds
+    src = o3d.geometry.PointCloud()
+    src.points = o3d.utility.Vector3dVector(q_pts)
+
+    tgt = o3d.geometry.PointCloud()
+    tgt.points = o3d.utility.Vector3dVector(r_pts)
+
+    # Downsample
+    src = src.voxel_down_sample(voxel_size)
+    tgt = tgt.voxel_down_sample(voxel_size)
+
+    # Estimate normals for point-to-plane ICP
+    src.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 4, max_nn=30))
+    tgt.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 4, max_nn=30))
+
+    # ICP (point-to-plane)
+    threshold = voxel_size * 3
+    reg = o3d.pipelines.registration.registration_icp(
+        src, tgt, threshold, np.eye(4),
+        o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50),
+    )
+
+    return reg.fitness, reg.inlier_rmse, np.asarray(reg.transformation)

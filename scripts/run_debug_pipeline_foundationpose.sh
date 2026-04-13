@@ -8,10 +8,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 python3.11 -m pipeline.run_pipeline \
-    --rgb   eval/datasets/ycbv_gso/test/000049/rgb/000001.png \
-    --depth eval/datasets/ycbv_gso/test/000049/depth/000001.png \
-    --camera eval/datasets/ycbv_gso/test/000049/scene_camera.json \
-    --prompt "I need the tuna can" \
+    --rgb   eval/datasets/ycbv_gso/test/000051/rgb/000001.png \
+    --depth eval/datasets/ycbv_gso/test/000051/depth/000001.png \
+    --camera eval/datasets/ycbv_gso/test/000051/scene_camera.json \
+    --prompt "I need the scissor" \
     --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
     --reference_images object_images/ycbv_gso/ \
     --cad_models object_database/ycbv_gso/ \
@@ -23,7 +23,12 @@ python3.11 -m pipeline.run_pipeline \
     --output debug_output/pc-mode \
     --debug-viz \
     --until-step 8 \
+    --skip_steps 3 \
     --gt-bbox-compensation \
-    # --skip_steps  \
-
+    --scale-gate \
+    --scale-gate-min 0.8 \
+    --scale-gate-max 1.2 \
+    --ulip-rotation-eval \
+    --ulip-rotation-eval-top-k 5 \
+    --ulip-rotation-eval-weight 1.0 \
     "$@"

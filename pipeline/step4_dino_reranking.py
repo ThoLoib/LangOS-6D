@@ -423,17 +423,19 @@ class DINOReRanker:
     def rerank(
         self,
         roi_image: Image.Image,
-        clip_result: CLIPRetrievalResult,
+        clip_result: Optional[CLIPRetrievalResult] = None,
         top_k: Optional[int] = None,
     ) -> DINOReRankingResult:
-        """Re-Rankt CLIP-Kandidaten anhand visueller DINOv2-Aehnlichkeit.
+        """Re-Rankt Kandidaten anhand visueller DINOv2-Aehnlichkeit.
 
-        Nur die von CLIP vorselektierten Kandidaten werden verglichen,
-        was die Berechnung erheblich beschleunigt.
+        Wenn clip_result uebergeben wird, werden nur die CLIP-Kandidaten
+        verglichen (schneller). Ohne clip_result werden alle geladenen
+        Referenzbilder durchsucht (volle Suche).
 
         Args:
             roi_image: ROI-Bild des segmentierten Objekts (Schritt 1).
-            clip_result: Ergebnis der CLIP-Suche (Schritt 3).
+            clip_result: Ergebnis der CLIP-Suche (Schritt 3), optional.
+                         Falls None, werden alle geladenen Objekte verglichen.
             top_k: Anzahl der finalen Kandidaten (ueberschreibt Config).
 
         Returns:
@@ -449,33 +451,32 @@ class DINOReRanker:
         # --- ROI DINOv2 Embedding ---
         query_emb = self.encode_image(roi_image)  # (1, D)
 
-        # --- Nur Referenzbilder der CLIP-Kandidaten vergleichen ---
-        clip_candidates = clip_result.candidates
-        clip_score_map = {c.object_id: c.score for c in clip_candidates}
+        # --- Kandidatenpool bestimmen ---
+        if clip_result is not None:
+            # Nur CLIP-Kandidaten vergleichen (schneller)
+            clip_score_map = {c.object_id: c.score for c in clip_result.candidates}
+            search_ids = [c.object_id for c in clip_result.candidates
+                          if c.object_id in self._ref_embeddings]
+            mode_label = f"CLIP-filtered ({len(search_ids)} objects)"
+        else:
+            # Alle geladenen Objekte vergleichen (volle Suche)
+            clip_score_map = {}
+            search_ids = list(self._ref_embeddings.keys())
+            mode_label = f"full search ({len(search_ids)} objects)"
+
+        logger.info("DINOv2 rerank mode: %s", mode_label)
 
         candidate_embs = []
         candidate_keys = []
-        for candidate in clip_candidates:
-            obj_id = candidate.object_id
-            if obj_id not in self._ref_embeddings:
-                logger.debug(f"Keine Referenzbilder fuer {obj_id}, ueberspringe.")
-                continue
+        for obj_id in search_ids:
             for emb, path in self._ref_embeddings[obj_id]:
                 candidate_embs.append(emb)
                 candidate_keys.append((obj_id, path))
 
         if not candidate_embs:
-            logger.warning("Keine Referenzbilder fuer die CLIP-Kandidaten gefunden.")
-            # Fallback: CLIP-Reihenfolge beibehalten
+            logger.warning("Keine Referenzbilder fuer die Kandidaten gefunden.")
             return DINOReRankingResult(
-                candidates=[
-                    DINOCandidate(
-                        object_id=c.object_id,
-                        dino_score=0.0,
-                        clip_score=c.score,
-                    )
-                    for c in clip_candidates[:top_k]
-                ],
+                candidates=[],
                 query_embedding=query_emb.cpu().numpy(),
             )
 
