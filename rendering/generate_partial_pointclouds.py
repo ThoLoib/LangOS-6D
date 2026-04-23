@@ -116,10 +116,15 @@ def sample_visible_surface(
 
 
 def process_object(obj_id: str, cad_dir: str, images_dir: str,
-                   num_points: int, overwrite: bool = False) -> int:
+                   num_points: int, overwrite: bool = False,
+                   mesh_path: Optional[str] = None) -> int:
     """Generate partial point clouds for all views of one object.
 
     Uses front-face culling to approximate visibility from each camera viewpoint.
+
+    Args:
+        mesh_path: Explicit path to the mesh file.  When provided, skips the
+                   automatic mesh discovery in *cad_dir*.
 
     Returns:
         Number of views successfully processed.
@@ -132,8 +137,9 @@ def process_object(obj_id: str, cad_dir: str, images_dir: str,
         return 0
 
     # Find mesh file
-    obj_cad_dir = os.path.join(cad_dir, obj_id)
-    mesh_path = _find_mesh(obj_cad_dir if os.path.isdir(obj_cad_dir) else cad_dir, obj_id)
+    if mesh_path is None:
+        obj_cad_dir = os.path.join(cad_dir, obj_id)
+        mesh_path = _find_mesh(obj_cad_dir if os.path.isdir(obj_cad_dir) else cad_dir, obj_id)
     if not mesh_path:
         logger.warning("No mesh found for %s", obj_id)
         return 0
@@ -215,14 +221,35 @@ def _find_mesh(search_dir: str, obj_id: str) -> Optional[str]:
     return sorted(candidates, key=sort_key)[0]
 
 
+def _build_mesh_map_from_glob(pattern: str):
+    """Build {obj_id: mesh_path} from a glob pattern.
+
+    The obj_id is the file stem (basename without extension).
+    Use this for datasets where the mesh filename is the object id
+    (e.g. MI3DOR: ``model/test/airplane/airplane_test_0001.obj``).
+    """
+    import glob as _g
+    paths = sorted(_g.glob(pattern))
+    mapping = {}
+    for p in paths:
+        obj_id = os.path.splitext(os.path.basename(p))[0]
+        mapping[obj_id] = p
+    return mapping
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate partial point clouds from CAD meshes via front-face culling"
     )
-    parser.add_argument("--cad_dir", required=True,
+    parser.add_argument("--cad_dir", default="",
                         help="Path to CAD models directory (e.g. object_database/ycbv_gso/)")
     parser.add_argument("--images_dir", required=True,
                         help="Path to rendered images directory (e.g. object_images/ycbv_gso/)")
+    parser.add_argument("--mesh-glob", default="",
+                        help="Glob pattern to find meshes directly. "
+                             "obj_id = file stem.  Use when CAD layout doesn't "
+                             "match <cad_dir>/<obj_id>/ convention.  "
+                             "E.g.: 'object_database/MI3DOR/model/test/*/*.obj'")
     parser.add_argument("--num_points", type=int, default=10000,
                         help="Points per partial PC (default: 10000, matches ULIP-2)")
     parser.add_argument("--overwrite", action="store_true",
@@ -237,8 +264,21 @@ def main():
     if not os.path.isdir(args.images_dir):
         logger.error("Images directory not found: %s", args.images_dir)
         sys.exit(1)
-    if not os.path.isdir(args.cad_dir):
-        logger.error("CAD directory not found: %s", args.cad_dir)
+
+    # Build obj_id -> mesh_path mapping
+    mesh_map = {}
+    if args.mesh_glob:
+        mesh_map = _build_mesh_map_from_glob(args.mesh_glob)
+        if not mesh_map:
+            logger.error("--mesh-glob matched 0 files: %s", args.mesh_glob)
+            sys.exit(1)
+        logger.info("Mesh glob matched %d meshes", len(mesh_map))
+    elif args.cad_dir:
+        if not os.path.isdir(args.cad_dir):
+            logger.error("CAD directory not found: %s", args.cad_dir)
+            sys.exit(1)
+    else:
+        logger.error("Provide either --cad_dir or --mesh-glob")
         sys.exit(1)
 
     # Discover objects from the images directory
@@ -251,11 +291,18 @@ def main():
     t0 = time.time()
     total_views = 0
     success_objects = 0
+    missing_meshes = []
 
     for i, obj_id in enumerate(obj_ids):
+        explicit_mesh = mesh_map.get(obj_id)
+        if mesh_map and explicit_mesh is None:
+            missing_meshes.append(obj_id)
+            continue
+
         views = process_object(
             obj_id, args.cad_dir, args.images_dir,
             args.num_points, overwrite=args.overwrite,
+            mesh_path=explicit_mesh,
         )
         if views > 0:
             success_objects += 1
@@ -272,6 +319,13 @@ def main():
         "Done: %d objects, %d views in %.1fs",
         success_objects, total_views, elapsed,
     )
+    if missing_meshes:
+        logger.warning(
+            "%d objects in images_dir have no matching mesh: %s",
+            len(missing_meshes),
+            missing_meshes[:10] if len(missing_meshes) > 10
+            else missing_meshes,
+        )
 
 
 if __name__ == "__main__":

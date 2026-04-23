@@ -1,6 +1,96 @@
 # AI Handoff – Branch `exp/ulip2-full`
 
-> Zuletzt aktualisiert: 2026-04-13
+> Zuletzt aktualisiert: 2026-04-23
+
+## Update 2026-04-23 (OSCAR+ evaluation suite: shared eval_common + per-dataset wrappers + MI3DOR partial PCs)
+
+### Motivation
+
+The pre-existing `retrieval_mi3dor_eval_oscarplus.py` (~880 lines) mixed MI3DOR-specific iteration logic with shared pipeline init, metric accumulation, and result serialization. It was not reusable for YCBV-GSO or HouseCat6D, and the per-query JSON mixed "full-set" and "CLIP-gated" DINO/ULIP rankings under config-dependent names (`dino_only`, `ulip_only`, `fusion_all`, `fusion_clip_ulip`) that forced a reader to consult the config to know what each field represented.
+
+The partial-pointcloud workflow was also only wired for datasets whose CAD layout matches `<cad_dir>/<obj_id>/`; MI3DOR uses `model/test/<category>/<obj_id>.obj`.
+
+### What was delivered
+
+**Shared evaluator** (`object_retrieval/eval_common.py`, new, ~680 lines):
+- `EvalConfig` dataclass — pipeline+output settings shared across datasets (no dataset paths hard-coded).
+- Metric helpers (`dcg_at_k`, `ideal_dcg_at_k`, `average_precision_from_binary`, `compute_anmrr`) and constant-memory incremental accumulators (`make_accum` / `update_accum` / `finalize_accum`).
+- `build_pipeline(cfg, cad_mesh_items=None)` — loads CLIP descriptions, DINOv2 references, `ScoreFusion`, and optionally `ShapeMatcher`. Accepts pre-built `[(obj_id, mesh_path)]` for datasets where basename ≠ obj_id (e.g. YCBV's `<name>/meshes/model.obj`). When `cfg.ulip2_use_partial_views=True`, routes through the existing `_collect_partial_items` / partial cache infrastructure in `ShapeMatcher`.
+- `run_query(...)` — runs CLIP once, **DINO once** at full depth, **ULIP once** at full depth, then derives CLIP-pruned DINO/ULIP variants by id-intersection on the full rankings. Preserves original stage scores; does not re-rank. See DECISIONS for the equivalence argument.
+- `run_evaluation(cfg, to_label_fn, query_factory, components, ulip_cache=None)` — iterates queries, updates six metric accumulators, writes two JSON files per topk (`results_topk_K.json` and `metrics_summary_topk_K.json`).
+- Helpers: `empty_pointcloud_result`, `query_has_depth`, `load_ulip_query_cache`, `pre_encode_ulip_queries`, `crop_by_bbox`, `crop_with_mask`, `_filter_dino_result_by_ids`, `_filter_shape_result_by_ids`.
+
+**Dataset wrappers** (each ~100–170 lines, all in `object_retrieval/`):
+- `retrieval_mi3dor_eval_oscarplus.py` — category-level, splits `airplane_test_0001` → `airplane`. Uses `cad_mesh_glob="../object_database/MI3DOR/model/test/*/*.obj"` and `_collect_filtered_cad_mesh_items()` to restrict CAD meshes to categories that have CLIP descriptions.
+- `retrieval_ycbv_eval_oscarplus.py` — BOP format, instance-level (`to_label_fn = lambda x: x`). Obj_id extracted from grandparent directory (`<name>/meshes/model.obj` → `<name>`). Crops by visible bbox from `scene_gt_info.json`.
+- `retrieval_housecat6d_eval_oscarplus.py` — BOP format, instance-level, mask-crop via `mask_visib/`. Excludes `bg/` and `collision/` CAD subdirs.
+
+**Six explicit, unambiguous result variants** (replaces old `dino_only`/`ulip_only`/`fusion_all`/`fusion_clip_ulip`):
+```
+clip_only
+dino_only_full
+ulip_only_full
+dino_only_clip_pruned       ← id-filter of dino_only_full by CLIP candidate set
+ulip_only_clip_pruned       ← id-filter of ulip_only_full by CLIP candidate set
+clip_pruned_dino_ulip       ← fusion(dino_pruned, ulip_pruned); also declared primary
+```
+All six are computed and written in one run — no config flag toggles behaviour.
+
+**Auto-expanded full-ranking depth:**
+`run_evaluation` computes `dino_full_top_k = max(cfg.dino_top_k, len(dino_rer._ref_embeddings))` and `ulip_full_top_k = max(cfg.ulip2_top_k, len(shape_m._cad_embeddings))` once at startup, logs whether the depth was auto-expanded, and threads both into `run_query`. `cfg.dino_top_k` / `cfg.ulip2_top_k` now control the reported top-k, not the ranking depth. The used depths are recorded in `metrics_summary_topk_K.json` under `config.dino_full_top_k_used` / `ulip_full_top_k_used`.
+
+**Partial-pointcloud workflow for MI3DOR** (`rendering/generate_partial_pointclouds.py`):
+- New `--mesh-glob` CLI arg + `_build_mesh_map_from_glob(pattern)` helper for datasets where `<cad_dir>/<obj_id>/` does not match (MI3DOR: `model/test/<category>/<obj_id>.obj`).
+- `process_object()` now accepts an explicit `mesh_path=` kwarg; the CLI skips auto-discovery when it is provided.
+- `main()` tracks and reports `obj_ids` that appear in `images_dir` but have no matching mesh.
+
+**Query-side cache**: `precompute_ulip_query_embeddings.py` (new) loads only OpenCLIP ViT-bigG-14 in float16 (~5 GB, fits on a 6 GB GPU) and batch-encodes all query images to a `.pt` cache. The main eval script detects the cache (`ulip_query_cache_path`) and skips per-query image-encoder forward passes entirely.
+
+### Per-query JSON schema (new)
+
+```
+category, filename, gt, pred,
+clip_candidates, dino_candidates_full, dino_candidates_clip_pruned,
+ulip_candidates_full, ulip_candidates_clip_pruned, matched_files,
+clip_pruned_dino_ulip_pred, clip_pruned_dino_ulip_top5
+```
+
+`pred` ≡ `clip_pruned_dino_ulip_pred`. No `fusion_pred` / `fusion_top5` — removed to eliminate ambiguity about whether fused DINO/ULIP came from the full set or CLIP-pruned set.
+
+### Runtime
+
+Per query: 1× CLIP + 1× DINO (full, top_k = reference count) + 1× ULIP matmul (full, top_k = CAD count) + 1× fusion. The deeper top_k adds negligible cost (only the final sort widens; the underlying matmul over all references was already happening). The ULIP image encoder is called once; the encoded query is reused by the single ULIP `match` call. Compared to an earlier double-run design that ran DINO and ULIP twice (once full, once CLIP-gated), this saves one DINO pass + one ULIP matmul per query.
+
+### How to use
+
+```bash
+cd OSCAR/object_retrieval
+
+# 1. Pre-encode ULIP query embeddings (one-off, 6 GB GPU friendly):
+python precompute_ulip_query_embeddings.py
+
+# 2. (MI3DOR only, optional) generate partial-view CAD PCs:
+python ../rendering/generate_partial_pointclouds.py \
+    --mesh-glob "../object_database/MI3DOR/model/test/*/*.obj" \
+    --images_dir ../object_images/MI3DOR/ \
+    --num_points 10000
+
+# 3. Run evaluations (produces six-variant JSON summaries):
+python retrieval_mi3dor_eval_oscarplus.py
+python retrieval_ycbv_eval_oscarplus.py
+python retrieval_housecat6d_eval_oscarplus.py
+
+# To enable partial-view ULIP for MI3DOR, set ulip2_use_partial_views=True in the EvalConfig.
+```
+
+Outputs land in `result_folder` as `results_topk_K.json` (per-query records) and `metrics_summary_topk_K.json` (metrics + config). Result directories and the ULIP query cache are now gitignored.
+
+### Minor collateral
+
+- `object_retrieval/retrieval_mi3dor_eval.py` (baseline, untouched otherwise): one-line fix — `bop_root` now points to `eval/datasets/mi3dor/image/test` instead of the parent dataset root.
+- `.gitignore` extended to exclude `object_retrieval/results_*/`, `object_retrieval/top*_rankings_*.json`, `object_retrieval/ulip_query_cache_*.pt`, and `debug_output/`.
+
+---
 
 ## Projektziel
 

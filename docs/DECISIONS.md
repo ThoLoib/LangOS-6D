@@ -1,5 +1,52 @@
 # Decisions
 
+## 2026-04-23 OSCAR+ eval: CLIP-pruned DINO/ULIP derived by id-filter on single full pass
+
+Decision
+- `run_query` in `object_retrieval/eval_common.py` runs CLIP once, DINO once at full depth, and ULIP once at full depth. The CLIP-pruned DINO and ULIP variants are produced by `_filter_dino_result_by_ids` / `_filter_shape_result_by_ids` — pure id-intersection on the full rankings, preserving the original stage scores and order. No second CLIP-gated rerank pass.
+
+Rationale
+- `step4_dino_reranking.rerank()` computes per-object aggregated cosine similarity (`_aggregate_view_scores` over views) with no cross-candidate normalisation. Restricting the candidate pool only changes which rows survive the final `topk()` — the per-object score is identical.
+- `step5_shape_matching.match()` computes per-object cosine similarity between the query embedding and each CAD embedding independently. Candidate gating only truncates the final top-k.
+- Therefore the derived pruned ranking is mathematically equivalent to an explicit CLIP-gated rerank. The DINO filter also backfills `clip_score` from the CLIP score map so downstream fusion inputs match byte-for-byte.
+- Saves exactly one DINO pass + one ULIP matmul per query vs. an explicit double-run design, and guarantees the full-set and CLIP-pruned variants share a common source of truth (no drift from re-running the encoder twice on the same input).
+
+Alternatives considered
+- Explicit double-run (one full + one CLIP-gated) — rejected on cost grounds; offers no additional information.
+- Compute only the CLIP-pruned variant (drop the full variants) — rejected; the thesis needs the full-set numbers for comparison.
+- Move the filter inside `ShapeMatcher.match()` — rejected; keeping the filter as an eval-module helper keeps the pipeline module's behaviour unchanged and non-eval callers unaffected.
+
+Breakage risk
+- If a future stage introduces cross-candidate normalisation (softmax across pool, z-score, rank-based features), the equivalence breaks and the helper must be revisited. Guarded by the docstring in `_filter_dino_result_by_ids`.
+
+## 2026-04-23 OSCAR+ eval: auto-expand full-ranking depth from reference counts
+
+Decision
+- `run_evaluation` computes `dino_full_top_k = max(cfg.dino_top_k, len(dino_rer._ref_embeddings))` and `ulip_full_top_k = max(cfg.ulip2_top_k, len(shape_m._cad_embeddings))` once at startup. Both are threaded into `run_query`. `cfg.dino_top_k` / `cfg.ulip2_top_k` now only control the number of top candidates reported per query; they no longer gate the ranking depth the pipeline actually produces.
+
+Rationale
+- Deriving CLIP-pruned variants by id-filtering requires the full ranking to actually contain every CLIP candidate. With `dino_top_k=5` (the MI3DOR default) the full pass would silently drop most CLIP candidates, corrupting the derived pruned variant.
+- Using the loaded reference count as the depth is the tightest upper bound that always covers the CLIP set, and is free — DINO and ULIP already compute similarities against every reference; only the final sort widens.
+- A user-visible log line on startup reports whether auto-expansion kicked in and to what depth. The used depths are persisted in `metrics_summary_topk_K.json` under `config.dino_full_top_k_used` / `ulip_full_top_k_used` so results are reproducible without needing the source `EvalConfig`.
+
+Alternatives considered
+- Require the user to set `dino_top_k` / `ulip2_top_k` equal to the reference count — rejected; silent footgun if forgotten, and couples eval config to dataset size.
+- Cap depth at a fixed large sentinel (e.g. 10⁶) — works, but hides the actual depth used and makes the summary less informative.
+
+## 2026-04-23 OSCAR+ eval: exactly six unambiguous variant names, no runtime-config-dependent labels
+
+Decision
+- The summary's `variants` block contains exactly: `clip_only`, `dino_only_full`, `ulip_only_full`, `dino_only_clip_pruned`, `ulip_only_clip_pruned`, `clip_pruned_dino_ulip`. Primary variant = `clip_pruned_dino_ulip`. The earlier ambiguous keys (`dino_only`, `ulip_only`, `fusion_all`, `fusion_clip_ulip`) are removed; so are the `prune_dino_with_clip` / `prune_ulip_with_clip` config flags that selected between full and pruned at runtime.
+
+Rationale
+- The old scheme required a reader to consult the runtime config to know whether `dino_only` referred to the full-set or the CLIP-gated pool. That broke the JSON contract — identical filenames could contain different semantics across runs.
+- Every run now emits both perspectives under explicit names, so downstream analysis scripts and thesis-text comparisons have a single stable schema.
+- `fusion_all` fused DINO + ULIP inputs whose meanings depended on the config; replacing it with `clip_pruned_dino_ulip` (explicit DINO-pruned + ULIP-pruned) gives a well-defined fusion semantics. Dropping `fusion_clip_ulip` (which carried the same ambiguity on the ULIP side) keeps the variant set minimal and comparable.
+
+Alternatives considered
+- Keep `fusion_all` but rename it — rejected; the fused inputs were still config-dependent, so the renaming would hide the ambiguity rather than fix it.
+- Keep the runtime-config toggle for flexibility — rejected; the cost of running both is negligible (one DINO rerank + one ULIP matmul), and the JSON-contract benefit is large.
+
 ## 2026-04-13 Step 7 scale: ICP confidence fallback to sorted-bbox estimate
 
 Decision

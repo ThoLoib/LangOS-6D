@@ -5,7 +5,7 @@ This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline wit
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
 New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-04-09):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO. Features: ULIP `pc`/`cross`/`both` modes, partial-to-partial matching, multi-view aggregation (Steps 4 & 5), SAM2.1 segmentation, depth gating, configurable SOR/ROR, FoundationPose HTTP integration with ICP fallback. Debug visualization via `--debug-viz`.
+> **Status (2026-04-23):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO. Features: ULIP `pc`/`cross`/`both` modes, partial-to-partial matching, multi-view aggregation (Steps 4 & 5), SAM2.1 segmentation, depth gating, configurable SOR/ROR, FoundationPose HTTP integration with ICP fallback. Debug visualization via `--debug-viz`. Retrieval evaluation is shared across datasets via `object_retrieval/eval_common.py` with thin per-dataset wrappers (`retrieval_mi3dor_eval_oscarplus.py`, `retrieval_ycbv_eval_oscarplus.py`, `retrieval_housecat6d_eval_oscarplus.py`); one run emits six explicit variants (`clip_only`, `dino_only_full`, `ulip_only_full`, `dino_only_clip_pruned`, `ulip_only_clip_pruned`, `clip_pruned_dino_ulip`) — see `AI_HANDOFF.md` for details.
 
 ## ULIP Modes (Step 5)
 

@@ -14,7 +14,7 @@ from sklearn.metrics import roc_auc_score
 
 # ---------------- CONFIG ----------------
 ref_dir = "../object_images/MI3DOR"
-bop_root = "../eval/datasets/mi3dor/"
+bop_root = "../eval/datasets/mi3dor/image/test"
 desc_file = "../object_database/MI3DOR/descriptions_attributes.json"
 
 result_folder = "results_mi3dor_f20"

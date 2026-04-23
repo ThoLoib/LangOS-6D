@@ -23,6 +23,14 @@ blender-*/
 # Optional local outputs
 /results/
 
+# Per-run evaluation outputs (can be GB-scale)
+/object_retrieval/results_*/
+/object_retrieval/top*_rankings_*.json
+/debug_output/
+
+# Pre-computed ULIP query caches (27 MB+ per dataset)
+/object_retrieval/ulip_query_cache_*.pt
+
 # Keep empty directory placeholders if needed
 !/eval/datasets/.gitkeep
 !/object_database/.gitkeep
