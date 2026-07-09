@@ -277,6 +277,8 @@ For full validation: Docker + GPU + datasets required. Document any step that ca
 - [x] B2: Geometry re-ranking module (`step_b2_geometry_reranking.py` — GeDi RANSAC + trimmed Chamfer)
 - [x] B3: FPFH→GeDi in Step 7 (`step7_scale_estimation.py` — GeDi primary, FPFH fallback, B2 transform reuse)
 - [x] B4: B2 wired into pipeline (`run_pipeline.py` — between fusion and scale gate, CLI flags added)
-- [ ] C1–C3: Evaluation infrastructure
+- [x] C1: SHREC'18 ObjectNN+ eval wrapper (`retrieval_shrec18_eval_oscarplus.py` — full-database scoring, 20 categories)
+- [x] C2: BOP-core pose eval (`eval_bop_pose.py` — YCB-V/T-LESS/LM-O, ADD/ADD-S metrics, Stages 3a/3b)
+- [ ] C3: MI3DOR update (run frozen Stage 1 config)
 - [ ] D1–D2: Encoder alternatives
 - [ ] E1–E2: Grasping demo
