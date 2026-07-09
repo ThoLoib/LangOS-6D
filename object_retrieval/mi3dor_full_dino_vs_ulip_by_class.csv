@@ -1,0 +1,11 @@
+category;n;dino_accuracy;ulip_accuracy;better;delta_pp;dino_only;ulip_only;both_ok;both_wrong;top_dino_confusions;top_ulip_confusions
+airplane;500;99.0;100.0;ULIP;+1.0;0;5;495;0;camera:2, bookshelf:1, plant:1;-
+bicycle;500;96.6;79.8;DINO;-16.8;90;6;393;11;motorcycle:9, plant:6, airplane:2;motorcycle:98, airplane:2, plant:1
+bookshelf;500;95.2;68.4;DINO;-26.8;142;8;334;16;wardrobe:23, plant:1;wardrobe:150, monitor:6, keyboard:1
+camera;500;97.4;99.6;ULIP;+2.2;1;12;486;1;monitor:5, bookshelf:2, keyboard:2;monitor:1, motorcycle:1
+keyboard;500;95.6;89.4;DINO;-6.2;41;10;437;12;bookshelf:7, monitor:6, wardrobe:5;camera:14, plant:14, bookshelf:9
+monitor;500;60.8;35.6;DINO;-25.2;159;33;145;163;keyboard:139, wardrobe:25, bookshelf:21;keyboard:100, camera:71, plant:55
+motorcycle;500;88.6;98.8;ULIP;+10.2;2;53;441;4;bicycle:51, wardrobe:4, bookshelf:1;bicycle:4, plant:2
+plant;500;97.8;99.8;ULIP;+2.0;1;11;488;0;vase:11;vase:1
+vase;500;64.0;72.6;ULIP;+8.6;19;62;301;118;plant:137, wardrobe:20, bookshelf:13;plant:120, wardrobe:13, camera:3
+wardrobe;500;94.8;93.2;DINO;-1.6;26;18;448;8;bookshelf:19, monitor:4, vase:2;bookshelf:17, monitor:12, airplane:2

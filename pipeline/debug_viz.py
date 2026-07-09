@@ -11,7 +11,7 @@
 
 import logging
 import os
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -123,6 +123,42 @@ def _load_view_thumb(obj_id: str, ref_dir: str, view_idx: int,
         return img
     except Exception:
         return None
+
+
+def _load_best_view_thumb(candidate, ref_dir: str,
+                          size: int = 160) -> Image.Image:
+    """Return the highest-scoring view's thumbnail for *candidate*.
+
+    Picks, in order:
+      1. ``candidate.best_view_path`` (DINOCandidate, FusedCandidate)
+      2. ``candidate.best_view_idx`` via ``_load_view_thumb`` (ShapeCandidate)
+      3. First available reference image (legacy fallback)
+      4. Placeholder if none found
+
+    Always returns an Image so callers don't need null checks.
+    """
+    obj_id = getattr(candidate, "object_id", "") or ""
+
+    bv_path = getattr(candidate, "best_view_path", "") or ""
+    if bv_path and os.path.isfile(bv_path):
+        try:
+            img = Image.open(bv_path).convert("RGB")
+            img.thumbnail((size, size), Image.LANCZOS)
+            return img
+        except Exception:
+            pass
+
+    bv_idx = getattr(candidate, "best_view_idx", -1)
+    if isinstance(bv_idx, int) and bv_idx >= 0:
+        t = _load_view_thumb(obj_id, ref_dir, bv_idx, size)
+        if t is not None:
+            return t
+
+    t = _load_thumb(obj_id, ref_dir, size)
+    if t is not None:
+        return t
+
+    return _placeholder(size, obj_id[:8] if obj_id else "N/A")
 
 
 def _placeholder(size: int, label: str = "N/A") -> Image.Image:
@@ -271,6 +307,35 @@ def save_debug_step1(rgb_image: Image.Image, mask: np.ndarray, bbox: list,
     path = os.path.join(output_dir, "debug_01_localization.png")
     final.save(path)
     logger.info("  [DEBUG 1] → %s", path)
+
+    # Thesis-ready single-panel saves (alongside the combined image above).
+    # Image content only — no title strip, no surrounding canvas. Sourced
+    # from the pre-resize / pre-canvas originals so 1a/1b are visibly
+    # larger than the 360-wide labeled panels used in the combined image.
+    panel_a_path = os.path.join(output_dir, "debug_01a_scene_mask_bbox.png")
+    panel_b_path = os.path.join(output_dir, "debug_01b_segmented_roi.png")
+
+    # 1a: full-resolution annotated scene (mask overlay + bbox already drawn).
+    scene.save(panel_a_path)
+
+    # 1b: segmented ROI, upscaled so the long side is ≥ 768 px for thesis use.
+    roi_full = roi_image.copy().convert("RGB")
+    min_long_side = 768
+    rw, rh = roi_full.size
+    long_side = max(rw, rh)
+    if long_side < min_long_side and long_side > 0:
+        scale = min_long_side / long_side
+        roi_full = roi_full.resize(
+            (int(round(rw * scale)), int(round(rh * scale))),
+            Image.LANCZOS,
+        )
+    roi_full.save(panel_b_path)
+
+    logger.info("  [DEBUG 1a] → %s (%dx%d)",
+                panel_a_path, scene.width, scene.height)
+    logger.info("  [DEBUG 1b] → %s (%dx%d)",
+                panel_b_path, roi_full.width, roi_full.height)
+
     return path
 
 
@@ -364,7 +429,7 @@ def save_debug_step3(roi_image: Image.Image, candidates: list,
 
     for i, c in enumerate(candidates[:top_n]):
         y = 36 + i * (thumb + pad)
-        t = _load_thumb(c.object_id, ref_dir, thumb) or _placeholder(thumb, c.object_id[:8])
+        t = _load_best_view_thumb(c, ref_dir, thumb)
         cand.paste(t, (pad, y))
 
         tx = thumb + pad * 2
@@ -459,7 +524,7 @@ def save_debug_step4(roi_image: Image.Image, candidates: list,
         bg = (28, 28, 28) if i % 2 == 0 else (22, 22, 22)
         td.rectangle([0, y, tw, y + rh], fill=bg)
 
-        tn = _load_thumb(c.object_id, ref_dir, rh - 6) or _placeholder(rh - 6)
+        tn = _load_best_view_thumb(c, ref_dir, rh - 6)
         table.paste(tn, (4, y + 3))
 
         rc = RANK_COLORS[i]
@@ -503,10 +568,14 @@ def save_debug_step4(roi_image: Image.Image, candidates: list,
 # =============================================================================
 
 def save_debug_step5(points: np.ndarray, colors: np.ndarray,
-                     candidates: list, ref_dir: str, output_dir: str) -> str:
+                     candidates: list, ref_dir: str, output_dir: str,
+                     clip_score_map: Optional[Dict[str, float]] = None) -> str:
     """
     Links: 3D-Punktwolke des beobachteten Objekts (Matplotlib 3D)
     Rechts: Top-5 ULIP-2 Matches mit Thumbnail + Score
+
+    Bei übergebener ``clip_score_map`` wird zusätzlich eine ULIP-vs-CLIP
+    Vergleichstabelle angehängt (analog zur DINO-vs-CLIP Tabelle in Step 4).
     """
     top_n = min(5, len(candidates))
     c_norm = np.clip(colors / 255.0 if colors.max() > 1.0 else colors, 0, 1)
@@ -588,12 +657,78 @@ def save_debug_step5(points: np.ndarray, colors: np.ndarray,
         side.paste(t, ((side_w - t.width) // 2, y))
 
     final = _hstack([mpl_img, side], pad=4)
+
+    # --- ULIP vs. CLIP comparison table (mirrors Step 4 row 2 layout) ---
+    if clip_score_map is not None and candidates:
+        comp = _ulip_clip_comparison_table(
+            candidates[:top_n], ref_dir, clip_score_map,
+            width=final.width,
+        )
+        if comp is not None:
+            final = _vstack([final, comp], pad=8)
+
     final = _vstack([_banner("STEP 5: ULIP-2 3D Shape Matching",
                              final.width, bg=(15, 15, 30)), final], pad=0)
     path = os.path.join(output_dir, "debug_05_ulip.png")
     final.save(path)
     logger.info("  [DEBUG 5] → %s", path)
     return path
+
+
+def _ulip_clip_comparison_table(candidates: list, ref_dir: str,
+                                clip_score_map: Dict[str, float],
+                                width: int) -> Optional[Image.Image]:
+    """ULIP vs. CLIP per-candidate bar table, in the same visual style as the
+    Step 4 DINO-vs-CLIP table.
+
+    Returns None when there are no candidates.
+    """
+    n = len(candidates)
+    if n == 0:
+        return None
+
+    rh = 60
+    table = Image.new("RGB", (width, rh * n + 36), (18, 18, 18))
+    td = ImageDraw.Draw(table)
+    td.text((10, 8), "ULIP-2 vs. CLIP — Candidate Comparison",
+            fill=(180, 255, 100), font=_font(15))
+    tx_x = rh + 10
+    td.text((tx_x + 315, 10), "ULIP-Score",
+            fill=(180, 255, 100), font=_font(12))
+    td.text((tx_x + 705, 10), "CLIP-Score",
+            fill=(255, 180, 60), font=_font(12))
+
+    for i, c in enumerate(candidates):
+        y = 36 + i * rh
+        bg = (28, 28, 28) if i % 2 == 0 else (22, 22, 22)
+        td.rectangle([0, y, width, y + rh], fill=bg)
+
+        tn = _load_best_view_thumb(c, ref_dir, rh - 6)
+        table.paste(tn, (4, y + 3))
+
+        rc = RANK_COLORS[i] if i < len(RANK_COLORS) else (200, 200, 200)
+        tx_x = rh + 10
+        td.text((tx_x, y + 6), f"#{i+1}", fill=rc, font=_font(16))
+        td.text((tx_x + 32, y + 6), c.object_id[:40], fill="white", font=_font(13))
+
+        ulip_score = float(getattr(c, "shape_score", 0.0))
+        clip_score = float(clip_score_map.get(c.object_id, 0.0))
+
+        # ULIP bar
+        ub = max(2, min(int(ulip_score * 280), 280))
+        td.rectangle([tx_x + 30, y + 32, tx_x + 310, y + 44], fill=(40, 40, 40))
+        td.rectangle([tx_x + 30, y + 32, tx_x + 30 + ub, y + 44], fill=(180, 255, 100))
+        td.text((tx_x + 315, y + 30), f"ULIP {ulip_score:.4f}",
+                fill=(180, 255, 100), font=_font(12))
+
+        # CLIP bar
+        cb = max(2, min(int(clip_score * 280), 280))
+        td.rectangle([tx_x + 420, y + 32, tx_x + 700, y + 44], fill=(40, 40, 40))
+        td.rectangle([tx_x + 420, y + 32, tx_x + 420 + cb, y + 44], fill=(255, 180, 60))
+        td.text((tx_x + 705, y + 30), f"CLIP {clip_score:.4f}",
+                fill=(255, 180, 60), font=_font(12))
+
+    return table
 
 
 # =============================================================================
@@ -649,7 +784,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
         if i == 0:
             draw.rectangle([0, y, canvas_w, y + rh - 1], outline=(255, 215, 0), width=2)
 
-        t = _load_thumb(c.object_id, ref_dir, th) or _placeholder(th)
+        t = _load_best_view_thumb(c, ref_dir, th)
         canvas.paste(t, (4, y + (rh - th) // 2))
 
         rc = RANK_COLORS[i]
@@ -680,7 +815,7 @@ def save_debug_step6(candidates: list, ref_dir: str,
     cd.text((210, 100), "->", fill="gray", font=_font(36))
 
     best = candidates[0]
-    bt = _load_thumb(best.object_id, ref_dir, 180) or _placeholder(180)
+    bt = _load_best_view_thumb(best, ref_dir, 180)
     compare.paste(bt, (256, 42))
     cd.text((256, 42 + bt.height + 4),
             f"{best.object_id[:32]}  Fusion={best.fused_score:.4f}",

@@ -48,7 +48,7 @@ ref_dir               = "../object_images/MI3DOR"
 bop_root              = "../eval/datasets/mi3dor/image/test"
 desc_file             = "../object_database/MI3DOR/descriptions_attributes.json"
 cad_mesh_glob         = "../object_database/MI3DOR/model/test/*/*.obj"
-result_folder         = "results_mi3dor_oscarplus_f20_2"
+result_folder         = "results_mi3dor_oscarplus_f20_3"
 ulip_query_cache_path = "ulip_query_cache_mi3dor.pt"
 
 

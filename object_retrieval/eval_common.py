@@ -69,9 +69,9 @@ class EvalConfig:
     ulip2_top_k: int = 9999
     fusion_top_k: int = 9999
     fusion_method: str = "weighted_sum"
-    weight_clip: float = 0.3
-    weight_dino: float = 0.4
-    weight_ulip: float = 0.3
+    weight_clip: float = 0
+    weight_dino: float = 0.5
+    weight_ulip: float = 0.5
 
     ulip_repo_path: str = "/ulip"
     ulip2_checkpoint: str = "/ulip/checkpoints/ulip2_pointbert_10k.pt"

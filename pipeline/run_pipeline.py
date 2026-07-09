@@ -434,10 +434,16 @@ class OSCARPlusPipeline:
                     )
 
                 if self.debug_viz:
+                    clip_res = results.get("clip_retrieval")
+                    clip_score_map = (
+                        {c.object_id: float(c.score) for c in clip_res.candidates}
+                        if clip_res is not None else None
+                    )
                     _dbv.save_debug_step5(
                         pc.points, pc.colors,
                         shape_result.candidates,
                         self.config.reference_images_dir, self.output_dir,
+                        clip_score_map=clip_score_map,
                     )
 
         # =================================================================

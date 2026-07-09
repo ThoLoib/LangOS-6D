@@ -8,10 +8,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 python3.11 -m pipeline.run_pipeline \
-    --rgb   eval/datasets/ycbv_gso/test/000051/rgb/000001.png \
-    --depth eval/datasets/ycbv_gso/test/000051/depth/000001.png \
-    --camera eval/datasets/ycbv_gso/test/000051/scene_camera.json \
-    --prompt "I need the scissor" \
+    --rgb   eval/datasets/ycbv_gso/test/000049/rgb/000001.png \
+    --depth eval/datasets/ycbv_gso/test/000049/depth/000001.png \
+    --camera eval/datasets/ycbv_gso/test/000049/scene_camera.json \
+    --prompt "I need the tuna can" \
     --descriptions object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json \
     --reference_images object_images/ycbv_gso/ \
     --cad_models object_database/ycbv_gso/ \
@@ -20,10 +20,10 @@ python3.11 -m pipeline.run_pipeline \
     --ulip_mode pc \
     --ulip-partial-views \
     --pose_method foundationpose \
-    --output debug_output/pc-mode \
+    --output debug_output/tessa_example_images \
     --debug-viz \
     --until-step 8 \
-    --skip_steps 3 \
+    --skip_steps \
     --gt-bbox-compensation \
     --scale-gate \
     --scale-gate-min 0.8 \
