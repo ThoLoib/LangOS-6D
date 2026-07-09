@@ -395,6 +395,93 @@ class ULIP2ImageEncoder:
 
 
 # ---------------------------------------------------------------------------
+# Uni3D Point-Cloud Encoder (ablation E7)
+# ---------------------------------------------------------------------------
+
+class Uni3DEncoder(nn.Module):
+    """Uni3D point cloud encoder (Zhou et al., ICLR 2024).
+
+    Encodes point clouds into EVA-CLIP-aligned embeddings. Loaded from
+    HuggingFace (BAAI/Uni3D) or a local checkpoint.
+
+    Ref: https://github.com/baaivision/Uni3D
+         https://huggingface.co/BAAI/Uni3D
+
+    Unlike ULIP-2, Uni3D does NOT require cloning a separate repo or
+    compiling CUDA extensions — it loads entirely via torch.hub / HF.
+    """
+
+    def __init__(self, config: "PipelineConfig"):
+        super().__init__()
+        self.config = config
+        self.device = config.device
+        self._model = None
+        self._embed_dim = getattr(config, "uni3d_embed_dim", 512)
+
+    def _load(self):
+        if self._model is not None:
+            return
+
+        model_name = getattr(self.config, "uni3d_model_name", "BAAI/Uni3D")
+        logger.info("Loading Uni3D model: %s ...", model_name)
+
+        try:
+            # Uni3D is distributed as a torch.hub model via its GitHub repo
+            # or can be loaded from HuggingFace with custom code
+            self._model = torch.hub.load(
+                "baaivision/Uni3D", "uni3d_base",
+                trust_repo=True,
+            )
+        except Exception:
+            # Fallback: try loading from HuggingFace with transformers
+            logger.info("torch.hub failed, trying HuggingFace AutoModel...")
+            try:
+                from transformers import AutoModel
+                self._model = AutoModel.from_pretrained(
+                    model_name, trust_remote_code=True,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not load Uni3D model '{model_name}'. "
+                    f"Ensure the model is available via torch.hub or HuggingFace.\n"
+                    f"Install: pip install timm\n"
+                    f"Error: {exc}"
+                )
+
+        self._model = self._model.to(self.device)
+        self._model.eval()
+
+        n_params = sum(p.numel() for p in self._model.parameters())
+        logger.info(
+            "Uni3D loaded: %.1fM params, embed_dim=%d, device=%s",
+            n_params / 1e6, self._embed_dim, self.device,
+        )
+
+    def encode(self, points: np.ndarray, colors: Optional[np.ndarray] = None) -> torch.Tensor:
+        """Encode a point cloud into a Uni3D embedding.
+
+        Args:
+            points: (N, 3) xyz coordinates.
+            colors: (N, 3) rgb in [0, 1] (optional, Uni3D uses xyz only).
+
+        Returns:
+            L2-normalized tensor (1, embed_dim).
+        """
+        self._load()
+
+        num_points = getattr(self.config, "uni3d_num_points", 10000)
+        # Normalize: same preprocessing as ULIP (unit sphere + resample)
+        pts_norm = normalize_pointcloud(points, colors=None, num_points=num_points)
+        pts_tensor = torch.from_numpy(pts_norm).unsqueeze(0).float().to(self.device)
+
+        with torch.no_grad():
+            embedding = self._model(pts_tensor)  # (1, embed_dim)
+            embedding = F.normalize(embedding, p=2, dim=-1)
+
+        return embedding
+
+
+# ---------------------------------------------------------------------------
 # ULIP-2 Shape Matching Modul
 # ---------------------------------------------------------------------------
 
@@ -428,8 +515,10 @@ class ShapeMatcher:
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.device = config.device
+        self._encoder_type = getattr(config, "shape_encoder", "ulip2")
         self.model: Optional[ULIP2PointEncoder] = None
         self.image_encoder: Optional[ULIP2ImageEncoder] = None
+        self._uni3d: Optional[Uni3DEncoder] = None
 
         # Gecachte CAD-Modell-Embeddings
         self._cad_embeddings: Dict[str, torch.Tensor] = {}
@@ -468,14 +557,23 @@ class ShapeMatcher:
         mesh_items: List[Tuple[str, str]],
     ) -> str:
         """Erzeugt einen stabilen Cache-Pfad für CAD-Embeddings."""
-        ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
-        meta_parts = [
-            f"backbone={self.config.ulip2_backbone}",
-            f"npts={self.config.ulip2_num_points}",
-            f"colors={int(self.config.ulip2_use_colors)}",
-            f"edim={self.config.ulip2_embed_dim}",
-            f"ckpt={ckpt_tag}",
-        ]
+        if self._encoder_type == "uni3d":
+            ckpt_tag = "uni3d"
+            meta_parts = [
+                f"encoder=uni3d",
+                f"model={self.config.uni3d_model_name}",
+                f"npts={self.config.uni3d_num_points}",
+                f"edim={self.config.uni3d_embed_dim}",
+            ]
+        else:
+            ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
+            meta_parts = [
+                f"backbone={self.config.ulip2_backbone}",
+                f"npts={self.config.ulip2_num_points}",
+                f"colors={int(self.config.ulip2_use_colors)}",
+                f"edim={self.config.ulip2_embed_dim}",
+                f"ckpt={ckpt_tag}",
+            ]
 
         inv = []
         for obj_id, path in mesh_items:
@@ -730,17 +828,22 @@ class ShapeMatcher:
         points: np.ndarray,
         colors: Optional[np.ndarray] = None,
     ) -> torch.Tensor:
-        """Encodiert eine Punktwolke in ein ULIP-2-Embedding.
+        """Encodiert eine Punktwolke in ein Shape-Embedding (ULIP-2 oder Uni3D).
 
         Args:
             points: Punktwolke (N, 3) – XYZ-Koordinaten.
             colors: Optionale Farben (N, 3) – RGB in [0, 1].
                     Für 'pointbert_colored': wird verwendet oder mit 0 aufgefüllt.
-                    Für andere Backbones: wird ignoriert.
+                    Für Uni3D / andere Backbones: wird ignoriert.
 
         Returns:
             Normalisierter Tensor (1, embed_dim).
         """
+        if self._encoder_type == "uni3d":
+            if self._uni3d is None:
+                self._uni3d = Uni3DEncoder(self.config)
+            return self._uni3d.encode(points, colors)
+
         self._load_model()
 
         use_colors = (
@@ -801,7 +904,11 @@ class ShapeMatcher:
                             config.reference_images_dir verwendet.
             allowed_extensions: Erlaubte Dateierweiterungen.
         """
-        self._load_model()
+        if self._encoder_type == "uni3d":
+            if self._uni3d is None:
+                self._uni3d = Uni3DEncoder(self.config)
+        else:
+            self._load_model()
 
         cad_dir = cad_dir or self.config.cad_models_dir
         if not cad_dir:
@@ -1140,6 +1247,13 @@ class ShapeMatcher:
 
         top_k = top_k or self.config.ulip2_top_k
         mode = getattr(self.config, "ulip2_mode", "pc")
+
+        # Uni3D only supports PC mode (no image encoder)
+        if self._encoder_type == "uni3d" and mode != "pc":
+            logger.warning(
+                "Uni3D only supports mode='pc', ignoring ulip2_mode='%s'.", mode
+            )
+            mode = "pc"
 
         # --- Query Embedding aufbauen ---
         query_emb: Optional[torch.Tensor] = None

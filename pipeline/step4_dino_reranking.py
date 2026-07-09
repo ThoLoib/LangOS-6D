@@ -152,14 +152,15 @@ class DINOReRanker:
         >>> result = reranker.rerank(roi_image, clip_result, top_k=5)
     """
 
-    CACHE_VERSION = 1  # Bump when embedding logic changes
-    BATCH_SIZE = 32    # Images per DINOv2 forward pass
+    CACHE_VERSION = 2  # Bumped: v2 adds SigLIP support
+    BATCH_SIZE = 32    # Images per forward pass
 
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.device = config.device
         self.processor = None
         self.model = None
+        self._encoder_type = getattr(config, "appearance_encoder", "dinov2")
 
         # Gecachte Referenz-Embeddings: {object_id: [(embedding, path), ...]}
         self._ref_embeddings: Dict[str, List[Tuple[torch.Tensor, str]]] = {}
@@ -168,36 +169,39 @@ class DINOReRanker:
         self._all_ref_keys: List[Tuple[str, str]] = []  # (object_id, path)
 
     def _load_model(self):
-        """Laedt DINOv2 bei Erstverwendung.
+        """Laedt das Appearance-Encoder-Modell (DINOv2 oder SigLIP) bei Erstverwendung.
 
-        Ref: https://github.com/facebookresearch/dinov2
+        DINOv2: https://github.com/facebookresearch/dinov2
+        SigLIP: https://huggingface.co/google/siglip-base-patch16-224
         """
         if self.model is not None:
             return
 
-        logger.info(f"Lade DINOv2-Modell: {self.config.dino_model_name}...")
         try:
             from transformers import AutoImageProcessor, AutoModel
-
-            self.processor = AutoImageProcessor.from_pretrained(
-                self.config.dino_model_name
-            )
-            self.model = AutoModel.from_pretrained(
-                self.config.dino_model_name
-            ).to(self.device)
-            self.model.eval()
-            logger.info("DINOv2 erfolgreich geladen.")
         except ImportError:
             raise ImportError(
                 "transformers nicht installiert. Installieren mit:\n"
-                "  pip install transformers\n"
-                "Ref: https://huggingface.co/facebook/dinov2-base"
+                "  pip install transformers"
             )
 
-    def encode_image(self, image: Image.Image) -> torch.Tensor:
-        """Encodiert ein Bild in ein DINOv2-Embedding.
+        if self._encoder_type == "siglip":
+            model_name = self.config.siglip_model_name
+            logger.info("Lade SigLIP-Modell: %s ...", model_name)
+            self.processor = AutoImageProcessor.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name).vision_model.to(self.device)
+            self.model.eval()
+            logger.info("SigLIP Vision-Encoder erfolgreich geladen.")
+        else:
+            model_name = self.config.dino_model_name
+            logger.info("Lade DINOv2-Modell: %s ...", model_name)
+            self.processor = AutoImageProcessor.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name).to(self.device)
+            self.model.eval()
+            logger.info("DINOv2 erfolgreich geladen.")
 
-        Verwendet Average Pooling ueber die Patch-Tokens des ViT.
+    def encode_image(self, image: Image.Image) -> torch.Tensor:
+        """Encodiert ein Bild in ein Appearance-Embedding (DINOv2 oder SigLIP).
 
         Args:
             image: PIL.Image (RGB).
@@ -214,7 +218,7 @@ class DINOReRanker:
         return features
 
     def _encode_batch(self, images: List[Image.Image]) -> torch.Tensor:
-        """Encodiert einen Batch von Bildern in DINOv2-Embeddings.
+        """Encodiert einen Batch von Bildern in Appearance-Embeddings.
 
         Args:
             images: Liste von PIL.Image (RGB).
@@ -232,6 +236,9 @@ class DINOReRanker:
 
     def _pool_features(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
         """Pool patch tokens into a single feature vector.
+
+        For DINOv2: CLS token (index 0) or mean pooling over all tokens.
+        For SigLIP: CLS token (index 0) — SigLIP ViT also prepends a CLS token.
 
         Args:
             last_hidden_state: (B, num_tokens, D) from the ViT.
@@ -270,6 +277,9 @@ class DINOReRanker:
     def _cache_path(self, ref_dir: str) -> str:
         """Pfad zur Cache-Datei im ref_dir."""
         fp = self._dir_fingerprint(ref_dir)
+        if self._encoder_type == "siglip":
+            model_tag = self.config.siglip_model_name.replace("/", "_")
+            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_{fp}.pt")
         model_tag = self.config.dino_model_name.replace("/", "_")
         return os.path.join(ref_dir, f".dino_cache_{model_tag}_{fp}.pt")
 
@@ -478,7 +488,8 @@ class DINOReRanker:
             search_ids = list(self._ref_embeddings.keys())
             mode_label = f"full search ({len(search_ids)} objects)"
 
-        logger.info("DINOv2 rerank mode: %s", mode_label)
+        encoder_label = "SigLIP" if self._encoder_type == "siglip" else "DINOv2"
+        logger.info("%s rerank mode: %s", encoder_label, mode_label)
 
         candidate_embs = []
         candidate_keys = []
@@ -535,9 +546,9 @@ class DINOReRanker:
             ))
 
         logger.info(
-            "DINOv2 Re-Ranking (%s, k=%d, τ=%.2f): %d candidates "
-            "(Top: %s, DINO=%.4f)",
-            agg_method, agg_topk, agg_tau, len(candidates),
+            "%s Re-Ranking (%s, k=%d, τ=%.2f): %d candidates "
+            "(Top: %s, score=%.4f)",
+            encoder_label, agg_method, agg_topk, agg_tau, len(candidates),
             candidates[0].object_id, candidates[0].dino_score,
         )
 

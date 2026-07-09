@@ -77,10 +77,14 @@ class PipelineConfig:
     description_file: str = ""    # z.B. "object_database/ycbv_gso/descriptions_attributes.json"
 
     # -------------------------------------------------------------------------
-    # Schritt 4 – Bildbasiertes Re-Ranking (DINOv2)
+    # Schritt 4 – Bildbasiertes Re-Ranking (DINOv2 / SigLIP)
     # -------------------------------------------------------------------------
     # DINOv2: https://github.com/facebookresearch/dinov2
+    # SigLIP: https://github.com/google-research/big_vision (Zhai et al., 2023)
+    #   HF: https://huggingface.co/google/siglip-base-patch16-224
+    appearance_encoder: str = "dinov2"  # "dinov2" (default) | "siglip" (ablation E4)
     dino_model_name: str = "facebook/dinov2-base"
+    siglip_model_name: str = "google/siglip-base-patch16-224"  # SigLIP ViT-B/16
     dino_pooling: str = "cls"    # "cls" = CLS token (CNOS/thesis default), "mean" = average pooling (legacy)
     dino_top_k: int = 5          # Anzahl der DINOv2-Kandidaten nach Re-Ranking
 
@@ -95,10 +99,16 @@ class PipelineConfig:
     reference_images_dir: str = ""  # z.B. "object_images/ycbv_gso/"
 
     # -------------------------------------------------------------------------
-    # Schritt 5 – Shape Matching (ULIP-2)
+    # Schritt 5 – Shape Matching (ULIP-2 / Uni3D)
     # -------------------------------------------------------------------------
     # ULIP-2: https://github.com/salesforce/ULIP
     # HuggingFace: https://huggingface.co/datasets/SFXX/ulip
+    # Uni3D: https://github.com/baaivision/Uni3D (Zhou et al., ICLR 2024)
+    #   HF: https://huggingface.co/BAAI/Uni3D
+    shape_encoder: str = "ulip2"   # "ulip2" (default) | "uni3d" (ablation E7)
+    uni3d_model_name: str = "BAAI/Uni3D"  # HuggingFace model ID
+    uni3d_num_points: int = 10000          # Points per cloud (same as ULIP-2)
+    uni3d_embed_dim: int = 512             # Uni3D embedding dimension
     ulip_repo_path: str = ""       # Pfad zum geklonten ULIP-Repo (für Model-Imports)
     ulip2_checkpoint: str = ""     # Pfad zum ULIP-2-Modell-Checkpoint (.pt)
     ulip2_backbone: str = "pointbert_colored"  # "pointbert_colored" | "pointbert" | "pointnext"

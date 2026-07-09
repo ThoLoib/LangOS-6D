@@ -6,12 +6,13 @@
 # conflicts with the OSCAR container (same pattern as FoundationPose).
 #
 # GeDi requires:
-#   - PyTorch 1.8-1.13 (pointnet2_ops CUDA extension)
+#   - PyTorch with CUDA support (pointnet2_ops CUDA extension)
 #   - CUDA 11.x (for compilation)
-#   - torchgeometry 0.1.2
+#   - torchgeometry 0.1.2 (or kornia fallback)
 #   - Open3D 0.15-0.17
 #
-# These conflict with OSCAR's PyTorch 2.x / CUDA 12.2 / Open3D 0.18 stack.
+# These conflict with OSCAR's PyTorch 2.x / CUDA 12.2 / Open3D 0.18 stack
+# (pointnet2_ops CUDA extension must be compiled in the same CUDA env).
 #
 # The service exposes an HTTP API on port 5060 for descriptor computation.
 # OSCAR calls it via pipeline/gedi_descriptors.py (HTTP bridge).
@@ -34,19 +35,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# PyTorch 1.13 + CUDA 11.8 (last 1.x release, best CUDA 11 compat)
+# PyTorch 2.0.1 + CUDA 11.8 (1.13+cu118 wheels removed from index)
 RUN pip3 install --no-cache-dir \
-    torch==1.13.1+cu118 torchvision==0.14.1+cu118 \
-    --extra-index-url https://download.pytorch.org/whl/cu118
+    torch==2.0.1+cu118 torchvision==0.15.2+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
 
 # GeDi dependencies
+# torchgeometry 0.1.2 may fail with PyTorch 2.x; fall back to kornia
 RUN pip3 install --no-cache-dir \
     open3d==0.17.0 \
-    torchgeometry==0.1.2 \
     gdown \
-    numpy \
+    "numpy<2" \
     flask \
-    scipy
+    scipy \
+ && (pip3 install --no-cache-dir torchgeometry==0.1.2 \
+     || pip3 install --no-cache-dir kornia)
 
 # Clone GeDi and compile pointnet2_ops
 RUN git clone https://github.com/fabiopoiesi/gedi.git /gedi && \

@@ -153,17 +153,23 @@ The thesis describes OSCAR+ as a three-step pipeline: **Step A** (Scene Groundin
 - Run the frozen Stage 1 best configuration
 - Compare directly with reproduced OSCAR baseline
 
-### Phase D: Encoder Alternatives (Ablations)
+### Phase D: Encoder Alternatives (Ablations) ✅
 
-**D1. SigLIP encoder (E4)**
-- Add SigLIP as alternative appearance encoder in Step B1
+**D1. SigLIP encoder (E4)** ✅
+- Added SigLIP as alternative appearance encoder in Step B1
 - Config: `appearance_encoder: str = "dinov2"` → `"dinov2"` | `"siglip"`
-- File: `pipeline/step4_dino_reranking.py` or new `step4_appearance_reranking.py`
+- File: `pipeline/step4_dino_reranking.py` — `_load_model()` dispatches by encoder type
+- CLI: `--appearance-encoder siglip`
+- SigLIP model: `google/siglip-base-patch16-224` (via HuggingFace transformers)
+- Separate cache files (.siglip_cache_* vs .dino_cache_*)
 
-**D2. Uni3D encoder (E7)**
-- Add Uni3D as alternative shape encoder in Step B1
+**D2. Uni3D encoder (E7)** ✅
+- Added Uni3D as alternative shape encoder in Step B1
 - Config: `shape_encoder: str = "ulip2"` → `"ulip2"` | `"uni3d"`
-- File: `pipeline/step5_shape_matching.py` — add Uni3D loading/encoding path
+- File: `pipeline/step5_shape_matching.py` — `Uni3DEncoder` class, dispatch in `encode_pointcloud()`
+- CLI: `--shape-encoder uni3d`
+- Uni3D model: `BAAI/Uni3D` (torch.hub or HuggingFace)
+- PC-only mode (no cross-modal image encoder)
 
 ### Phase E: Grasping Demo (Stage 5)
 

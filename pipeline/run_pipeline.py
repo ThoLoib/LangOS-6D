@@ -1142,6 +1142,12 @@ Beispiel:
     parser.add_argument("--foundationpose_url", default="http://foundationpose:5050", help="URL des FoundationPose HTTP-Service")
     parser.add_argument("--foundationpose_refine_iter", type=int, default=5, help="Refinement-Iterationen fuer FoundationPose register()")
     parser.add_argument("--foundationpose_debug", type=int, default=0, help="FoundationPose Debug-Level (0 = headless)")
+    parser.add_argument("--appearance-encoder", choices=["dinov2", "siglip"], default="dinov2",
+                        dest="appearance_encoder",
+                        help="Appearance encoder for Step 4 re-ranking (ablation E4)")
+    parser.add_argument("--shape-encoder", choices=["ulip2", "uni3d"], default="ulip2",
+                        dest="shape_encoder",
+                        help="Shape encoder for Step 5 matching (ablation E7)")
     parser.add_argument("--clip_top_k", type=int, default=20)
     parser.add_argument("--dino_top_k", type=int, default=5)
     parser.add_argument("--ulip_top_k", type=int, default=5)
@@ -1207,6 +1213,8 @@ def main():
 
     # --- Config aufbauen ---
     config = PipelineConfig(
+        appearance_encoder=args.appearance_encoder,
+        shape_encoder=args.shape_encoder,
         description_file=args.descriptions,
         reference_images_dir=args.reference_images,
         cad_models_dir=args.cad_models,
