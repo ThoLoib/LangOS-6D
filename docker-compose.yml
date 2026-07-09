@@ -25,6 +25,26 @@ services:
               count: all
               capabilities: [gpu]
 
+  gedi:
+    build:
+      context: .
+      dockerfile: Dockerfile.gedi
+    ports:
+      - "5060:5060"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5060/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   foundationpose:
     image: shingarey/foundationpose_custom_cuda121:latest
     volumes:

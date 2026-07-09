@@ -46,5 +46,10 @@ trimesh>=4.0.0
 # FoundationPose: https://github.com/NVlabs/FoundationPose (manuell)
 # MegaPose:       https://github.com/megapose6d/megapose6d (manuell)
 
+# --- Sub-step B2: Geometry Re-ranking ---
+# GeDi: https://github.com/fabiopoiesi/gedi (installed via Dockerfile)
+# scipy for trimmed Chamfer distance (cKDTree)
+scipy>=1.10.0
+
 # --- Utility ---
 scikit-learn>=1.0.0

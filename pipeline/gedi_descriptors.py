@@ -5,37 +5,41 @@
 # Wraps the GeDi descriptor (Poiesi & Boscaini, IEEE T-PAMI 2022) for use
 # in OSCAR+ Sub-step B2 (geometry re-ranking) and Step C (coarse alignment).
 #
-# GeDi computes rotation- and scale-invariant local 3D descriptors via a
-# learned local reference frame (LRF) + PointNet++ backbone.  The descriptors
-# are packed into Open3D's Feature format so they can be used directly with
-# Open3D's RANSAC-based global registration -- the same interface as FPFH.
+# GeDi runs in a separate Docker container (same isolation pattern as
+# FoundationPose) to avoid dependency conflicts:
+#   - GeDi needs PyTorch 1.x + CUDA 11.x + torchgeometry
+#   - OSCAR needs PyTorch 2.x + CUDA 12.2
+#
+# Communication is via HTTP (POST /compute_descriptors to the gedi service).
+# The descriptors are packed into Open3D Feature format for RANSAC.
+#
+# Fallback: if the GeDi service is unavailable, compute() raises or returns
+# empty. The caller (step_b2_geometry_reranking.py, step7) falls back to FPFH.
 #
 # Repository: https://github.com/fabiopoiesi/gedi
 # Paper: "Learning General and Distinctive 3D Local Deep Descriptors
 #         for Point Cloud Registration"
 #
-# Dependencies (inside Docker container):
-#   - GeDi repo cloned + pointnet2_ops_lib compiled for CUDA 12.2
-#   - torchgeometry (or kornia as replacement)
-#   - open3d.ml.torch (for radius_search)
-#
 # Usage:
 #   >>> gedi_module = GeDiDescriptorModule(config)
-#   >>> keypoints, features = gedi_module.compute(point_cloud)
-#   >>> # features is an o3d.pipelines.registration.Feature (dim x N)
+#   >>> result = gedi_module.compute(point_cloud)
+#   >>> # result.features is an o3d.pipelines.registration.Feature (dim x N)
 # =============================================================================
 
+import base64
 import logging
 import os
-import sys
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
 from .config import PipelineConfig
 
 logger = logging.getLogger(__name__)
+
+# Default GeDi service URL (docker-compose service name)
+_DEFAULT_GEDI_URL = "http://gedi:5060"
 
 
 @dataclass
@@ -55,89 +59,55 @@ class GeDiResult:
 class GeDiDescriptorModule:
     """Computes GeDi local geometric descriptors on Open3D point clouds.
 
-    Lazy-loads the GeDi model on first use.  Descriptors are returned in
+    Calls the GeDi Docker service via HTTP. Descriptors are returned in
     Open3D Feature format for direct use with RANSAC registration.
 
-    The module also supports caching descriptors for CAD partial views
-    to avoid recomputation during B2 re-ranking.
+    Supports disk caching for CAD partial views to avoid repeated HTTP
+    calls during B2 re-ranking.
     """
 
     def __init__(self, config: PipelineConfig):
         self.config = config
-        self._gedi = None
         self._available = None  # None = not checked, True/False after check
+        self._gedi_url = getattr(config, "gedi_url", _DEFAULT_GEDI_URL)
 
     @property
     def available(self) -> bool:
-        """Check whether GeDi can be loaded (repo present, deps installed)."""
+        """Check whether the GeDi service is reachable."""
         if self._available is not None:
             return self._available
 
-        repo_path = self.config.gedi_repo_path
-        checkpoint = self.config.gedi_checkpoint
-
-        if not repo_path or not os.path.isdir(repo_path):
-            logger.warning(
-                "GeDi repo not found at '%s'. Set config.gedi_repo_path.",
-                repo_path,
-            )
-            self._available = False
-            return False
-
-        if not checkpoint or not os.path.isfile(checkpoint):
-            logger.warning(
-                "GeDi checkpoint not found at '%s'. Set config.gedi_checkpoint.",
-                checkpoint,
-            )
-            self._available = False
-            return False
-
-        # Try importing critical deps
         try:
-            import torch  # noqa: F401
-            self._available = True
-        except ImportError:
+            import httpx
+            resp = httpx.get(
+                f"{self._gedi_url}/health",
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                logger.info("GeDi service available at %s", self._gedi_url)
+                self._available = True
+            else:
+                logger.warning(
+                    "GeDi service returned %d at %s",
+                    resp.status_code, self._gedi_url,
+                )
+                self._available = False
+        except Exception as exc:
+            logger.warning(
+                "GeDi service not reachable at %s: %s. "
+                "Start it with: docker compose up -d gedi",
+                self._gedi_url, exc,
+            )
             self._available = False
 
         return self._available
-
-    def _load_model(self):
-        """Load the GeDi network and LRF module."""
-        if self._gedi is not None:
-            return
-
-        if not self.available:
-            raise RuntimeError(
-                "GeDi is not available. Check gedi_repo_path and gedi_checkpoint."
-            )
-
-        repo_path = self.config.gedi_repo_path
-        if repo_path not in sys.path:
-            sys.path.insert(0, repo_path)
-
-        # Import GeDi class from the repo
-        from gedi import GeDi  # type: ignore
-
-        gedi_config = {
-            "dim": self.config.gedi_dim,
-            "samples_per_batch": self.config.gedi_samples_per_batch,
-            "samples_per_patch_lrf": self.config.gedi_samples_per_patch_lrf,
-            "samples_per_patch_out": self.config.gedi_samples_per_patch_out,
-            "r_lrf": self.config.gedi_r_lrf,
-            "fchkpt_gedi_net": self.config.gedi_checkpoint,
-        }
-
-        logger.info("Loading GeDi model (dim=%d, r_lrf=%.2f)...",
-                     gedi_config["dim"], gedi_config["r_lrf"])
-        self._gedi = GeDi(config=gedi_config)
-        logger.info("GeDi model loaded successfully.")
 
     def compute(
         self,
         point_cloud,
         num_keypoints: Optional[int] = None,
     ) -> GeDiResult:
-        """Compute GeDi descriptors on an Open3D point cloud.
+        """Compute GeDi descriptors on an Open3D point cloud via HTTP.
 
         Args:
             point_cloud: Open3D PointCloud (must have points).
@@ -147,26 +117,45 @@ class GeDiDescriptorModule:
             GeDiResult with keypoints (PointCloud), features (Feature), and
             raw descriptors (ndarray).
         """
+        import httpx
         import open3d as o3d
-        import torch
 
-        self._load_model()
-
-        n_kp = num_keypoints or self.config.gedi_num_keypoints
-        pts_np = np.asarray(point_cloud.points)
+        pts_np = np.asarray(point_cloud.points).astype(np.float32)
 
         if len(pts_np) < 100:
             logger.warning("Point cloud too small (%d pts) for GeDi.", len(pts_np))
             return self._empty_result()
 
-        # Sample keypoints randomly
-        n_kp = min(n_kp, len(pts_np))
-        kp_indices = np.random.choice(len(pts_np), n_kp, replace=False)
-        kp_pts = torch.tensor(pts_np[kp_indices]).float()
-        pcd_tensor = torch.tensor(pts_np).float()
+        n_kp = num_keypoints or self.config.gedi_num_keypoints
 
-        # Compute descriptors via GeDi
-        descriptors = self._gedi.compute(pts=kp_pts, pcd=pcd_tensor)
+        # Encode point cloud as base64
+        pts_b64 = base64.b64encode(pts_np.tobytes()).decode("ascii")
+
+        # Call GeDi service
+        try:
+            resp = httpx.post(
+                f"{self._gedi_url}/compute_descriptors",
+                json={
+                    "points": pts_b64,
+                    "num_keypoints": n_kp,
+                },
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0),
+            )
+            resp.raise_for_status()
+            result = resp.json()
+        except Exception as exc:
+            logger.warning("GeDi HTTP call failed: %s", exc)
+            return self._empty_result()
+
+        if result.get("num_keypoints", 0) == 0:
+            logger.warning("GeDi returned 0 descriptors.")
+            return self._empty_result()
+
+        # Decode response
+        kp_indices = np.array(result["keypoint_indices"], dtype=int)
+        desc_bytes = base64.b64decode(result["descriptors"])
+        dim = result["dim"]
+        descriptors = np.frombuffer(desc_bytes, dtype=np.float32).reshape(-1, dim)
 
         # Pack into Open3D format
         kp_pcd = o3d.geometry.PointCloud()
@@ -177,7 +166,7 @@ class GeDiDescriptorModule:
 
         logger.debug(
             "GeDi: computed %d descriptors (dim=%d) on %d-point cloud.",
-            n_kp, descriptors.shape[1], len(pts_np),
+            len(kp_indices), dim, len(pts_np),
         )
 
         return GeDiResult(
@@ -225,16 +214,17 @@ class GeDiDescriptorModule:
         result = self.compute(point_cloud, num_keypoints)
 
         # Save to cache
-        try:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            np.savez_compressed(
-                cache_path,
-                keypoints=np.asarray(result.keypoints.points),
-                descriptors=result.descriptors_np,
-            )
-            logger.debug("GeDi cache saved: %s", cache_path)
-        except Exception as exc:
-            logger.warning("GeDi cache save failed: %s", exc)
+        if result.descriptors_np.size > 0:
+            try:
+                os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+                np.savez_compressed(
+                    cache_path,
+                    keypoints=np.asarray(result.keypoints.points),
+                    descriptors=result.descriptors_np,
+                )
+                logger.debug("GeDi cache saved: %s", cache_path)
+            except Exception as exc:
+                logger.warning("GeDi cache save failed: %s", exc)
 
         return result
 

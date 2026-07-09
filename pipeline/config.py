@@ -151,8 +151,9 @@ class PipelineConfig:
     geometry_reranking_top_k: int = 5        # Shortlist size from fusion for B2 re-ranking
 
     # GeDi descriptor settings
-    gedi_repo_path: str = ""                 # Path to cloned fabiopoiesi/gedi repo
-    gedi_checkpoint: str = ""                # Path to GeDi checkpoint (chkpt.tar)
+    gedi_url: str = "http://gedi:5060"          # GeDi service URL (docker-compose service name)
+    gedi_repo_path: str = "/gedi"             # Path to cloned fabiopoiesi/gedi repo (inside GeDi container)
+    gedi_checkpoint: str = "/gedi/data/chkpts/3dmatch/chkpt.tar"  # GeDi pretrained checkpoint
     gedi_dim: int = 32                       # Descriptor output dimension
     gedi_r_lrf: float = 0.5                  # Local reference frame radius
     gedi_samples_per_batch: int = 500        # Batch size for GPU descriptor computation

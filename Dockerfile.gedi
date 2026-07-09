@@ -1,0 +1,74 @@
+# =============================================================================
+# Dockerfile.gedi — GeDi geometric descriptor service
+# =============================================================================
+#
+# Separate container for GeDi (Poiesi & Boscaini, 2022) to avoid dependency
+# conflicts with the OSCAR container (same pattern as FoundationPose).
+#
+# GeDi requires:
+#   - PyTorch 1.8-1.13 (pointnet2_ops CUDA extension)
+#   - CUDA 11.x (for compilation)
+#   - torchgeometry 0.1.2
+#   - Open3D 0.15-0.17
+#
+# These conflict with OSCAR's PyTorch 2.x / CUDA 12.2 / Open3D 0.18 stack.
+#
+# The service exposes an HTTP API on port 5060 for descriptor computation.
+# OSCAR calls it via pipeline/gedi_descriptors.py (HTTP bridge).
+#
+# Build:
+#   docker compose build gedi
+#
+# Run:
+#   docker compose up -d gedi
+# =============================================================================
+
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-dev python3-pip \
+    git wget ca-certificates \
+    libgl1 libglib2.0-0 \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# PyTorch 1.13 + CUDA 11.8 (last 1.x release, best CUDA 11 compat)
+RUN pip3 install --no-cache-dir \
+    torch==1.13.1+cu118 torchvision==0.14.1+cu118 \
+    --extra-index-url https://download.pytorch.org/whl/cu118
+
+# GeDi dependencies
+RUN pip3 install --no-cache-dir \
+    open3d==0.17.0 \
+    torchgeometry==0.1.2 \
+    gdown \
+    numpy \
+    flask \
+    scipy
+
+# Clone GeDi and compile pointnet2_ops
+RUN git clone https://github.com/fabiopoiesi/gedi.git /gedi && \
+    cd /gedi/backbones/pointnet2_ops_lib && \
+    pip3 install .
+
+# Download pretrained checkpoint
+RUN cd /gedi && python3 download_data.py
+
+# Verify
+RUN python3 -c "\
+import sys; sys.path.insert(0, '/gedi'); \
+from gedi import GeDi; \
+print('GeDi import OK'); \
+from backbones.pointnet2_ops_lib.pointnet2_ops.pointnet2_modules import PointnetSAModule; \
+print('pointnet2_ops OK')"
+
+# Copy the GeDi HTTP server
+COPY gedi_server.py /gedi/gedi_server.py
+
+WORKDIR /gedi
+
+EXPOSE 5060
+
+CMD ["python3", "/gedi/gedi_server.py", "--port", "5060"]

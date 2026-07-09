@@ -8,5 +8,6 @@ trimesh
 imageio
 easydict
 timm
+scipy
 pyyaml_env_tag
 termcolor
