@@ -83,6 +83,7 @@ class ScaleEstimator:
         observed_pc: PointCloudResult,
         cad_model_path: str,
         method: str = "align_then_scale",
+        init_transform: Optional[np.ndarray] = None,
     ) -> ScaleEstimationResult:
         """Schaetzt Ausrichtung + Skalierungsfaktor.
 
@@ -90,6 +91,9 @@ class ScaleEstimator:
             observed_pc: Punktwolke des beobachteten Objekts (Schritt 2).
             cad_model_path: Pfad zum CAD-Modell (OBJ, PLY, GLB, ...).
             method: "align_then_scale" (default) | "max_extent" (Fallback).
+            init_transform: Optional 4x4 initial transform from Sub-step B2
+                           RANSAC.  When provided, skips descriptor computation
+                           and uses this as ICP initialisation.
 
         Returns:
             ScaleEstimationResult mit Alignment und Skalierungsfaktor.
@@ -113,7 +117,7 @@ class ScaleEstimator:
         source = observed_pc.point_cloud  # beobachtete Wolke
         target = cad_pcd                  # CAD-Wolke
 
-        alignment = self._coarse_align(source, target)
+        alignment = self._coarse_align(source, target, init_transform=init_transform)
         if alignment is None:
             logger.warning("Alignment fehlgeschlagen -> Fallback max_extent")
             return self._max_extent_scale(obs_bbox_size, cad_bbox_size)
@@ -254,12 +258,19 @@ class ScaleEstimator:
     # Coarse Alignment: RANSAC + ICP
     # -----------------------------------------------------------------------
 
-    def _coarse_align(self, source, target):
+    def _coarse_align(self, source, target, init_transform=None):
         """RANSAC global registration + ICP refinement.
+
+        Uses GeDi descriptors when available (thesis Step C), falling back
+        to FPFH when GeDi repo/checkpoint is not configured.
+
+        If *init_transform* is provided (e.g. from Sub-step B2 RANSAC),
+        the RANSAC step is skipped and ICP is initialised directly with it.
 
         Args:
             source: Beobachtete Punktwolke (Open3D PointCloud).
             target: CAD-Punktwolke (Open3D PointCloud).
+            init_transform: Optional 4x4 initial transformation (from B2).
 
         Returns:
             ICP-RegistrationResult oder None bei Fehler.
@@ -268,7 +279,76 @@ class ScaleEstimator:
 
         voxel_size = self.config.voxel_size or 0.005
 
-        # Downsampling + Normals
+        # If we already have a B2 RANSAC transform, skip descriptor computation
+        if init_transform is not None:
+            logger.info("  Using B2 RANSAC transform as ICP initialisation.")
+            ransac_T = init_transform
+        else:
+            # Try GeDi descriptors first, fall back to FPFH
+            ransac_T = self._ransac_with_descriptors(source, target, voxel_size)
+            if ransac_T is None:
+                return None
+
+        # ICP Refinement (Point-to-Plane)
+        for pcd in (source, target):
+            if not pcd.has_normals():
+                pcd.estimate_normals(
+                    o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)
+                )
+
+        try:
+            icp = o3d.pipelines.registration.registration_icp(
+                source, target,
+                max_correspondence_distance=voxel_size * 3,
+                init=ransac_T,
+                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
+                    max_iteration=self.config.icp_max_iterations
+                ),
+            )
+            return icp
+        except Exception as e:
+            logger.warning("ICP fehlgeschlagen: %s", e)
+            # Return a minimal result with the RANSAC transform
+            return None
+
+    def _ransac_with_descriptors(self, source, target, voxel_size: float):
+        """Run RANSAC using GeDi (preferred) or FPFH (fallback) descriptors.
+
+        Returns:
+            4x4 transformation matrix, or None on failure.
+        """
+        import open3d as o3d
+
+        # --- Try GeDi ---
+        try:
+            from .gedi_descriptors import GeDiDescriptorModule
+            gedi_mod = GeDiDescriptorModule(self.config)
+            if gedi_mod.available:
+                logger.info("  Coarse alignment: using GeDi descriptors.")
+                src_gedi = gedi_mod.compute(source)
+                tgt_gedi = gedi_mod.compute(target)
+
+                if len(src_gedi.descriptors_np) > 0 and len(tgt_gedi.descriptors_np) > 0:
+                    ransac = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+                        src_gedi.keypoints, tgt_gedi.keypoints,
+                        src_gedi.features, tgt_gedi.features,
+                        mutual_filter=True,
+                        max_correspondence_distance=voxel_size * 1.5,
+                        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+                        ransac_n=3,
+                        checkers=[
+                            o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                            o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(voxel_size * 1.5),
+                        ],
+                        criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999),
+                    )
+                    return np.array(ransac.transformation)
+        except Exception as exc:
+            logger.info("  GeDi RANSAC failed (%s), falling back to FPFH.", exc)
+
+        # --- Fallback: FPFH ---
+        logger.info("  Coarse alignment: using FPFH descriptors (fallback).")
         src_down = source.voxel_down_sample(voxel_size)
         tgt_down = target.voxel_down_sample(voxel_size)
 
@@ -279,7 +359,6 @@ class ScaleEstimator:
                 )
             )
 
-        # FPFH Features
         src_fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             src_down,
             o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100),
@@ -289,7 +368,6 @@ class ScaleEstimator:
             o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100),
         )
 
-        # RANSAC
         try:
             ransac = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
                 src_down, tgt_down,
@@ -304,31 +382,10 @@ class ScaleEstimator:
                 ],
                 criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999),
             )
+            return np.array(ransac.transformation)
         except Exception as e:
-            logger.warning("RANSAC fehlgeschlagen: %s", e)
+            logger.warning("FPFH RANSAC fehlgeschlagen: %s", e)
             return None
-
-        # ICP Refinement (Point-to-Plane)
-        for pcd in (source, target):
-            if not pcd.has_normals():
-                pcd.estimate_normals(
-                    o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)
-                )
-
-        try:
-            icp = o3d.pipelines.registration.registration_icp(
-                source, target,
-                max_correspondence_distance=voxel_size * 3,
-                init=ransac.transformation,
-                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-                criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
-                    max_iteration=self.config.icp_max_iterations
-                ),
-            )
-            return icp
-        except Exception as e:
-            logger.warning("ICP fehlgeschlagen: %s", e)
-            return ransac
 
     # -----------------------------------------------------------------------
     # Hilfsfunktionen

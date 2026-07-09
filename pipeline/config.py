@@ -88,7 +88,7 @@ class PipelineConfig:
     # "max" = hard best-view (legacy), "mean" = average all views,
     # "softmax" = softmax-weighted over all views, "topk_softmax" = softmax over top-k views
     dino_view_aggregation: str = "topk_softmax"
-    dino_view_topk: int = 8       # Number of top views for topk_softmax
+    dino_view_topk: int = 5       # Number of top views for topk_softmax (CNOS default, thesis Table 4.1)
     dino_view_temperature: float = 0.5  # Softmax temperature (lower = sharper)
 
     # Pfad zu vorgerenderten Referenzbildern
@@ -140,6 +140,28 @@ class PipelineConfig:
     weight_dino: float = 0.4
     weight_ulip: float = 0.3
     fusion_top_k: int = 1               # Finale Anzahl Kandidaten
+
+    # -------------------------------------------------------------------------
+    # Sub-step B2 – Geometry Re-ranking (GeDi + trimmed Chamfer)
+    # -------------------------------------------------------------------------
+    # GeDi: https://github.com/fabiopoiesi/gedi
+    # Paper: "Learning General and Distinctive 3D Local Deep Descriptors" (Poiesi & Boscaini, 2022)
+    geometry_reranking_enabled: bool = True
+    geometry_reranking_signal: str = "gedi"  # "gedi" | "chamfer" | "both"
+    geometry_reranking_top_k: int = 5        # Shortlist size from fusion for B2 re-ranking
+
+    # GeDi descriptor settings
+    gedi_repo_path: str = ""                 # Path to cloned fabiopoiesi/gedi repo
+    gedi_checkpoint: str = ""                # Path to GeDi checkpoint (chkpt.tar)
+    gedi_dim: int = 32                       # Descriptor output dimension
+    gedi_r_lrf: float = 0.5                  # Local reference frame radius
+    gedi_samples_per_batch: int = 500        # Batch size for GPU descriptor computation
+    gedi_samples_per_patch_lrf: int = 4000   # Points for LRF computation
+    gedi_samples_per_patch_out: int = 512    # Points sampled for PointNet++
+    gedi_num_keypoints: int = 5000           # Number of keypoints to sample per cloud
+
+    # Trimmed Chamfer settings (B2)
+    chamfer_trim_ratio: float = 0.1          # Discard top 10% of distances
 
     # -------------------------------------------------------------------------
     # Candidate scale gate (after fusion, before pose estimation)

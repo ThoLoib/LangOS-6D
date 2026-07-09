@@ -270,10 +270,13 @@ For full validation: Docker + GPU + datasets required. Document any step that ca
 - [x] This plan created
 - [x] A1: DINOv2 CLS token (`step4_dino_reranking.py` — `_pool_features()` with config `dino_pooling`)
 - [x] A2: Mask post-processing (`step1_localization.py` — `_refine_mask()`: largest CC + dilation)
-- [ ] A3: View top-k alignment (pending — confirm thesis default: 5 vs 8)
+- [x] A3: View top-k alignment (`config.py` — `dino_view_topk = 5`, CNOS default per thesis Table 4.1)
 - [x] A4: Majority voting fusion (`step6_fusion.py` — `_majority_voting()` Borda count)
 - [x] A5: Trimmed Chamfer distance (`utils.py` — `trimmed_chamfer_distance()`, scipy cKDTree, 10% trim)
-- [ ] B1–B4: GeDi integration
+- [x] B1: GeDi descriptor module (`gedi_descriptors.py` — wrapper with caching, Open3D Feature format)
+- [x] B2: Geometry re-ranking module (`step_b2_geometry_reranking.py` — GeDi RANSAC + trimmed Chamfer)
+- [x] B3: FPFH→GeDi in Step 7 (`step7_scale_estimation.py` — GeDi primary, FPFH fallback, B2 transform reuse)
+- [x] B4: B2 wired into pipeline (`run_pipeline.py` — between fusion and scale gate, CLI flags added)
 - [ ] C1–C3: Evaluation infrastructure
 - [ ] D1–D2: Encoder alternatives
 - [ ] E1–E2: Grasping demo

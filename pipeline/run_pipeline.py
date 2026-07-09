@@ -477,12 +477,61 @@ class OSCARPlusPipeline:
                     self.output_dir,
                 )
 
+        # =================================================================
+        # Sub-step B2: Geometry Re-ranking (GeDi + Chamfer)
+        # =================================================================
+        b2_ransac_transform = None  # reused in Step 7 to skip redundant RANSAC
+        if (
+            getattr(self.config, "geometry_reranking_enabled", False)
+            and "fusion" in results
+            and results["fusion"].best_match
+            and "point_cloud" in results
+            and 6 not in skip_steps  # B2 depends on fusion
+        ):
+            t0 = time.time()
+            logger.info("─" * 40)
+            logger.info("Sub-step B2: Geometry Re-ranking")
+
+            from .step_b2_geometry_reranking import GeometryReRanker
+            reranker = GeometryReRanker(self.config)
+            pc = results["point_cloud"]
+
+            b2_result = reranker.rerank(
+                fused_candidates=results["fusion"].candidates,
+                observed_pcd=pc.point_cloud,
+            )
+            results["geometry_reranking"] = b2_result
+            timings["step_b2_geometry"] = time.time() - t0
+
+            if b2_result.best_candidate:
+                logger.info(
+                    "  ✓ B2 winner: %s (geo_score=%.4f)",
+                    b2_result.best_candidate.object_id,
+                    b2_result.best_candidate.geometry_score,
+                )
+                b2_ransac_transform = b2_result.best_transformation
+
         # Für Schritte 7+8 und Debug-Viz werden diese Variablen geteilt
         resolved_mesh = None   # aufgelöster Mesh-Pfad (kein PNG-Fallback)
         scale_result = None
         pose_result = None
-        effective_best_model = None  # may differ from fusion best_match after scale gate
+        effective_best_model = None  # may differ from fusion best_match after scale gate/B2
         scale_gate_failed = False    # set to True when policy=fail and no candidate passes
+
+        # Apply B2 re-ranking result: override effective_best_model
+        if "geometry_reranking" in results and results["geometry_reranking"].best_candidate:
+            b2_best = results["geometry_reranking"].best_candidate
+            # Wrap as FusedCandidate-like object for downstream compatibility
+            from .step6_fusion import FusedCandidate
+            effective_best_model = FusedCandidate(
+                object_id=b2_best.object_id,
+                fused_score=b2_best.geometry_score,
+                clip_score=b2_best.clip_score,
+                dino_score=b2_best.dino_score,
+                ulip_score=b2_best.ulip_score,
+                cad_model_path=b2_best.cad_model_path,
+                best_view_path=b2_best.best_view_path,
+            )
 
         # =================================================================
         # Scale gate (between fusion and scale estimation)
@@ -554,7 +603,10 @@ class OSCARPlusPipeline:
                                    best_model.object_id)
 
             if resolved_mesh and pc:
-                scale_result = self.scale_estimator.estimate(pc, resolved_mesh)
+                scale_result = self.scale_estimator.estimate(
+                    pc, resolved_mesh,
+                    init_transform=b2_ransac_transform,
+                )
                 results["scale_estimation"] = scale_result
                 timings["step7_scale"] = time.time() - t0
 
@@ -1116,6 +1168,20 @@ Beispiel:
     parser.add_argument("--scale-gate-max-candidates", type=int, default=5, dest="scale_gate_max_candidates")
     parser.add_argument("--scale-gate-reject-policy", choices=["fallback_best", "fail"],
                         default="fallback_best", dest="scale_gate_reject_policy")
+    # Geometry re-ranking (Sub-step B2)
+    parser.add_argument("--geometry-reranking", action="store_true", dest="geometry_reranking_enabled",
+                        help="Enable Sub-step B2 geometry re-ranking (GeDi + Chamfer)")
+    parser.add_argument("--geometry-reranking-signal", choices=["gedi", "chamfer", "both"],
+                        default="gedi", dest="geometry_reranking_signal",
+                        help="Geometry signal for B2 re-ranking")
+    parser.add_argument("--geometry-reranking-top-k", type=int, default=5,
+                        dest="geometry_reranking_top_k",
+                        help="Number of fused candidates to re-rank in B2")
+    parser.add_argument("--gedi-repo", default="", dest="gedi_repo_path",
+                        help="Path to cloned fabiopoiesi/gedi repo")
+    parser.add_argument("--gedi-checkpoint", default="", dest="gedi_checkpoint",
+                        help="Path to GeDi model checkpoint (.tar)")
+
     # Rotation evaluation
     parser.add_argument("--ulip-rotation-eval", action="store_true", dest="ulip_rotation_eval",
                         help="Run ICP rotation evaluation for ULIP Top-K candidates")
@@ -1161,6 +1227,11 @@ def main():
         ulip2_rotation_eval=args.ulip_rotation_eval,
         ulip2_rotation_eval_top_k=args.ulip_rotation_eval_top_k,
         ulip2_rotation_eval_weight=args.ulip_rotation_eval_weight,
+        geometry_reranking_enabled=args.geometry_reranking_enabled,
+        geometry_reranking_signal=args.geometry_reranking_signal,
+        geometry_reranking_top_k=args.geometry_reranking_top_k,
+        gedi_repo_path=args.gedi_repo_path,
+        gedi_checkpoint=args.gedi_checkpoint,
         scale_gate_enabled=args.scale_gate_enabled,
         scale_gate_min=args.scale_gate_min,
         scale_gate_max=args.scale_gate_max,
