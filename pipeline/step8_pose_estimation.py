@@ -315,7 +315,7 @@ class PoseEstimator:
         logger.info("ICP Point-to-Plane Verfeinerung...")
         icp_result = o3d.pipelines.registration.registration_icp(
             source, cad_pcd,
-            max_correspondence_distance=self.config.icp_threshold,
+            max_correspondence_distance=voxel_size * 3,  # thesis: 3×voxel_size
             init=init_transform,
             estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
             criteria=o3d.pipelines.registration.ICPConvergenceCriteria(

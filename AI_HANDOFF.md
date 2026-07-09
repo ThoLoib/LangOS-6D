@@ -1,6 +1,73 @@
-# AI Handoff – Branch `exp/ulip2v2`
+# AI Handoff – Branch `thesis-approach`
 
 > Last updated: 2026-07-09
+
+## Update 2026-07-09 (thesis-approach: align codebase with thesis methodology)
+
+Branch `thesis-approach` created from `exp/ulip2v2` to implement all remaining thesis methodology components.
+
+### Phase A: Foundation
+- **A1**: DINOv2 CLS token pooling (`dino_pooling: "cls"` in config, `_pool_features()` uses `[:, 0]`)
+- **A2**: Mask post-processing — largest connected component + dilation (`_refine_mask()` in step1)
+- **A3**: View top-k alignment (`dino_view_topk = 5`, CNOS default per thesis Table 4.1)
+- **A4**: Majority voting fusion (`_majority_voting()` Borda count in step6)
+- **A5**: Trimmed Chamfer distance (`trimmed_chamfer_distance()` in utils.py, scipy cKDTree)
+
+### Phase B: GeDi Integration (two-container HTTP architecture)
+- **B1**: GeDi descriptor module (`pipeline/gedi_descriptors.py` — HTTP client to GeDi service)
+- **B2**: Sub-step B2 geometry re-ranking (`pipeline/step_b2_geometry_reranking.py` — GeDi RANSAC + trimmed Chamfer)
+- **B3**: GeDi replaces FPFH in Step 7 coarse alignment (`_ransac_with_descriptors()` — GeDi primary, FPFH fallback)
+- **B4**: B2 wired into pipeline between fusion and scale gate (`run_pipeline.py`)
+- **GeDi Docker**: Separate container (`Dockerfile.gedi`) — PyTorch 2.0.1+cu118, Open3D 0.18.0, pointnet2_ops compiled with CUDA 11.8
+- **GeDi server**: `gedi_server.py` — Flask HTTP server with `/health` and `/compute_descriptors` endpoints
+
+### Phase C: Evaluation Infrastructure
+- **C1**: SHREC'18 ObjectNN+ eval wrapper (`retrieval_shrec18_eval_oscarplus.py`)
+- **C2**: BOP-core pose eval (`eval_bop_pose.py` — YCB-V, T-LESS, LM-O, ADD/ADD-S metrics)
+- **C3**: MI3DOR — already aligned, thesis defaults propagate via PipelineConfig
+
+### Phase D: Encoder Alternatives
+- **D1**: SigLIP as alternative appearance encoder (`--appearance-encoder siglip`, `google/siglip-base-patch16-224`)
+- **D2**: Uni3D as alternative shape encoder (`--shape-encoder uni3d`, `BAAI/Uni3D`)
+
+### ICP alignment fix
+- Step 8 ICP correspondence distance changed from `icp_threshold=0.02` (10×vox) to `3×voxel_size` (thesis spec)
+
+### New CLI flags
+```
+--appearance-encoder {dinov2,siglip}
+--shape-encoder {ulip2,uni3d}
+--geometry-reranking
+--geometry-reranking-signal {gedi,chamfer,both}
+--geometry-reranking-top-k N
+--gedi-repo PATH
+--gedi-checkpoint PATH
+```
+
+### New files
+| File | Description |
+|---|---|
+| `pipeline/gedi_descriptors.py` | GeDi HTTP client with disk caching |
+| `pipeline/step_b2_geometry_reranking.py` | Sub-step B2 geometry re-ranking |
+| `Dockerfile.gedi` | GeDi Docker container |
+| `gedi_server.py` | GeDi Flask HTTP server |
+| `scripts/install_gedi.sh` | Standalone GeDi install script |
+| `object_retrieval/retrieval_shrec18_eval_oscarplus.py` | SHREC'18 evaluation |
+| `object_retrieval/eval_bop_pose.py` | BOP-core pose evaluation |
+
+### Docker services
+```
+oscar           — OSCAR pipeline (PyTorch 2.x, CUDA 12.2)
+foundationpose  — FoundationPose service (port 5050)
+gedi            — GeDi descriptor service (port 5060)
+```
+
+### Remaining
+- [ ] E1–E2: Grasping demo (lowest priority)
+- [ ] Download SHREC'18, T-LESS, LM-O datasets
+- [ ] Regenerate DINOv2 caches (CLS token changes embeddings)
+
+---
 
 ## Update 2026-04-23 (OSCAR+ evaluation suite: shared eval_common + per-dataset wrappers + MI3DOR partial PCs)
 
@@ -601,16 +668,25 @@ ulip2_embed_dim = 1280
 
 # Multi-view aggregation (Steps 4 & 5)
 dino_view_aggregation = "topk_softmax"
-dino_view_topk = 8
+dino_view_topk = 5              # thesis Table 4.1 (CNOS default)
 dino_view_temperature = 0.5
 ulip_view_aggregation = "topk_softmax"
 ulip_view_topk = 8
 ulip_view_temperature = 0.5
 
+# Encoder alternatives (ablations E4, E7)
+appearance_encoder = "dinov2"    # "dinov2" | "siglip"
+shape_encoder = "ulip2"          # "ulip2" | "uni3d"
+
 # Fusion
 weight_clip = 0.3
 weight_dino = 0.4
 weight_ulip = 0.3
+
+# Geometry re-ranking (Sub-step B2)
+geometry_reranking_enabled = True
+geometry_reranking_signal = "gedi"  # "gedi" | "chamfer" | "both"
+gedi_url = "http://gedi:5060"
 
 # Ollama
 ollama_host = "http://localhost:11434"
@@ -654,13 +730,18 @@ Prompt + RGB-D Image
      └───────┬───────────┘
              ▼
     ┌──────────────────┐
-    │ 6. Score Fusion  │ Weighted Sum (0.3 / 0.4 / 0.3)
-    │    → Top-1       │ (NaN-safe Min-Max Norm.)
+    │ 6. Score Fusion  │ Weighted Sum / Majority Voting
+    │    → Top-K       │ (NaN-safe Min-Max Norm.)
     └────────┬─────────┘
              ▼
+    ┌──────────────────┐           ┌──────────────────────┐
+    │ B2. Geometry     │── HTTP ──>│ GeDi Descriptors     │
+    │  Re-ranking      │<── JSON ──│ (separate container)  │
+    └────────┬─────────┘           └──────────────────────┘
+             ▼                      RANSAC inlier + Chamfer
     ┌──────────────────┐
-    │ 7. Scale Est.    │ RANSAC+ICP → Partial-Aware Scale
-    └────────┬─────────┘ (2 beste Achsen)
+    │ 7. Scale Est.    │ GeDi/FPFH RANSAC+ICP → Scale
+    └────────┬─────────┘ (reuses B2 transform)
              ▼
     ┌──────────────────┐           ┌──────────────────────┐
     │ 8. Pose Est.     │── HTTP ──>│ FoundationPose       │

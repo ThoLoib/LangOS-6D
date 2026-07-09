@@ -285,6 +285,8 @@ For full validation: Docker + GPU + datasets required. Document any step that ca
 - [x] B4: B2 wired into pipeline (`run_pipeline.py` — between fusion and scale gate, CLI flags added)
 - [x] C1: SHREC'18 ObjectNN+ eval wrapper (`retrieval_shrec18_eval_oscarplus.py` — full-database scoring, 20 categories)
 - [x] C2: BOP-core pose eval (`eval_bop_pose.py` — YCB-V/T-LESS/LM-O, ADD/ADD-S metrics, Stages 3a/3b)
-- [ ] C3: MI3DOR update (run frozen Stage 1 config)
-- [ ] D1–D2: Encoder alternatives
+- [x] C3: MI3DOR eval already aligned — thesis defaults propagate via PipelineConfig (CLS token, topk_softmax k=5). Just needs to be run.
+- [x] D1: SigLIP encoder alternative (`step4_dino_reranking.py` — `--appearance-encoder siglip`)
+- [x] D2: Uni3D encoder alternative (`step5_shape_matching.py` — `--shape-encoder uni3d`)
+- [x] GeDi Docker container built and verified (Dockerfile.gedi — PyTorch 2.0.1+cu118, Open3D 0.18.0)
 - [ ] E1–E2: Grasping demo
