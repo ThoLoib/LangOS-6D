@@ -34,6 +34,11 @@ class PipelineConfig:
     sam_model: str = "facebook/sam2.1-hiera-large"  # SAM2.1 (Ravi et al., 2024)
     detection_confidence: float = 0.3   # Mindest-Konfidenz für Bounding Boxes
 
+    # Mask post-processing (thesis Step A: largest connected component + dilation)
+    mask_largest_cc: bool = True         # Retain only largest connected component
+    mask_dilation_kernel: int = 5        # Dilation kernel size (pixels)
+    mask_dilation_iterations: int = 1    # Number of dilation iterations (0 = disabled)
+
     # -------------------------------------------------------------------------
     # Schritt 2 – Punktwolkenerzeugung
     # -------------------------------------------------------------------------
@@ -76,6 +81,7 @@ class PipelineConfig:
     # -------------------------------------------------------------------------
     # DINOv2: https://github.com/facebookresearch/dinov2
     dino_model_name: str = "facebook/dinov2-base"
+    dino_pooling: str = "cls"    # "cls" = CLS token (CNOS/thesis default), "mean" = average pooling (legacy)
     dino_top_k: int = 5          # Anzahl der DINOv2-Kandidaten nach Re-Ranking
 
     # Multi-view aggregation for DINOv2 re-ranking (inspired by OPEN, Chu et al. 2024)

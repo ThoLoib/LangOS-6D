@@ -34,6 +34,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
+import cv2
+
 import numpy as np
 import torch
 from PIL import Image
@@ -189,6 +191,57 @@ class ObjectLocalizer:
         best_mask_idx = iou_scores[0, 0].argmax().item()
         return masks[0][0, best_mask_idx].numpy().astype(bool)
 
+    def _refine_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Post-process the segmentation mask (thesis Step A).
+
+        1. Retain only the largest connected component (removes spurious
+           background fragments from texture discontinuities or partial
+           occlusion).
+        2. Dilate the mask to compensate for the depth-shadow effect at
+           object boundaries where RGB-D sensors produce missing or
+           unreliable depth values.
+
+        Args:
+            mask: Binary mask (H, W), bool.
+
+        Returns:
+            Refined binary mask (H, W), bool.
+        """
+        mask_uint8 = mask.astype(np.uint8)
+
+        # 1. Largest connected component
+        if getattr(self.config, "mask_largest_cc", True):
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+                mask_uint8, connectivity=8
+            )
+            if num_labels > 2:  # background + at least 2 components
+                # stats[:, cv2.CC_STAT_AREA] — label 0 is background
+                areas = stats[1:, cv2.CC_STAT_AREA]
+                largest_label = 1 + areas.argmax()
+                mask_uint8 = (labels == largest_label).astype(np.uint8)
+                logger.debug(
+                    "Mask: kept largest CC (label %d, %d px) out of %d components",
+                    largest_label, stats[largest_label, cv2.CC_STAT_AREA],
+                    num_labels - 1,
+                )
+
+        # 2. Dilation for depth-shadow compensation
+        dilation_iters = getattr(self.config, "mask_dilation_iterations", 1)
+        if dilation_iters > 0:
+            kernel_size = getattr(self.config, "mask_dilation_kernel", 5)
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (kernel_size, kernel_size)
+            )
+            mask_uint8 = cv2.dilate(
+                mask_uint8, kernel, iterations=dilation_iters
+            )
+            logger.debug(
+                "Mask: dilated with %dx%d kernel, %d iteration(s)",
+                kernel_size, kernel_size, dilation_iters,
+            )
+
+        return mask_uint8.astype(bool)
+
     def localize(
         self,
         rgb_image: Image.Image,
@@ -228,6 +281,9 @@ class ObjectLocalizer:
 
         # SAM2.1-Segmentierung mit BBox-Prompt
         mask_np = self._segment(rgb_image, bbox)
+
+        # --- Mask post-processing (thesis Step A) ---
+        mask_np = self._refine_mask(mask_np)
 
         # --- ROI-Ausschnitt erzeugen ---
         roi_image = self._extract_roi(rgb_image, mask_np, bbox)

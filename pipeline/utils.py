@@ -84,6 +84,48 @@ def load_depth_image(depth_path: str, depth_scale: float = 1000.0) -> np.ndarray
     return depth_raw.astype(np.float32) / depth_scale
 
 
+# ---------------------------------------------------------------------------
+# Geometrische Distanzmetriken
+# ---------------------------------------------------------------------------
+
+def trimmed_chamfer_distance(
+    source: np.ndarray,
+    target: np.ndarray,
+    trim_ratio: float = 0.1,
+) -> float:
+    """Trimmed one-sided Chamfer distance (source → target).
+
+    For each point in *source*, find the nearest neighbour in *target*.
+    Discard the top *trim_ratio* fraction of distances (the largest ones)
+    and return the mean of the remaining distances.  This is robust to
+    partial overlap — the trimmed tail absorbs query regions that have
+    no corresponding CAD surface (e.g. back faces, occluded areas).
+
+    Thesis reference: Sec. 3.3 (Sub-step B2), Equation for S_chamfer.
+
+    Args:
+        source: (N, 3) query point cloud (observed partial PC).
+        target: (M, 3) reference point cloud (CAD partial view or full mesh).
+        trim_ratio: Fraction of largest distances to discard (default 0.1 = 10 %).
+
+    Returns:
+        Mean of the trimmed nearest-neighbour distances (lower = better fit).
+        Returns ``float('inf')`` if either cloud is empty.
+    """
+    if len(source) == 0 or len(target) == 0:
+        return float("inf")
+
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(target)
+    dists, _ = tree.query(source, k=1)
+
+    # Trim the largest `trim_ratio` fraction
+    n_keep = max(1, int(len(dists) * (1.0 - trim_ratio)))
+    dists_sorted = np.sort(dists)[:n_keep]
+    return float(dists_sorted.mean())
+
+
 def load_camera_intrinsics(json_path: str, image_id: int = 0) -> Dict:
     """Lädt Kamera-Intrinsics aus einer BOP-kompatiblen JSON-Datei.
 

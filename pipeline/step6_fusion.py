@@ -136,6 +136,8 @@ class ScoreFusion:
             return self._reciprocal_rank_fusion(
                 clip_result, dino_result, shape_result, top_k
             )
+        elif method == "majority_voting":
+            return self._majority_voting(clip_result, dino_result, shape_result, top_k)
         else:
             raise ValueError(f"Unbekannte Fusionsmethode: {method}")
 
@@ -371,5 +373,116 @@ class ScoreFusion:
         return FusionResult(
             candidates=candidates,
             method="rank_fusion",
+            best_match=candidates[0] if candidates else None,
+        )
+
+    # -----------------------------------------------------------------------
+    # Methode 4: Majority Voting (SAMURAI-inspired, thesis ablation E6)
+    # -----------------------------------------------------------------------
+
+    def _majority_voting(
+        self,
+        clip_result: Optional[CLIPRetrievalResult],
+        dino_result: Optional[DINOReRankingResult],
+        shape_result: Optional[ShapeMatchingResult],
+        top_k: int,
+    ) -> FusionResult:
+        """Majority voting fusion (Borda count).
+
+        Each channel produces an independent ranking. The final rank for
+        each candidate is the sum of its per-channel ranks (lower = better).
+        Candidates not present in a channel receive a penalty rank equal to
+        the channel's candidate count + 1.
+
+        This follows the multi-strategy voting approach used by SAMURAI in
+        the ROOMELSA setting (Vo et al., 2025).
+
+        Ties are broken by weighted sum of the raw (unnormalised) per-channel
+        scores, so the ordering is deterministic.
+        """
+        # Build per-channel rank maps (1-based)
+        rank_maps: List[Dict[str, int]] = []
+        score_maps: List[Dict[str, float]] = []
+        paths: Dict[str, str] = {}
+        view_paths: Dict[str, str] = {}
+
+        if clip_result and clip_result.candidates:
+            rm = {}
+            sm = {}
+            for rank, c in enumerate(clip_result.candidates, 1):
+                rm[c.object_id] = rank
+                sm[c.object_id] = c.score
+            rank_maps.append(rm)
+            score_maps.append(sm)
+
+        if dino_result and dino_result.candidates:
+            rm = {}
+            sm = {}
+            for rank, c in enumerate(dino_result.candidates, 1):
+                rm[c.object_id] = rank
+                sm[c.object_id] = c.dino_score
+                if c.best_view_path:
+                    view_paths[c.object_id] = c.best_view_path
+            rank_maps.append(rm)
+            score_maps.append(sm)
+
+        if shape_result and shape_result.candidates:
+            rm = {}
+            sm = {}
+            for rank, c in enumerate(shape_result.candidates, 1):
+                rm[c.object_id] = rank
+                sm[c.object_id] = c.shape_score
+                if c.cad_model_path:
+                    paths[c.object_id] = c.cad_model_path
+            rank_maps.append(rm)
+            score_maps.append(sm)
+
+        if not rank_maps:
+            logger.warning("No candidates for majority voting fusion.")
+            return FusionResult(candidates=[], method="majority_voting")
+
+        # Collect all candidate IDs
+        all_ids = set()
+        for rm in rank_maps:
+            all_ids.update(rm.keys())
+
+        # Compute Borda rank sum and tie-breaking score
+        penalty_ranks = [len(rm) + 1 for rm in rank_maps]
+        scored = []
+        for obj_id in all_ids:
+            rank_sum = sum(
+                rm.get(obj_id, penalty) for rm, penalty in zip(rank_maps, penalty_ranks)
+            )
+            # Tie-break: sum of raw scores (higher = better)
+            raw_score_sum = sum(
+                sm.get(obj_id, 0.0) for sm in score_maps
+            )
+            scored.append((obj_id, rank_sum, raw_score_sum))
+
+        # Sort: lowest rank sum first, then highest raw score sum
+        scored.sort(key=lambda x: (x[1], -x[2]))
+
+        candidates = []
+        for obj_id, rank_sum, raw_score in scored[:top_k]:
+            candidates.append(FusedCandidate(
+                object_id=obj_id,
+                fused_score=-rank_sum,  # negate so higher = better (convention)
+                clip_score=rank_maps[0].get(obj_id, 0) if len(rank_maps) > 0 else 0,
+                dino_score=rank_maps[1].get(obj_id, 0) if len(rank_maps) > 1 else 0,
+                ulip_score=rank_maps[2].get(obj_id, 0) if len(rank_maps) > 2 else 0,
+                cad_model_path=paths.get(obj_id, ""),
+                best_view_path=view_paths.get(obj_id, ""),
+            ))
+
+        if candidates:
+            logger.info(
+                "Majority Voting Fusion: Top-%d (Best: %s, rank_sum=%d)",
+                len(candidates), candidates[0].object_id,
+                -int(candidates[0].fused_score),
+            )
+
+        return FusionResult(
+            candidates=candidates,
+            method="majority_voting",
             best_match=candidates[0] if candidates else None,
         )

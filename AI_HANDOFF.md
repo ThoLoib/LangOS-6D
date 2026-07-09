@@ -1,6 +1,6 @@
-# AI Handoff – Branch `exp/ulip2-full`
+# AI Handoff – Branch `exp/ulip2v2`
 
-> Zuletzt aktualisiert: 2026-04-23
+> Last updated: 2026-07-09
 
 ## Update 2026-04-23 (OSCAR+ evaluation suite: shared eval_common + per-dataset wrappers + MI3DOR partial PCs)
 
@@ -102,14 +102,14 @@ Kernidee: Das bestehende OSCAR-Retrieval (CLIP + DINOv2) um einen **3D-Shape-Kan
 
 ## Branch-Überblick
 
-| Branch | Zweck | Status |
+| Branch | Purpose | Status |
 |---|---|---|
-| `oscar` | Clean upstream mirror von pullover00/OSCAR | ✅ nie verändert |
-| `main` | Thesis-Scaffolding + AI-Docs | ✅ stabil |
-| `exp/oscar-repro` | OSCAR baseline reproduziert (d3098bdd) | ✅ abgeschlossen |
-| `exp/ulip2` | Shape-Aware Pipeline (PC-ULIP + Fusion) | ✅ stabil |
-| `exp/ulip2-full` | ULIP full experiments (PC vs cross-modal image->PC) | ✅ stabil |
-| **`exp/ulip2v2`** | **Scale-gated candidate selection + rotation variance eval** | 🟢 aktiv |
+| `oscar` | Clean upstream mirror of pullover00/OSCAR | ✅ unchanged |
+| `main` | Thesis scaffolding + AI docs | ✅ stable |
+| `exp/oscar-repro` | OSCAR baseline reproduced (d3098bdd) | ✅ completed |
+| `exp/ulip2` | Shape-aware pipeline (PC-ULIP + Fusion) | ✅ stable |
+| `exp/ulip2-full` | ULIP full experiments (PC vs cross-modal image->PC) | ✅ stable |
+| **`exp/ulip2v2`** | **Scale gate, rotation eval, eval suite** | 🟢 active |
 
 ---
 
@@ -559,24 +559,23 @@ If FoundationPose service is down or fails, Step 8 falls back to ICP automatical
 
 ### Pipeline-Dateien
 
-| Datei | Zeilen | Beschreibung |
+| File | Lines | Description |
 |---|---|---|
-| `pipeline/__init__.py` | 19 | Package-Init mit Version `0.1.0` |
-| `pipeline/config.py` | ~170 | Zentrale `PipelineConfig` Dataclass |
-| `pipeline/run_pipeline.py` | ~1060 | Orchestrator + CLI + LLM-Parsing + Debug-Viz-Hooks |
-| `pipeline/debug_viz.py` | ~1105 | **Debug-Visualisierung** (7 PNGs + 3D-Viewer) |
+| `pipeline/__init__.py` | 19 | Package init with version `0.1.0` |
+| `pipeline/config.py` | ~192 | Central `PipelineConfig` dataclass |
+| `pipeline/run_pipeline.py` | ~1249 | Orchestrator + CLI + LLM parsing + debug-viz hooks + scale gate + ranking CSVs |
+| `pipeline/debug_viz.py` | ~1247 | Debug visualization (7 PNGs + 3D viewer, ULIP top-5) |
 | `pipeline/foundationpose_bridge.py` | ~130 | HTTP client for FoundationPose service |
-| `pipeline/step1_localization.py` | ~320 | GroundingDINO + SAM2.1 |
-| `pipeline/step2_pointcloud.py` | ~340 | RGB-D → Point Cloud (depth gating, SOR/ROR) |
-| `pipeline/step3_clip_retrieval.py` | ~320 | CLIP Text-/Bild-Retrieval |
-| `pipeline/step4_dino_reranking.py` | ~530 | DINOv2 Re-Ranking + Multi-View Aggregation + Disk-Cache |
-| `pipeline/step5_shape_matching.py` | ~1270 | ULIP-2 Encoder + Partial Views + Multi-View Aggregation |
-| `rendering/generate_partial_pointclouds.py` | ~250 | Partial PC preprocessing (front-face culling) |
-| `pipeline/step6_fusion.py` | ~375 | Score-Fusion (weighted_sum, RRF, intersection) |
-| `pipeline/step7_scale_estimation.py` | ~340 | RANSAC+ICP Coarse-Alignment + Partial-Aware Scale |
-| `pipeline/step8_pose_estimation.py` | ~360 | FoundationPose (HTTP) + ICP fallback |
-| `pipeline/utils.py` | ~115 | Hilfsfunktionen (Kamera-Laden, BOP-Format) |
-| `pipeline/visualization.py` | ~375 | Legacy per-step Visualisierung (Masken, Depth, PC-Render) |
+| `pipeline/step1_localization.py` | ~323 | GroundingDINO + SAM2.1 |
+| `pipeline/step2_pointcloud.py` | ~341 | RGB-D → Point Cloud (depth gating, SOR/ROR) |
+| `pipeline/step3_clip_retrieval.py` | ~322 | CLIP text/image retrieval |
+| `pipeline/step4_dino_reranking.py` | ~532 | DINOv2 re-ranking + multi-view aggregation + disk cache |
+| `pipeline/step5_shape_matching.py` | ~1408 | ULIP-2 encoder + partial views + multi-view aggregation + rotation eval |
+| `rendering/generate_partial_pointclouds.py` | ~332 | Partial PC preprocessing (front-face culling, mesh-glob support) |
+| `pipeline/step6_fusion.py` | ~375 | Score fusion (weighted_sum, RRF, intersection) |
+| `pipeline/step7_scale_estimation.py` | ~422 | RANSAC+ICP coarse alignment + partial-aware scale + fast bbox fallback |
+| `pipeline/step8_pose_estimation.py` | ~357 | FoundationPose (HTTP) + ICP fallback |
+| `pipeline/utils.py` | ~115 | Helper functions (camera loading, BOP format) |
 
 ### Konfiguration (config.py Defaults)
 
@@ -602,11 +601,11 @@ ulip2_embed_dim = 1280
 
 # Multi-view aggregation (Steps 4 & 5)
 dino_view_aggregation = "topk_softmax"
-dino_view_topk = 4
-dino_view_temperature = 0.1
+dino_view_topk = 8
+dino_view_temperature = 0.5
 ulip_view_aggregation = "topk_softmax"
-ulip_view_topk = 4
-ulip_view_temperature = 0.1
+ulip_view_topk = 8
+ulip_view_temperature = 0.5
 
 # Fusion
 weight_clip = 0.3

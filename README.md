@@ -1,11 +1,11 @@
 # OSCAR+: Shape-Aware Open-Set CAD Retrieval
 
-This branch (`exp/ulip2-full`) extends the original two-stage OSCAR baseline with a full **8-step modular pipeline** and integrates **ULIP-2 shape-aware retrieval** as a third scoring channel.
+This branch (`exp/ulip2v2`) extends the original two-stage OSCAR baseline with a modular pipeline and integrates **ULIP-2 shape-aware retrieval** as a third scoring channel.
 
 Baseline reproduced at **75.95% Top-1** on YCBV-GSO.
-New pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
+The pipeline adds scale estimation and 6D pose estimation on top of the retrieval result.
 
-> **Status (2026-04-23):** End-to-End pipeline runs successfully. All 8 steps verified on YCBV-GSO. Features: ULIP `pc`/`cross`/`both` modes, partial-to-partial matching, multi-view aggregation (Steps 4 & 5), SAM2.1 segmentation, depth gating, configurable SOR/ROR, FoundationPose HTTP integration with ICP fallback. Debug visualization via `--debug-viz`. Retrieval evaluation is shared across datasets via `object_retrieval/eval_common.py` with thin per-dataset wrappers (`retrieval_mi3dor_eval_oscarplus.py`, `retrieval_ycbv_eval_oscarplus.py`, `retrieval_housecat6d_eval_oscarplus.py`); one run emits six explicit variants (`clip_only`, `dino_only_full`, `ulip_only_full`, `dino_only_clip_pruned`, `ulip_only_clip_pruned`, `clip_pruned_dino_ulip`) — see `AI_HANDOFF.md` for details.
+> **Status (2026-07-09):** End-to-End pipeline runs successfully on YCBV-GSO. Features: ULIP `pc`/`cross`/`both` modes, partial-to-partial matching, multi-view aggregation (softmax top-k, k=8, τ=0.5), SAM2.1 segmentation, depth gating, configurable SOR/ROR, FoundationPose HTTP integration with ICP fallback, optional scale gate with fast estimate, rotation evaluation for ULIP candidates. Debug visualization via `--debug-viz` with per-step ranking CSVs. Retrieval evaluation is shared across datasets via `object_retrieval/eval_common.py` with thin per-dataset wrappers; one run emits six explicit variants (`clip_only`, `dino_only_full`, `ulip_only_full`, `dino_only_clip_pruned`, `ulip_only_clip_pruned`, `clip_pruned_dino_ulip`) — see `AI_HANDOFF.md` for details.
 
 ## ULIP Modes (Step 5)
 
@@ -15,7 +15,7 @@ Step 5 supports three retrieval modes:
 - `cross`: query ROI image -> OpenCLIP image encoder -> CAD point embeddings
 - `both`: weighted combination of `pc` and `cross` query embeddings
 
-Additionally, `--ulip-partial-views` switches the reference side from full-mesh sampling to precomputed partial PCs per view (best-of-8-views scoring). This eliminates the domain mismatch between the partial observed PC and the full CAD model.
+Additionally, `--ulip-partial-views` switches the reference side from full-mesh sampling to precomputed partial PCs per view (best-of-8-views scoring via softmax top-k aggregation, k=8, τ=0.5). This eliminates the domain mismatch between the partial observed PC and the full CAD model.
 
 CLI flags:
 
@@ -87,19 +87,19 @@ All pipeline code lives in `pipeline/`. Each step is a self-contained module wit
 | File | Description |
 |---|---|
 | `__init__.py` | Package marker, exports `__version__` |
-| `run_pipeline.py` | Main entry point (`OSCARPlusPipeline` class), CLI argument parsing, orchestrates Steps 1–8 |
+| `run_pipeline.py` | Main entry point (`OSCARPlusPipeline` class), CLI argument parsing, orchestrates Steps 1–8, per-step ranking CSV export |
 | `config.py` | Central `PipelineConfig` dataclass with all tunable parameters |
 | `step1_localization.py` | GroundingDINO + SAM2.1 object detection and segmentation |
 | `step2_pointcloud.py` | RGB-D backprojection, depth gating, voxel downsampling, SOR/ROR filtering |
 | `step3_clip_retrieval.py` | CLIP-based semantic candidate retrieval from text descriptions |
-| `step4_dino_reranking.py` | DINOv2 visual re-ranking with multi-view aggregation and disk cache |
-| `step5_shape_matching.py` | ULIP-2 shape matching (pc/cross/both modes, partial views, multi-view aggregation) |
+| `step4_dino_reranking.py` | DINOv2 visual re-ranking with multi-view aggregation (softmax top-k) and disk cache |
+| `step5_shape_matching.py` | ULIP-2 shape matching (pc/cross/both modes, partial views, multi-view aggregation, optional ICP rotation eval) |
 | `step6_fusion.py` | NaN-safe min-max score normalization and weighted CLIP/DINO/ULIP fusion |
-| `step7_scale_estimation.py` | RANSAC + ICP coarse alignment for scale factor estimation |
+| `step7_scale_estimation.py` | RANSAC + ICP coarse alignment for scale factor estimation, fast bbox fallback |
 | `step8_pose_estimation.py` | 6D pose via FoundationPose (HTTP) or ICP fallback |
 | `foundationpose_bridge.py` | HTTP client for the FoundationPose container (path translation, encoding, error handling) |
 | `utils.py` | Shared helpers: camera intrinsics loading, image I/O, BOP format parsing |
-| `debug_viz.py` | Debug visualization functions (`save_debug_step1`–`step7_8`), 3D projection, interactive point cloud HTML export (`--debug-viz` only) |
+| `debug_viz.py` | Debug visualization functions (`save_debug_step1`–`step7_8`), 3D projection, interactive point cloud HTML export, ULIP top-5 display (`--debug-viz` only) |
 
 ---
 
@@ -109,7 +109,7 @@ All pipeline code lives in `pipeline/`. Each step is a self-contained module wit
 ```bash
 git clone git@github.com:pullover00/OSCAR.git
 cd OSCAR
-git checkout exp/ulip2
+git checkout exp/ulip2v2
 ```
 
 ### 2. ULIP-2 Checkpoint (for Step 5)
@@ -297,6 +297,18 @@ ulip2_mode              = "cross"   # "pc" | "cross" | "both"
 ulip2_use_partial_views = False     # True = partial PCs per view
 ollama_model            = "gemma3:4b"  # LLM for prompt parsing
 pose_method             = "icp"     # Pose estimation method
+
+# Multi-view aggregation (Steps 4 & 5)
+dino_view_aggregation   = "topk_softmax"
+dino_view_topk          = 8         # Top views for aggregation
+dino_view_temperature   = 0.5       # Softmax temperature
+ulip_view_aggregation   = "topk_softmax"
+ulip_view_topk          = 8
+ulip_view_temperature   = 0.5
+
+# Scale gate (optional, disabled by default)
+scale_gate_enabled      = False
+scale_icp_min_confidence = 0.15     # ICP confidence fallback threshold
 ```
 
 ---

@@ -209,8 +209,7 @@ class DINOReRanker:
         with torch.no_grad():
             inputs = self.processor(images=image, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
-            # Average Pooling ueber alle Patch-Tokens
-            features = outputs.last_hidden_state.mean(dim=1)
+            features = self._pool_features(outputs.last_hidden_state)
             features = F.normalize(features, p=2, dim=1)
         return features
 
@@ -227,9 +226,24 @@ class DINOReRanker:
         with torch.no_grad():
             inputs = self.processor(images=images, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
-            features = outputs.last_hidden_state.mean(dim=1)
+            features = self._pool_features(outputs.last_hidden_state)
             features = F.normalize(features, p=2, dim=1)
         return features
+
+    def _pool_features(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
+        """Pool patch tokens into a single feature vector.
+
+        Args:
+            last_hidden_state: (B, num_tokens, D) from the ViT.
+
+        Returns:
+            (B, D) pooled features.
+        """
+        pooling = getattr(self.config, "dino_pooling", "cls")
+        if pooling == "cls":
+            return last_hidden_state[:, 0]
+        else:
+            return last_hidden_state.mean(dim=1)
 
     # -------------------------------------------------------------------
     # Cache-Logik

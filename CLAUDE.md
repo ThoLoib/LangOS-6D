@@ -91,12 +91,15 @@ Previous approaches that were tried and abandoned:
 
 ## Current Problem Claude Should Focus On
 
-The two-container architecture is implemented but not yet validated end-to-end. The next steps are:
+The pipeline is functional end-to-end. The thesis methodology specifies components that are not yet implemented in the codebase. The next steps are:
 
-1. Test `docker compose up -d foundationpose` and verify the health endpoint
-2. Run a full pipeline with `--pose_method foundationpose` and confirm pose output
-3. Compare FoundationPose pose quality against ICP baseline
-4. Clean up the obsolete 11 GB `.venv` in `~/thesis/FoundationPose/`
+1. Align the codebase with the thesis methodology (see `docs/THESIS_ALIGNMENT_PLAN.md` when created)
+2. Implement Sub-step B2: GeDi-based geometry re-ranking
+3. Implement mask post-processing (largest connected component + dilation)
+4. Add SHREC'18 ObjectNN+ evaluation (Stage 1 tuning)
+5. Add majority voting fusion strategy
+6. Add SigLIP and Uni3D encoder alternatives for ablations
+7. Set up BOP-core evaluation (YCB-V, T-LESS, LM-O)
 
 ## Expected Approach
 
@@ -123,19 +126,21 @@ Claude should optimize for reproducibility and low fragility.
 
 ## Immediate Goal
 
-1. Evaluate partial-to-partial matching impact on retrieval accuracy across YCBV-GSO scenes.
-2. Compare ULIP modes (pc vs cross vs both) with and without partial views.
-3. Continue with evaluation scripts and thesis experiments.
+1. Implement the thesis methodology components not yet in the codebase (GeDi, mask refinement, full-database fusion).
+2. Set up SHREC'18 ObjectNN+ evaluation for Stage 1 configuration tuning.
+3. Run the full ablation grid (E1–E7, O1–O5) as defined in the thesis evaluation chapter.
+4. Set up BOP-core pose evaluation (Stages 3a/3b).
 
 ## Definition of Success
 
 This work is successful when:
 
+- The codebase implements all components described in the thesis methodology chapter
+- The ablation grid (E1–E7, O1–O5) can be run on SHREC'18, MI3DOR, and BOP-core datasets
 - OSCAR can trigger FoundationPose reliably
-- dependency conflicts no longer block development
-- the solution is understandable from the repo docs
-- the rest of the OSCAR pipeline remains stable
 - ICP fallback still works when FoundationPose is unavailable or fails
+- The solution is understandable from the repo docs
+- The rest of the OSCAR pipeline remains stable
 
 ## Documentation Discipline
 
