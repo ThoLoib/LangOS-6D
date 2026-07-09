@@ -1,24 +1,32 @@
 # =============================================================================
-# pipeline/step2_pointcloud.py – Schritt 2: Punktwolke erzeugen
+# pipeline/step2_pointcloud.py – Thesis Step A (cont.): Point Cloud Extraction
 # =============================================================================
 #
-# Ziel:
-#   Aus dem Tiefenbild (Depth Map), der Segmentierungsmaske (Schritt 1) und
-#   den Kameraintrinsics eine partielle 3D-Punktwolke des Zielobjekts
-#   erzeugen.
+# Generates a partial 3D point cloud of the detected object from the
+# RGB-D frame and segmentation mask produced in Step 1 (thesis Sec. 3.2).
 #
 # Pipeline:
-#   RGB-D + Kamera-Intrinsics → segmentierte Tiefe → Punktwolke des Objekts
+#   RGB-D + camera intrinsics + mask → pinhole backprojection → partial PC
 #
-# Tools:
-#   • Open3D – 3D-Datenverarbeitung und Punktwolken
+# Post-processing:
+#   • Voxel downsampling — reduces point density for tractable descriptor
+#     computation in Steps B2 and C.
+#   • Statistical Outlier Removal (SOR) — removes isolated noise points
+#     that degrade registration quality (Zhou et al., 2018 — Open3D).
+#   • Radius Outlier Removal (ROR) — optional second-pass filter for
+#     sensor-specific artefacts.
+#   • Depth gating — median-relative gate rejects depth outliers within
+#     the mask before backprojection, mitigating flying-pixel artefacts
+#     from ToF sensors (Chugunov et al., 2021) and structured-light
+#     shadow regions (Shen et al., 2013).
+#
+# Library:
+#   • Open3D (Zhou, Park & Koltun, 2018)
 #     Ref: http://www.open3d.org/docs/release/
-#     Paper: "Open3D: A Modern Library for 3D Data Processing"
-#             (Zhou, Park & Koltun, 2018)
 #
 # Outputs:
-#   - Partielle Punktwolke des segmentierten Objekts (Open3D PointCloud)
-#   - Optional: Downsampled Version für effiziente Weiterverarbeitung
+#   - Partial point cloud of the segmented object (Open3D PointCloud)
+#   - 3D bounding box dimensions for scale estimation (Step 7)
 # =============================================================================
 
 import logging

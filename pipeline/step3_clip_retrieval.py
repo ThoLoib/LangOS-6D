@@ -1,22 +1,26 @@
 # =============================================================================
-# pipeline/step3_clip_retrieval.py – Schritt 3: Semantische Kandidatensuche
+# pipeline/step3_clip_retrieval.py – Thesis Step B1: Semantic Channel S_text
 # =============================================================================
 #
-# Ziel:
-#   Top-K CAD-Modell-Kandidaten finden, indem das ROI-Bild (Schritt 1)
-#   mit vorgenerierten Text-Beschreibungen der CAD-Modelle verglichen wird.
+# Computes the text-based semantic score S_text (thesis Sec. 3.3, Step B1).
 #
-# Pipeline:
-#   CLIP(ROI image embedding) vs. CLIP(text embeddings of CAD descriptions)
-#   → Top-K Kandidaten (z.B. K=20)
+# CLIP (Radford et al., 2021) performs image–text alignment via contrastive
+# pretraining. OSCAR (Pulli et al., 2025) establishes CLIP as competitive
+# for caption-based CAD retrieval in the training-free setting.
 #
-# Modell:
-#   • CLIP (Contrastive Language–Image Pre-training)
+# The text channel uses offline-generated natural-language descriptions of
+# each CAD model. At query time, the ROI image embedding is compared against
+# all description embeddings via cosine similarity.
+#
+# In the thesis default (full-database scoring), all candidates are scored.
+# The OSCAR-style cascade (CLIP top-k → DINOv2/ULIP) is retained as
+# ablation O2 (Pulli et al., 2025).
+#
+# Model:
+#   • CLIP ViT-B/32 (Radford et al., 2021)
 #     Ref: https://github.com/openai/CLIP
-#     Paper: "Learning Transferable Visual Models From Natural Language
-#             Supervision" (Radford et al., 2021)
 #
-# Adaptiert aus: OSCAR – object_retrieval/retrieval_combi_clip.py
+# Adapted from: OSCAR – object_retrieval/retrieval_combi_clip.py
 #
 # Outputs:
 #   - Liste von (object_id, similarity_score) Tupeln, sortiert nach Score

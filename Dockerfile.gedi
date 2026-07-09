@@ -59,12 +59,13 @@ RUN git clone https://github.com/fabiopoiesi/gedi.git /gedi && \
 # Download pretrained checkpoint + assets via gdown CLI
 # (install fresh gdown AFTER pointnet2_ops to avoid version downgrade)
 RUN pip3 install --no-cache-dir "gdown>=4.7.3" && \
-    mkdir -p /gedi/data/chkpts /gedi/data/assets && \
+    mkdir -p /gedi/data && \
     cd /gedi/data && \
     gdown 1Lpep5QigALjk60h8bNJAUH3DnxtnGcZX -O chkpts.zip && \
-    unzip -o chkpts.zip -d chkpts && rm chkpts.zip && \
+    unzip -o chkpts.zip && rm chkpts.zip && \
     gdown 1EEMzusKM2QPi9u3o3qsgAwPPX6c_SlBd -O assets.zip && \
-    unzip -o assets.zip -d assets && rm assets.zip
+    unzip -o assets.zip && rm assets.zip && \
+    ls -la /gedi/data/chkpts/3dmatch/
 
 # Verify
 RUN python3 -c "\

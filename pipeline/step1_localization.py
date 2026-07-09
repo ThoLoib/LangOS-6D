@@ -1,27 +1,32 @@
 # =============================================================================
-# pipeline/step1_localization.py – Schritt 1: Objekt lokalisieren
+# pipeline/step1_localization.py – Thesis Step A: Scene Grounding
 # =============================================================================
 #
-# Ziel:
-#   Aus einem RGB-Bild und einem Sprachprompt (z.B. "greife nach der
-#   Mayonnaisetube") das Zielobjekt lokalisieren und eine präzise
-#   Segmentierungsmaske erzeugen.
+# Implements the prompt-conditioned detection paradigm from OSCAR
+# (Pulli et al., 2025) extended with mask post-processing.
 #
 # Pipeline:
 #   prompt → GroundingDINO (Bounding Box) → SAM2.1 (Segmentierungsmaske)
+#         → Mask refinement (largest CC + dilation)
 #
-# Modelle:
-#   • GroundingDINO – Open-Set Object Detection mit Sprachprompts
+# Models:
+#   • GroundingDINO – Open-Set Object Detection (Liu et al., 2023)
+#     Detection confidence threshold 0.3 follows OSCAR convention.
 #     Ref: https://github.com/IDEA-Research/GroundingDINO
-#     Paper: "Grounding DINO: Marrying DINO with Grounded Pre-Training
-#             for Open-Set Object Detection" (Liu et al., 2023)
 #
-#   • SAM2.1 – Segment Anything Model 2.1 (Meta)
+#   • SAM2.1 – Segment Anything Model 2.1 (Ravi et al., 2024)
 #     Ref: https://github.com/facebookresearch/sam2
-#     Paper: "SAM 2: Segment Anything in Images and Videos" (Ravi et al., 2024)
 #
-#   Beide Modelle werden direkt via HuggingFace transformers geladen
-#   (kein LangSAM-Wrapper erforderlich).
+# Mask post-processing (thesis Sec. 3.2, Step A):
+#   1. Largest connected component retention — mitigates SAM
+#      over-segmentation and fragmentation (Almazroey et al., 2025;
+#      Zhang et al., 2024; Tai et al., 2025). Applied before CLIP
+#      feature extraction following SAMURAI (Vo et al., 2025).
+#   2. Mask dilation — compensates for depth-shadow effect at object
+#      boundaries in structured-light sensors (Shen et al., 2013) and
+#      flying-pixel artefacts in ToF sensors (Chugunov et al., 2021).
+#      Clean masks are critical for downstream ICP-based geometric
+#      alignment (Caraffa et al., 2025 — FreeZe).
 #
 # Outputs:
 #   - RGB-Bild (original)
@@ -192,14 +197,21 @@ class ObjectLocalizer:
         return masks[0][0, best_mask_idx].numpy().astype(bool)
 
     def _refine_mask(self, mask: np.ndarray) -> np.ndarray:
-        """Post-process the segmentation mask (thesis Step A).
+        """Post-process the segmentation mask (thesis Sec. 3.2, Step A).
 
-        1. Retain only the largest connected component (removes spurious
-           background fragments from texture discontinuities or partial
-           occlusion).
-        2. Dilate the mask to compensate for the depth-shadow effect at
-           object boundaries where RGB-D sensors produce missing or
-           unreliable depth values.
+        1. Largest connected component — SAM-family models exhibit
+           over-segmentation under challenging conditions (Almazroey et al.,
+           2025), degraded quality for low-contrast objects (Zhang et al.,
+           2024), and fragmentation under occlusion (Tai et al., 2025).
+           SAMURAI (Vo et al., 2025) applies this step before feature
+           extraction to reduce background noise influence on scores.
+
+        2. Mask dilation — compensates for depth-shadow at object
+           boundaries: structured-light sensors leave missing-depth regions
+           due to projector/sensor viewpoint disparity (Shen et al., 2013);
+           ToF sensors produce flying-pixel artefacts (Chugunov et al., 2021).
+           FreeZe (Caraffa et al., 2025) notes that clean masks are critical
+           for ICP-based geometric alignment in Step C.
 
         Args:
             mask: Binary mask (H, W), bool.

@@ -1,49 +1,41 @@
 # =============================================================================
-# pipeline/step5_shape_matching.py – Schritt 5: Shape Matching (ULIP-2)
+# pipeline/step5_shape_matching.py – Thesis Step B1: Shape Channel S_shape
 # =============================================================================
 #
-# Ziel:
-#   Die partielle Punktwolke des segmentierten Objekts (Schritt 2) mit den
-#   vollständigen CAD-Modell-Punktwolken vergleichen, um die geometrisch
-#   ähnlichsten Modelle zu identifizieren.
+# Computes the shape score S_shape (thesis Sec. 3.3, Step B1).
 #
-# Pipeline:
-#   ULIP-2(segmented point cloud) vs. ULIP-2(CAD model point clouds)
-#   → Cosine Similarity → Top-K Shape Matches
+# Default encoder: ULIP-2 (Xue et al., CVPR 2024) — frozen multimodal
+# point-cloud encoder. Pre-trained on complete 10k-point clouds; partial
+# query clouds are upsampled with replacement (Gaussian jitter follows
+# standard point-cloud augmentation practice, Qi et al., 2017 — PointNet).
 #
-# Modell:
-#   • ULIP-2 – Unified Language-Image-Point Cloud Pre-training
-#     Ref: https://github.com/salesforce/ULIP
-#     HuggingFace: https://huggingface.co/datasets/SFXX/ulip
-#     Paper: "ULIP-2: Towards Scalable Multimodal Pre-training for 3D
-#             Understanding" (Xue et al., CVPR 2024)
+# The frozen PointBERT backbone (Yu et al., 2022) gives competitive 3D
+# retrieval descriptors out of the box (van den Herrewegen et al., 2024).
+# ULIP-2 achieves 50.6% top-1 on Objaverse-LVIS and 84.7% on ModelNet40
+# without task-specific training (Xue et al., 2024).
 #
-#   ULIP-2 lernt einen gemeinsamen Embedding-Raum für Bilder, Text und
-#   Punktwolken. Hier nutzen wir den Point-Cloud-Encoder (PointBERT),
-#   um geometrische Ähnlichkeit zwischen der beobachteten Szene und
-#   den CAD-Modellen zu berechnen.
+# Partial reference point clouds per CAD view enable partial-to-partial
+# comparison, mitigating the ambiguity of partial-to-full matching
+# noted by U-RED (Di et al., 2023).
 #
-#   Architektur (Colored PointBERT, 10k Punkte):
-#     PointTransformer_Colored(xyzrgb) → 768-dim feat → pc_projection → 1280-dim
-#     Das finale Embedding liegt im selben Raum wie OpenCLIP ViT-bigG-14.
+# Alternative encoder (ablation E7):
+#   • Uni3D (Zhou et al., ICLR 2024) — unified 3D encoder aligned with
+#     EVA-CLIP embedding space. PC-only mode (no cross-modal branch).
 #
-# Effizientes Laden:
-#   Wir laden NUR den point_encoder + pc_projection aus dem Checkpoint,
-#   NICHT das gesamte OpenCLIP ViT-bigG-14 Modell (~5 GB). Dadurch bleibt
-#   der Speicherbedarf bei ~400 MB statt ~5.5 GB.
+# Architecture (Colored PointBERT, 10k points):
+#   PointTransformer_Colored(xyzrgb) → 768-dim → pc_projection → 1280-dim
+#   Final embedding shares the OpenCLIP ViT-bigG-14 space (cross-modal).
 #
-# Inputs:
-#   - Partielle Punktwolke (Schritt 2) mit optionalen RGB-Farben
-#   - CAD-Modell-Punktwolken (vorberechnet oder on-the-fly)
+# Efficient loading: only point_encoder + pc_projection loaded from
+# checkpoint (~400 MB), not the full OpenCLIP ViT-bigG-14 (~5 GB).
 #
-# Outputs:
-#   - Top-K Shape Matches mit Similarity Scores
+# Known limitation: point-cloud rotation sensitivity is a general property
+# of networks trained on roughly aligned shapes (Yu et al., 2020).
 #
-# Voraussetzungen:
-#   - ULIP-Repo geklont: git clone https://github.com/salesforce/ULIP.git
-#   - Checkpoint heruntergeladen (z.B. ulip2_pointbert_10k.pt)
-#   - knn_cuda installiert (für PointBERT Grouping):
-#     pip install --upgrade https://github.com/unlimblue/KNN_CUDA/releases/download/0.2/KNN_CUDA-0.2-py3-none-any.whl
+# Refs:
+#   ULIP-2: https://github.com/salesforce/ULIP (Xue et al., 2024)
+#   Point-BERT: (Yu et al., 2022)
+#   Uni3D: https://github.com/baaivision/Uni3D (Zhou et al., 2024)
 # =============================================================================
 
 import logging

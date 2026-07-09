@@ -2,23 +2,28 @@
 # pipeline/gedi_descriptors.py -- GeDi Local Geometric Descriptors
 # =============================================================================
 #
-# Wraps the GeDi descriptor (Poiesi & Boscaini, IEEE T-PAMI 2022) for use
-# in OSCAR+ Sub-step B2 (geometry re-ranking) and Step C (coarse alignment).
+# HTTP bridge to the GeDi descriptor service (Poiesi & Boscaini, IEEE
+# T-PAMI 2022, "Learning General and Distinctive 3D Local Deep Descriptors
+# for Point Cloud Registration").
 #
-# GeDi runs in a separate Docker container (same isolation pattern as
-# FoundationPose) to avoid dependency conflicts:
-#   - GeDi needs PyTorch 1.x + CUDA 11.x + torchgeometry
-#   - OSCAR needs PyTorch 2.x + CUDA 12.2
+# Used in:
+#   • Sub-step B2 (geometry re-ranking) — RANSAC inlier count as S_GeDi
+#   • Step C (coarse alignment) — RANSAC transform as ICP initialisation
 #
-# Communication is via HTTP (POST /compute_descriptors to the gedi service).
-# The descriptors are packed into Open3D Feature format for RANSAC.
+# GeDi is a PointNet++-based (Qi et al., NeurIPS 2017) local descriptor
+# trained on 3DMatch (Zeng et al., CVPR 2017).  It produces per-keypoint
+# 32-dim descriptors suitable for feature-matching RANSAC (Fischler &
+# Bolles, 1981).
 #
-# Fallback: if the GeDi service is unavailable, compute() raises or returns
-# empty. The caller (step_b2_geometry_reranking.py, step7) falls back to FPFH.
+# GeDi runs in a separate Docker container (Dockerfile.gedi) to isolate
+# its CUDA 11.x / PyTorch 2.0.1 stack from OSCAR's CUDA 12.2 environment
+# — the same container-isolation pattern used for FoundationPose (Wen et
+# al., 2024).
+#
+# Fallback: when the GeDi service is unavailable, callers fall back to
+# FPFH descriptors (Rusu et al., ICRA 2009).
 #
 # Repository: https://github.com/fabiopoiesi/gedi
-# Paper: "Learning General and Distinctive 3D Local Deep Descriptors
-#         for Point Cloud Registration"
 #
 # Usage:
 #   >>> gedi_module = GeDiDescriptorModule(config)

@@ -1,27 +1,30 @@
 # =============================================================================
-# pipeline/step6_fusion.py – Schritt 6: Score-Fusion / Konsens
+# pipeline/step6_fusion.py – Thesis Step B1 (cont.): Multi-Signal Fusion
 # =============================================================================
 #
-# Ziel:
-#   Die Ergebnisse aus CLIP (Schritt 3), DINOv2 (Schritt 4) und ULIP-2
-#   (Schritt 5) zu einem finalen Ranking kombinieren.
+# Combines retrieval scores from three semantic channels (thesis Sec. 3.3):
+#   S_text  (CLIP, Step 3)  — Radford et al. (2021)
+#   S_view  (DINOv2/SigLIP, Step 4)  — Oquab et al. (2024) / Zhai et al. (2023)
+#   S_shape (ULIP-2/Uni3D, Step 5)  — Xue et al. (2024) / Zhou et al. (2024)
 #
-# Methoden:
-#   1. Gewichtete Summe:
-#      score = w_clip * CLIP + w_dino * DINO + w_ulip * ULIP
+# Fusion methods:
+#   1. Weighted sum with min-max normalisation
+#      Score normalisation follows Jain et al. (2005), "Score normalization
+#      in multimodal biometric systems" — min-max rescaling each channel to
+#      [0, 1] before linear combination.  This is the thesis default.
 #
-#   2. Intersection / Konsens:
-#      Erstes Modell, das in beiden Top-K vorkommt.
+#   2. Intersection / rank consensus
+#      Candidates ranked by number of channels they appear in, then rank sum.
 #
-#   3. Reciprocal Rank Fusion (RRF):
-#      Standardmethode aus dem Information Retrieval.
-#      Ref: "Reciprocal Rank Fusion outperforms Condorcet and Individual
-#            Rank Learning Methods" (Cormack et al., 2009)
+#   3. Reciprocal Rank Fusion (RRF)
+#      Cormack, Clarke & Buettcher (2009), "Reciprocal Rank Fusion outperforms
+#      Condorcet and Individual Rank Learning Methods".  k=60 (standard).
 #
-# Inputs:
-#   - CLIPRetrievalResult (Schritt 3)
-#   - DINOReRankingResult (Schritt 4)
-#   - ShapeMatchingResult (Schritt 5)
+#   4. Majority voting (Borda count)
+#      Multi-strategy voting approach from SAMURAI (Vo et al., 2025) in the
+#      ROOMELSA setting.  Thesis ablation E6.
+#
+# Adapted from: OSCAR – object_retrieval/object_retrieval.py (ensemble logic)
 #
 # Outputs:
 #   - Finale Liste von Kandidaten mit fusionierten Scores
@@ -154,11 +157,13 @@ class ScoreFusion:
     ) -> FusionResult:
         """Gewichtete Linearkombination der normalisierten Scores.
 
-        score(obj) = w_clip * clip_score(obj)
-                   + w_dino * dino_score(obj)
-                   + w_ulip * ulip_score(obj)
+        score(obj) = w_clip · S_text(obj)
+                   + w_dino · S_view(obj)
+                   + w_ulip · S_shape(obj)
 
-        Scores werden pro Modalität auf [0, 1] normalisiert (Min-Max).
+        Scores are min-max normalised per channel to [0, 1] before fusion,
+        following the standard score-level fusion protocol of Jain et al.
+        (2005), "Score normalization in multimodal biometric systems".
         """
         w_clip = self.config.weight_clip
         w_dino = self.config.weight_dino

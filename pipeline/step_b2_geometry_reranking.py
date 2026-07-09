@@ -1,5 +1,5 @@
 # =============================================================================
-# pipeline/step_b2_geometry_reranking.py -- Sub-step B2: Geometry Re-ranking
+# pipeline/step_b2_geometry_reranking.py -- Thesis Sub-step B2: Geometry
 # =============================================================================
 #
 # Thesis reference: Section 3.3 (Sub-step B2)
@@ -8,15 +8,25 @@
 # re-ranked using geometric signals computed between the observed partial
 # point cloud and each candidate's CAD partial view.
 #
-# Two geometry signals:
-#   1. GeDi correspondence score (S_GeDi):
-#      RANSAC in GeDi descriptor space -> inlier count as score.
-#   2. Trimmed one-sided Chamfer score (S_chamfer):
-#      Nearest-neighbour distances, top 10% trimmed, mean of rest.
+# Two geometry signals (thesis Sec. 3.3, Eq. S_geo):
+#
+#   1. GeDi correspondence score (S_GeDi)
+#      GeDi local geometric descriptors (Poiesi & Boscaini, IEEE T-PAMI
+#      2022) are matched via RANSAC (Fischler & Bolles, 1981).  The inlier
+#      count serves as a geometric compatibility score — higher = better
+#      structural match.  This follows ROCA (Gumeli et al., CVPR 2022)
+#      which uses geometric fit as a re-ranking signal.
+#
+#   2. Trimmed one-sided Chamfer score (S_chamfer)
+#      Nearest-neighbour distances from observed to CAD, top 10% trimmed
+#      to handle partial overlap.  Inspired by U-RED (Di et al., 2023)
+#      which uses a trimmed Chamfer variant for partial-shape comparison.
 #      Lower = better geometric fit.
 #
-# The re-ranked candidate list and the best candidate's RANSAC transformation
-# are passed to Step C for coarse alignment (avoiding recomputation).
+# The RANSAC transformation of the best candidate is forwarded to Step C
+# as ICP initialisation, avoiding redundant descriptor computation.
+# This reuse pattern follows FreeZe (Caraffa et al., ECCV 2025) which
+# chains coarse registration into ICP refinement.
 #
 # Inputs:
 #   - Fused candidate shortlist (Step B1 / Step 6)
@@ -245,6 +255,12 @@ class GeometryReRanker:
         voxel_size: float,
     ):
         """Run GeDi descriptor matching + RANSAC on a CAD candidate.
+
+        GeDi (Poiesi & Boscaini, 2022) descriptors are matched via
+        RANSAC (Fischler & Bolles, 1981) with mutual filtering.
+        The inlier count serves as S_GeDi — a higher count indicates
+        better geometric compatibility (Yang et al., Teaser 2020
+        uses a similar inlier-based fitness measure).
 
         Args:
             obs_gedi: GeDiResult for the observed cloud.

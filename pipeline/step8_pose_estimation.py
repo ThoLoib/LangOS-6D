@@ -1,30 +1,36 @@
 # =============================================================================
-# pipeline/step8_pose_estimation.py – Schritt 8: 6D Pose Estimation
+# pipeline/step8_pose_estimation.py – Thesis Step C (part 2): 6D Pose
 # =============================================================================
 #
-# Ziel:
-#   Die 6D-Pose (3D-Rotation + 3D-Translation) des erkannten Objekts
-#   in der Kamera-Koordinatenebene schätzen, unter Verwendung des
-#   skalierten CAD-Modells.
+# Thesis reference: Section 3.4, Step C — Pose Estimation
 #
-# Optionen:
-#   • FoundationPose – NVIDIA, State-of-the-Art für model-based Pose
-#     Runs in a separate container, called via HTTP.
+# Estimates the 6D pose (3D rotation + 3D translation) of the detected
+# object in camera coordinates, using the scaled CAD model from Step 7.
+#
+# Two backends:
+#
+#   • FoundationPose (Wen et al., CVPR 2024)
+#     Model-based 6D pose estimation via render-and-compare with neural
+#     object field.  Runs in a separate Docker container, called via HTTP
+#     (same isolation pattern as GeDi).
 #     Ref: https://github.com/NVlabs/FoundationPose
 #
-#   • ICP + RANSAC – Klassische geometrische Registrierung
-#     Ref: Open3D ICP Tutorial
+#   • ICP (Besl & McKay, 1992) — classical fallback
+#     FPFH-based RANSAC (Rusu et al., 2009) for coarse alignment, then
+#     Point-to-Plane ICP refinement.  Correspondence distance: 3×voxel_size
+#     (thesis Sec. 3.4).  When a coarse alignment from Step 7 is available,
+#     RANSAC is skipped and ICP starts from that transform.
 #
 # Inputs:
-#   - Skaliertes CAD-Modell (Schritt 7)
-#   - RGB-Bild (original)
-#   - Tiefenbild (optional, für ICP)
-#   - Segmentierungsmaske (Schritt 1)
-#   - Kameraintrinsics
+#   - Scaled CAD model (Step 7)
+#   - RGB image (original)
+#   - Depth image (required for FoundationPose, optional for ICP)
+#   - Segmentation mask (Step 1)
+#   - Camera intrinsics
 #
 # Outputs:
-#   - 4×4 Transformationsmatrix [R|t] (Kamera ← Objekt)
-#   - Konfidenzschätzung
+#   - 4×4 transformation matrix [R|t] (camera ← object)
+#   - Confidence estimate
 # =============================================================================
 
 import logging
@@ -222,16 +228,14 @@ class PoseEstimator:
         scale: float,
         initial_pose: Optional[np.ndarray] = None,
     ) -> PoseEstimationResult:
-        """6D Pose via ICP-Registrierung.
-
-        ICP (Iterative Closest Point) registriert die beobachtete
-        Punktwolke mit dem CAD-Modell durch iterative Minimierung
-        der Punkt-zu-Punkt-Distanz.
+        """6D Pose via ICP registration (Besl & McKay, 1992).
 
         Pipeline:
-        1. CAD-Modell laden und Punktwolke sampeln.
-        2. RANSAC für grobe initiale Ausrichtung.
-        3. Point-to-Plane ICP für feine Verfeinerung.
+        1. CAD model → sampled point cloud (scaled).
+        2. FPFH RANSAC (Rusu et al., 2009) for coarse alignment —
+           skipped when initial_pose is provided from Step 7.
+        3. Point-to-Plane ICP refinement with correspondence distance
+           3×voxel_size (thesis Sec. 3.4).
         """
         if observed_pc is None:
             logger.warning("Keine Punktwolke für ICP verfügbar.")

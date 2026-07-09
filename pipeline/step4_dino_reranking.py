@@ -1,28 +1,30 @@
 # =============================================================================
-# pipeline/step4_dino_reranking.py – Schritt 4: Bildbasiertes Re-Ranking
+# pipeline/step4_dino_reranking.py – Thesis Step B1: Appearance Channel S_view
 # =============================================================================
 #
-# Ziel:
-#   Die CLIP-Kandidaten (Schritt 3) werden anhand visueller Aehnlichkeit
-#   neu gerankt: ROI-Bild vs. vorgerenderte Ansichten der CAD-Modelle.
+# Computes the appearance score S_view (thesis Sec. 3.3, Step B1).
 #
-# Pipeline:
-#   Fuer jeden Kandidaten:
-#     Renderings des CAD-Modells -> DINOv2 Features
-#     ROI-Bild -> DINOv2 Features
-#     -> Cosine Similarity -> Re-Ranking
+# Each CAD model is pre-rendered from V viewpoints (template-matching
+# paradigm from CNOS, Nguyen et al., 2023). At query time, the ROI image
+# and all reference views are encoded; cosine similarity is computed per
+# view. Per-object scores are aggregated via softmax-weighted top-k_v
+# fusion — a training-free approximation of the learned query-conditioned
+# attention in OPEN (Chu et al., 2024, Eq. 2–3).
 #
-# Modell:
-#   DINOv2 – Self-supervised Vision Transformer (Meta)
-#     Ref: https://github.com/facebookresearch/dinov2
-#     Paper: "DINOv2: Learning Robust Visual Features without Supervision"
-#             (Oquab et al., 2023)
+# Default: k_v = 5 (CNOS convention, validated for object identity
+# assignment; Nguyen et al., 2023), τ = 0.5.
 #
-# Adaptiert aus: OSCAR – object_retrieval/retrieval_combi_clip.py
-#                 (encode_image_dino, load_ref_dino_embeddings)
+# Encoder alternatives (thesis Sec. 3.5):
+#   • DINOv2 (default) — self-supervised ViT; CLS-token descriptor
+#     (Oquab et al., 2023). CLS token following CNOS convention.
+#   • SigLIP (ablation E4) — sigmoid-loss language-image encoder
+#     (Zhai et al., 2023). Used as primary visual stage in ROOMELSA
+#     winning entry (Nguyen et al., 2025 — SHREC 2025).
+#
+# Adapted from: OSCAR – retrieval_combi_clip.py (Pulli et al., 2025)
 #
 # Outputs:
-#   - Verfeinerte Top-K Kandidaten (z.B. K=5)
+#   - Refined Top-K candidates with appearance scores
 # =============================================================================
 
 import hashlib
@@ -54,13 +56,17 @@ def _aggregate_view_scores(
 ) -> Tuple[float, int]:
     """Aggregate per-view similarity scores into a single object score.
 
-    Inspired by the query-guided multi-view attention in OPEN (Eq. 2-3):
-      alpha_k = softmax(sim_k / tau)
-      score_obj = sum_k alpha_k * sim_k
+    Training-free approximation of the learned query-conditioned view
+    attention in OPEN (Chu et al., 2024, Eq. 2–3):
+      α_k = softmax(sim_k / τ)        — view attention weights
+      S_obj = Σ_k α_k · sim_k          — weighted aggregation
 
-    This is a practical inference-time approximation: instead of learned
-    attention, we use the raw cosine similarities as logits and apply a
-    temperature-controlled softmax to produce view weights.
+    Where OPEN learns the attention weights via a cross-attention module,
+    we use the raw cosine similarities as logits with temperature τ to
+    produce view weights at inference time (no training required).
+
+    Default k_v = 5 follows the CNOS convention (Nguyen et al., 2023)
+    validated for template-based object identity assignment.
 
     Args:
         scores: (V,) tensor of cosine similarities for V views of one object.
@@ -237,8 +243,9 @@ class DINOReRanker:
     def _pool_features(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
         """Pool patch tokens into a single feature vector.
 
-        For DINOv2: CLS token (index 0) or mean pooling over all tokens.
-        For SigLIP: CLS token (index 0) — SigLIP ViT also prepends a CLS token.
+        Default: CLS token (index 0) — the CNOS convention (Nguyen et al.,
+        2023) uses CLS-token cosine similarity for DINOv2 descriptors.
+        Mean pooling over patch tokens is retained as legacy option.
 
         Args:
             last_hidden_state: (B, num_tokens, D) from the ViT.

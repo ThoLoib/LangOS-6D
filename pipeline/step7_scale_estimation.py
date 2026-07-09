@@ -1,31 +1,41 @@
 # =============================================================================
-# pipeline/step7_scale_estimation.py – Schritt 7: Ausrichtung + Skalenbestimmung
+# pipeline/step7_scale_estimation.py – Thesis Step C (part 1): Coarse Alignment
+#                                       + Scale Estimation
 # =============================================================================
 #
-# Ziel:
-#   1. Coarse Alignment: CAD-Modell ueber RANSAC + ICP an die beobachtete
-#      Punktwolke ausrichten -> korrekte Orientierung.
-#   2. Partial-Aware Scale: Skalierungsfaktor nur aus den gut sichtbaren
-#      Achsen ableiten (partielle Punktwolke -> nicht alle Dimensionen
-#      sind vollstaendig beobachtet).
+# Thesis reference: Section 3.4, Step C
 #
-# Problem bei partiellen Punktwolken:
-#   Von einer einzelnen Kameraansicht sehen wir nur die Vorderseite.
-#   Die Tiefe (Achse von Kamera weg) ist systematisch unterschaetzt.
-#   Z.B. bei einer zylindrischen Dose: Breite und Hoehe sind fast
-#   vollstaendig sichtbar, aber die Tiefe nur ~50%.
+# Two-stage process:
 #
-#   Loesung: Nach Alignment die 2 am besten sichtbaren Achsen (groesste
-#   Beobachtungs-/CAD-Ratio) fuer die Skalierung verwenden.
+#   1. Coarse Alignment (RANSAC + ICP)
+#      Registers the CAD model to the observed partial point cloud.
+#      When Sub-step B2 provides a RANSAC transformation, that is used
+#      directly as ICP initialisation — avoiding redundant descriptor
+#      computation.  This reuse pattern follows FreeZe (Caraffa et al.,
+#      ECCV 2025) which chains coarse registration into ICP refinement.
+#
+#      Descriptors: GeDi (Poiesi & Boscaini, 2022) preferred, with FPFH
+#      (Rusu et al., ICRA 2009) as fallback when the GeDi service is
+#      unavailable.
+#
+#      ICP: Point-to-Plane with correspondence distance 3×voxel_size
+#      (thesis Sec. 3.4).
+#
+#   2. Partial-Aware Scale Estimation
+#      From a single depth view only the front surface is observed; the
+#      depth axis is systematically underestimated.  After alignment the
+#      per-axis observed/CAD ratios are computed; the 2 axes with the
+#      highest ratio (= best visibility) determine the scale factor.
 #
 # Inputs:
-#   - Punktwolke des Objekts (Schritt 2)
-#   - Ausgewaehltes CAD-Modell (Schritt 6)
+#   - Observed partial point cloud (Step 2)
+#   - Selected CAD model (Step B1/B2)
+#   - Optional: RANSAC transform from Sub-step B2
 #
 # Outputs:
-#   - Skalierungsfaktor (float)
-#   - Coarse-Alignment-Transformation (4x4)
-#   - Skaliertes CAD-Modell
+#   - Scale factor (float)
+#   - Coarse alignment transformation (4×4)
+#   - Scaled CAD model
 # =============================================================================
 
 import logging
@@ -259,21 +269,25 @@ class ScaleEstimator:
     # -----------------------------------------------------------------------
 
     def _coarse_align(self, source, target, init_transform=None):
-        """RANSAC global registration + ICP refinement.
+        """RANSAC global registration + ICP refinement (thesis Step C).
 
-        Uses GeDi descriptors when available (thesis Step C), falling back
-        to FPFH when GeDi repo/checkpoint is not configured.
+        Uses GeDi descriptors (Poiesi & Boscaini, 2022) when available,
+        falling back to FPFH (Rusu et al., ICRA 2009) otherwise.
 
         If *init_transform* is provided (e.g. from Sub-step B2 RANSAC),
-        the RANSAC step is skipped and ICP is initialised directly with it.
+        the descriptor computation is skipped and ICP is initialised
+        directly — following the FreeZe (Caraffa et al., 2025) pattern
+        of chaining coarse registration into ICP refinement.
+
+        ICP correspondence distance: 3×voxel_size (thesis Sec. 3.4).
 
         Args:
-            source: Beobachtete Punktwolke (Open3D PointCloud).
-            target: CAD-Punktwolke (Open3D PointCloud).
+            source: Observed point cloud (Open3D PointCloud).
+            target: CAD point cloud (Open3D PointCloud).
             init_transform: Optional 4x4 initial transformation (from B2).
 
         Returns:
-            ICP-RegistrationResult oder None bei Fehler.
+            ICP RegistrationResult or None on failure.
         """
         import open3d as o3d
 

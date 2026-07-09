@@ -1,5 +1,5 @@
 # =============================================================================
-# pipeline/utils.py – Gemeinsame Hilfsfunktionen für alle Pipeline-Schritte
+# pipeline/utils.py – Shared utilities for all pipeline steps
 # =============================================================================
 
 import os
@@ -100,6 +100,11 @@ def trimmed_chamfer_distance(
     and return the mean of the remaining distances.  This is robust to
     partial overlap — the trimmed tail absorbs query regions that have
     no corresponding CAD surface (e.g. back faces, occluded areas).
+
+    Inspired by the trimmed Chamfer variant in U-RED (Di et al., 2023,
+    "U-RED: Unsupervised 3D Shape Retrieval and Deformation for Partial
+    Point Clouds") which uses trimmed distances for partial-to-complete
+    shape comparison.
 
     Thesis reference: Sec. 3.3 (Sub-step B2), Equation for S_chamfer.
 
