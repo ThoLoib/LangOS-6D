@@ -9,7 +9,7 @@
 #   - PyTorch with CUDA support (pointnet2_ops CUDA extension)
 #   - CUDA 11.x (for compilation)
 #   - torchgeometry 0.1.2 (or kornia fallback)
-#   - Open3D 0.15-0.17
+#   - Open3D 0.18 (needs to match PyTorch version)
 #
 # These conflict with OSCAR's PyTorch 2.x / CUDA 12.2 / Open3D 0.18 stack
 # (pointnet2_ops CUDA extension must be compiled in the same CUDA env).
@@ -31,7 +31,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-dev python3-pip \
-    git wget ca-certificates \
+    git wget ca-certificates unzip \
     libgl1 libglib2.0-0 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -43,8 +43,8 @@ RUN pip3 install --no-cache-dir \
 # GeDi dependencies
 # torchgeometry 0.1.2 may fail with PyTorch 2.x; fall back to kornia
 RUN pip3 install --no-cache-dir \
-    open3d==0.17.0 \
-    gdown \
+    open3d==0.18.0 \
+    tensorboard \
     "numpy<2" \
     flask \
     scipy \
@@ -56,8 +56,15 @@ RUN git clone https://github.com/fabiopoiesi/gedi.git /gedi && \
     cd /gedi/backbones/pointnet2_ops_lib && \
     pip3 install .
 
-# Download pretrained checkpoint
-RUN cd /gedi && python3 download_data.py
+# Download pretrained checkpoint + assets via gdown CLI
+# (install fresh gdown AFTER pointnet2_ops to avoid version downgrade)
+RUN pip3 install --no-cache-dir "gdown>=4.7.3" && \
+    mkdir -p /gedi/data/chkpts /gedi/data/assets && \
+    cd /gedi/data && \
+    gdown 1Lpep5QigALjk60h8bNJAUH3DnxtnGcZX -O chkpts.zip && \
+    unzip -o chkpts.zip -d chkpts && rm chkpts.zip && \
+    gdown 1EEMzusKM2QPi9u3o3qsgAwPPX6c_SlBd -O assets.zip && \
+    unzip -o assets.zip -d assets && rm assets.zip
 
 # Verify
 RUN python3 -c "\
