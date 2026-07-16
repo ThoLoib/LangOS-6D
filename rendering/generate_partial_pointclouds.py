@@ -101,12 +101,14 @@ def sample_visible_surface(
         except (AttributeError, IndexError):
             pass
 
-    # Resample to exact target count
+    # Resample to exact target count (deterministic seed for reproducibility)
+    content_hash = hash(vis_points.tobytes()) & 0xFFFFFFFF
+    rng = np.random.RandomState(content_hash)
     n = len(vis_points)
     if n >= num_points:
-        indices = np.random.choice(n, num_points, replace=False)
+        indices = rng.choice(n, num_points, replace=False)
     else:
-        indices = np.random.choice(n, num_points, replace=True)
+        indices = rng.choice(n, num_points, replace=True)
 
     vis_points = vis_points[indices]
     if colors is not None:
@@ -115,10 +117,30 @@ def sample_visible_surface(
     return vis_points, colors
 
 
+def _discover_view_indices(obj_images_dir: str, obj_id: str) -> list:
+    """Discover all available view indices by finding CamMatrix .npy files.
+
+    Supports any number of views (ablation O4: V in {8, 16, 32}).
+    Returns sorted list of integer view indices.
+    """
+    import re
+    indices = []
+    pattern = re.compile(rf"^{re.escape(obj_id)}_view(\d+)_CamMatrix\.npy$")
+    for fname in os.listdir(obj_images_dir):
+        m = pattern.match(fname)
+        if m:
+            indices.append(int(m.group(1)))
+    return sorted(indices)
+
+
 def process_object(obj_id: str, cad_dir: str, images_dir: str,
                    num_points: int, overwrite: bool = False,
                    mesh_path: Optional[str] = None) -> int:
     """Generate partial point clouds for all views of one object.
+
+    Auto-discovers all available camera matrices (view0, view1, ..., viewN)
+    so that the same script works for V=8, 16, or 32 rendered views
+    (thesis ablation O4).
 
     Uses front-face culling to approximate visibility from each camera viewpoint.
 
@@ -154,18 +176,20 @@ def process_object(obj_id: str, cad_dir: str, images_dir: str,
             pass
     normalize_mesh(mesh)
 
+    # Auto-discover all available views from camera matrices
+    view_indices = _discover_view_indices(obj_images_dir, obj_id)
+    if not view_indices:
+        logger.warning("No camera matrices found for %s", obj_id)
+        return 0
+
     count = 0
-    for view_idx in range(8):
+    for view_idx in view_indices:
         out_path = os.path.join(obj_images_dir, f"{obj_id}_view{view_idx}_partial.npz")
         if os.path.isfile(out_path) and not overwrite:
             count += 1
             continue
 
         cam_path = os.path.join(obj_images_dir, f"{obj_id}_view{view_idx}_CamMatrix.npy")
-        if not os.path.isfile(cam_path):
-            logger.debug("No camera matrix for %s view %d", obj_id, view_idx)
-            continue
-
         RT = load_camera_matrix(cam_path)
         R = RT[:3, :3]
         t = RT[:3, 3]

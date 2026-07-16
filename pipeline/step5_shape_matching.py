@@ -137,51 +137,80 @@ def normalize_pointcloud(
     points: np.ndarray,
     colors: Optional[np.ndarray] = None,
     num_points: int = 10000,
+    jitter_std: float = 0.001,
 ) -> np.ndarray:
-    """Normalisiert eine Punktwolke für ULIP-2.
+    """Normalize and resample a point cloud for ULIP-2 / PointBERT input.
 
-    Schritte:
-    1. Zentriere auf den Schwerpunkt (zero-mean) – nur XYZ.
-    2. Skaliere auf Einheitskugel (max. Distanz = 1) – nur XYZ.
-    3. Sample/Upsample auf fixe Punktanzahl.
-    4. Optional: RGB-Farben anhängen → (N, 6).
+    Preprocessing pipeline (thesis Sec. 3.3, Step B1):
+      1. Center on centroid (zero-mean) — XYZ only.
+      2. Scale to unit sphere (max distance = 1) — XYZ only.
+      3. Resample to fixed point count (10,000 for ULIP-2 PointBERT).
+         When upsampling (N < num_points), sampling with replacement is
+         used and duplicated points receive per-point Gaussian jitter
+         (thesis Sec. 3.5.2) to prevent coincident duplicates that would
+         collapse PointBERT's FPS + kNN local-neighbourhood groupings.
+         Gaussian jitter is a standard point-cloud augmentation
+         (Qi et al., 2017 — PointNet) also applied during Point-BERT
+         and ULIP-2 pretraining, keeping the input within the encoder's
+         training distribution.
+      4. Optionally append RGB colors → (N, 6).
 
-    ULIP-2 PointBERT Colored erwartet 10.000 Punkte mit 6 Kanälen (xyzrgb).
+    ULIP-2 PointBERT Colored expects 10,000 points with 6 channels (xyzrgb).
 
     Args:
-        points: Punktwolke (N, 3) – XYZ-Koordinaten.
-        colors: Optionale Farben (N, 3) – RGB in [0, 1].
-                Falls None und farbiger Encoder gewünscht, werden Nullen
-                als Platzhalter verwendet.
-        num_points: Gewünschte Anzahl Punkte.
+        points: Point cloud (N, 3) — XYZ coordinates.
+        colors: Optional colors (N, 3) — RGB in [0, 1].
+                If None and colored encoder is used, zeros are substituted.
+        num_points: Target point count.
+        jitter_std: Standard deviation of per-point Gaussian noise applied
+                    to duplicated points during upsampling (thesis Sec. 3.5.2).
+                    Default 0.001 (0.1% of unit-sphere radius). Set to 0 to
+                    disable jitter.
 
     Returns:
-        Normalisierte Punktwolke als (num_points, 3) oder (num_points, 6).
+        Normalized point cloud as (num_points, 3) or (num_points, 6).
     """
     if len(points) == 0:
         dim = 6 if colors is not None else 3
         return np.zeros((num_points, dim), dtype=np.float32)
 
-    # --- Zentrierung ---
+    # --- Centering ---
     centroid = points.mean(axis=0)
     points_centered = points - centroid
 
-    # --- Skalierung auf Einheitskugel ---
+    # --- Unit-sphere scaling ---
     max_dist = np.linalg.norm(points_centered, axis=1).max()
     if max_dist > 0:
         points_centered = points_centered / max_dist
 
-    # --- Resampling auf fixe Punktanzahl ---
+    # --- Resampling to fixed point count ---
+    # Deterministic seed derived from point cloud content (thesis Sec. 3.7:
+    # global seed = 42 for reproducibility; content-hash achieves the same
+    # per-cloud determinism without requiring call-site seed management).
+    content_hash = hash(points_centered.tobytes()) & 0xFFFFFFFF
+    rng = np.random.RandomState(content_hash)
     n = len(points_centered)
     if n >= num_points:
-        indices = np.random.choice(n, num_points, replace=False)
+        # Downsample: uniform random subset (no replacement)
+        indices = rng.choice(n, num_points, replace=False)
+        result_xyz = points_centered[indices].astype(np.float32)
     else:
-        indices = np.random.choice(n, num_points, replace=True)
-
-    result_xyz = points_centered[indices].astype(np.float32)
+        # Upsample: sample with replacement + Gaussian jitter on duplicates
+        # (thesis Sec. 3.5.2; Qi et al., 2017 — PointNet augmentation).
+        indices = rng.choice(n, num_points, replace=True)
+        result_xyz = points_centered[indices].astype(np.float32)
+        if jitter_std > 0:
+            # Identify duplicated points: any index that appears more than
+            # once contributes at least one duplicate copy.  We jitter ALL
+            # upsampled points (not just the extra copies) because with heavy
+            # upsampling (e.g. 800 → 10k) almost every sample is a duplicate
+            # and selective masking would be fragile.  The jitter magnitude
+            # (0.1% of unit sphere) is small enough that the single original
+            # occurrence of each point is negligibly perturbed.
+            noise = rng.normal(0.0, jitter_std, size=result_xyz.shape).astype(np.float32)
+            result_xyz += noise
 
     if colors is not None:
-        # RGB-Farben normalisieren auf [0, 1] falls nötig
         if colors.max() > 1.0:
             colors = colors / 255.0
         result_rgb = colors[indices].astype(np.float32)
@@ -843,15 +872,17 @@ class ShapeMatcher:
             and self.config.ulip2_backbone == "pointbert_colored"
         )
 
+        jitter = getattr(self.config, "ulip2_jitter_std", 0.001)
+
         if use_colors:
             # xyzrgb → (N, 6)
             if colors is None:
-                # Kein RGB vorhanden → Nullen als Platzhalter
                 colors = np.zeros_like(points)
             pts_norm = normalize_pointcloud(
                 points,
                 colors=colors,
                 num_points=self.config.ulip2_num_points,
+                jitter_std=jitter,
             )  # (N, 6)
         else:
             # xyz only → (N, 3)
@@ -859,6 +890,7 @@ class ShapeMatcher:
                 points,
                 colors=None,
                 num_points=self.config.ulip2_num_points,
+                jitter_std=jitter,
             )  # (N, 3)
 
         # (1, N, C) Tensor
@@ -1025,11 +1057,15 @@ class ShapeMatcher:
     ) -> Dict[str, List[Tuple[int, str]]]:
         """Discover partial .npz files grouped by object ID.
 
+        Respects config.num_views to limit how many views per object are
+        loaded (thesis ablation O4: V in {8, 16, 32}).
+
         Returns:
             {obj_id: [(view_idx, npz_path), ...]}
         """
         import re
         result: Dict[str, List[Tuple[int, str]]] = {}
+        max_views = getattr(self.config, "num_views", None)
 
         if not os.path.isdir(partial_pc_dir):
             return result
@@ -1047,6 +1083,9 @@ class ShapeMatcher:
                     views.append((view_idx, os.path.join(obj_dir, fname)))
 
             if views:
+                views.sort()
+                if max_views is not None:
+                    views = views[:max_views]
                 result[entry] = views
 
         return result
@@ -1253,6 +1292,13 @@ class ShapeMatcher:
         # PC-Embedding (immer nötig bei mode="pc" oder "both")
         pc_emb: Optional[torch.Tensor] = None
         if mode in ("pc", "both"):
+            n_query = len(observed_pc.points)
+            target_n = self.config.ulip2_num_points
+            if n_query < target_n:
+                logger.info(
+                    "  Query PC has %d points → upsampled to %d (%.1f× duplication)",
+                    n_query, target_n, target_n / max(n_query, 1),
+                )
             colors = getattr(observed_pc, "colors", None)
             pc_emb = self.encode_pointcloud(
                 observed_pc.points, colors=colors
@@ -1352,6 +1398,18 @@ class ShapeMatcher:
                 nan_mask.sum().item(), len(sims),
             )
             sims = torch.where(nan_mask, torch.tensor(-1.0, device=sims.device), sims)
+
+        # --- Score distribution diagnostics ---
+        valid_sims = sims[~nan_mask] if nan_mask.any() else sims
+        if len(valid_sims) > 0:
+            logger.info(
+                "  S_shape score distribution: min=%.4f, max=%.4f, "
+                "mean=%.4f, std=%.4f, spread=%.4f (%d objects)",
+                valid_sims.min().item(), valid_sims.max().item(),
+                valid_sims.mean().item(), valid_sims.std().item(),
+                (valid_sims.max() - valid_sims.min()).item(),
+                len(valid_sims),
+            )
 
         # --- Top-K ---
         k = min(top_k, len(obj_ids))

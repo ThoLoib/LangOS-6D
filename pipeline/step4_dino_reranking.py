@@ -284,11 +284,12 @@ class DINOReRanker:
     def _cache_path(self, ref_dir: str) -> str:
         """Pfad zur Cache-Datei im ref_dir."""
         fp = self._dir_fingerprint(ref_dir)
+        nv = getattr(self.config, "num_views", None) or "all"
         if self._encoder_type == "siglip":
             model_tag = self.config.siglip_model_name.replace("/", "_")
-            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_{fp}.pt")
+            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_v{nv}_{fp}.pt")
         model_tag = self.config.dino_model_name.replace("/", "_")
-        return os.path.join(ref_dir, f".dino_cache_{model_tag}_{fp}.pt")
+        return os.path.join(ref_dir, f".dino_cache_{model_tag}_v{nv}_{fp}.pt")
 
     def _try_load_cache(self, ref_dir: str) -> bool:
         """Versucht, gecachte Embeddings zu laden.
@@ -374,15 +375,23 @@ class DINOReRanker:
         logger.info(f"Lade Referenzbilder aus: {ref_dir} (kein Cache, berechne Embeddings...)")
 
         # Schritt 1: Alle Bildpfade sammeln
+        # Respect config.num_views to limit how many views per object are used
+        # (thesis ablation O4: V in {8, 16, 32}).
+        max_views = getattr(self.config, "num_views", None)
         all_paths: List[str] = []
         all_labels: List[str] = []
         for label in sorted(os.listdir(ref_dir)):
             label_dir = os.path.join(ref_dir, label)
             if not os.path.isdir(label_dir):
                 continue
-            for fname in os.listdir(label_dir):
-                if not fname.lower().endswith((".png", ".jpg", ".jpeg")):
-                    continue
+            view_files = sorted([
+                fname for fname in os.listdir(label_dir)
+                if fname.lower().endswith((".png", ".jpg", ".jpeg"))
+                and not fname.endswith("_bg.png")
+            ])
+            if max_views is not None:
+                view_files = view_files[:max_views]
+            for fname in view_files:
                 all_paths.append(os.path.join(label_dir, fname))
                 all_labels.append(label)
 

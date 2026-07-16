@@ -95,6 +95,13 @@ class PipelineConfig:
     dino_view_topk: int = 5       # Number of top views for topk_softmax (CNOS default, thesis Table 4.1)
     dino_view_temperature: float = 0.5  # Softmax temperature (lower = sharper)
 
+    # Number of rendered views per object to use at inference (thesis ablation O4).
+    # Views are FPS-ordered from a 42-vertex icosphere (CNOS, Nguyen et al. 2023),
+    # so the first N views always give optimal angular coverage for that N.
+    # Must be <= the number of views actually rendered/available on disk.
+    # Set to None to use all available views.  Default 42 (full icosphere).
+    num_views: Optional[int] = 42  # O4: {8, 16, 42}
+
     # Pfad zu vorgerenderten Referenzbildern
     reference_images_dir: str = ""  # z.B. "object_images/ycbv_gso/"
 
@@ -114,6 +121,7 @@ class PipelineConfig:
     ulip2_backbone: str = "pointbert_colored"  # "pointbert_colored" | "pointbert" | "pointnext"
     ulip2_top_k: int = 5          # Anzahl der Shape-Kandidaten
     ulip2_num_points: int = 10000  # Punktanzahl für normalisierte Point Clouds
+    ulip2_jitter_std: float = 0.001  # Gaussian jitter σ on upsampled points (thesis Sec. 3.5.2; 0 = off)
     ulip2_use_colors: bool = True  # xyzrgb (True) oder nur xyz (False)
     ulip2_embed_dim: int = 1280    # Embedding-Dimension (1280 für ViT-bigG-14, 512 für ViT-B)
 

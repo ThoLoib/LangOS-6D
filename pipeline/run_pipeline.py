@@ -319,9 +319,9 @@ class OSCARPlusPipeline:
             results["clip_retrieval"] = clip_result
             timings["step3_clip"] = time.time() - t0
 
-            logger.info(f"  ✓ {len(clip_result.candidates)} CLIP-Kandidaten")
+            logger.info(f"  ✓ {len(clip_result.candidates)} CLIP candidates (S_text, full database)")
             for i, c in enumerate(clip_result.candidates[:5]):
-                logger.info(f"    {i+1}. {c.object_id} (Score: {c.score:.4f})")
+                logger.info(f"    {i+1}. {c.object_id} (S_text={c.score:.4f})")
 
             if self.debug_viz:
                 loc = results["localization"]
@@ -347,11 +347,13 @@ class OSCARPlusPipeline:
             results["dino_reranking"] = dino_result
             timings["step4_dino"] = time.time() - t0
 
-            logger.info(f"  ✓ {len(dino_result.candidates)} DINOv2-Kandidaten")
+            encoder_name = "SigLIP" if self.config.appearance_encoder == "siglip" else "DINOv2"
+            logger.info(f"  ✓ {len(dino_result.candidates)} {encoder_name} candidates "
+                        f"(S_view, top-{self.config.dino_view_topk} softmax, full database)")
             for i, c in enumerate(dino_result.candidates[:5]):
                 logger.info(
                     f"    {i+1}. {c.object_id} "
-                    f"(DINO: {c.dino_score:.4f}, CLIP: {c.clip_score:.4f})"
+                    f"(S_view={c.dino_score:.4f}, S_text={c.clip_score:.4f})"
                 )
 
             if self.debug_viz:
@@ -411,12 +413,9 @@ class OSCARPlusPipeline:
 
             pc = results["point_cloud"]
             if pc:
-                # Optional: nur CLIP/DINO-Kandidaten vergleichen
+                # Full-database scoring (thesis Sec. 3.5.2): all three channels
+                # score every CAD model; no early pruning by any single channel.
                 candidate_ids = None
-                if "clip_retrieval" in results:
-                    candidate_ids = self.clip_retriever.get_candidate_labels(
-                        results["clip_retrieval"]
-                    )
 
                 query_img = results.get("localization", None)
                 shape_result = self.shape_matcher.match(
@@ -427,10 +426,12 @@ class OSCARPlusPipeline:
                 results["shape_matching"] = shape_result
                 timings["step5_ulip"] = time.time() - t0
 
-                logger.info(f"  ✓ {len(shape_result.candidates)} Shape-Kandidaten")
+                encoder_name = "Uni3D" if self.config.shape_encoder == "uni3d" else "ULIP-2"
+                logger.info(f"  ✓ {len(shape_result.candidates)} {encoder_name} candidates "
+                            f"(S_shape, mode={self.config.ulip2_mode}, full database)")
                 for i, c in enumerate(shape_result.candidates[:5]):
                     logger.info(
-                        f"    {i+1}. {c.object_id} (Shape: {c.shape_score:.4f})"
+                        f"    {i+1}. {c.object_id} (S_shape={c.shape_score:.4f})"
                     )
 
                 if self.debug_viz:
@@ -463,9 +464,17 @@ class OSCARPlusPipeline:
             timings["step6_fusion"] = time.time() - t0
 
             if fusion_result.best_match:
+                bm = fusion_result.best_match
                 logger.info(
-                    f"  ✓ Bestes Modell: {fusion_result.best_match.object_id} "
-                    f"(Fusionierter Score: {fusion_result.best_match.fused_score:.4f})"
+                    f"  ✓ Best match: {bm.object_id} "
+                    f"(fused={bm.fused_score:.4f} | "
+                    f"S_text={bm.clip_score:.4f}, S_view={bm.dino_score:.4f}, "
+                    f"S_shape={bm.ulip_score:.4f})"
+                )
+                logger.info(
+                    f"  Method: {fusion_result.method} | "
+                    f"Weights: clip={self.config.weight_clip}, dino={self.config.weight_dino}, "
+                    f"ulip={self.config.weight_ulip}"
                 )
 
             if self.debug_viz:
@@ -490,7 +499,10 @@ class OSCARPlusPipeline:
         ):
             t0 = time.time()
             logger.info("─" * 40)
-            logger.info("Sub-step B2: Geometry Re-ranking")
+            logger.info("Sub-step B2: Geometry Re-ranking (GeDi + Chamfer)")
+            logger.info("  Signal: %s | Top-K: %d",
+                        self.config.geometry_reranking_signal,
+                        self.config.geometry_reranking_top_k)
 
             from .step_b2_geometry_reranking import GeometryReRanker
             reranker = GeometryReRanker(self.config)
@@ -503,12 +515,30 @@ class OSCARPlusPipeline:
             results["geometry_reranking"] = b2_result
             timings["step_b2_geometry"] = time.time() - t0
 
-            if b2_result.best_candidate:
+            # Detailed per-candidate log
+            logger.info("  ┌─────────────────────────────────────────────────────────────────┐")
+            logger.info("  │  B2 Geometry Re-ranking Results                                 │")
+            logger.info("  ├─────┬──────────────────────────┬────────┬────────────┬──────────┤")
+            logger.info("  │ Rank│ Object ID                │ GeDi   │ Chamfer    │ Geo Score│")
+            logger.info("  ├─────┼──────────────────────────┼────────┼────────────┼──────────┤")
+            for i, gc in enumerate(b2_result.candidates, 1):
+                chamfer_str = f"{gc.chamfer_score:.6f}" if gc.chamfer_score < float("inf") else "    N/A   "
+                marker = " ◄" if i == 1 else ""
                 logger.info(
-                    "  ✓ B2 winner: %s (geo_score=%.4f)",
-                    b2_result.best_candidate.object_id,
-                    b2_result.best_candidate.geometry_score,
+                    "  │ %3d │ %-24s │ %6.0f │ %10s │ %8.4f │%s",
+                    i, gc.object_id[:24], gc.gedi_score,
+                    chamfer_str, gc.geometry_score, marker,
                 )
+            logger.info("  └─────┴──────────────────────────┴────────┴────────────┴──────────┘")
+
+            if b2_result.best_candidate:
+                best = b2_result.best_candidate
+                logger.info(
+                    "  ✓ B2 winner: %s (GeDi inliers=%d, fitness=%.4f)",
+                    best.object_id, int(best.gedi_score), best.ransac_fitness,
+                )
+                if best.ransac_transformation is not None:
+                    logger.info("  ✓ RANSAC transform forwarded to Step 7 as ICP init")
                 b2_ransac_transform = b2_result.best_transformation
 
         # Für Schritte 7+8 und Debug-Viz werden diese Variablen geteilt
@@ -611,9 +641,19 @@ class OSCARPlusPipeline:
                 timings["step7_scale"] = time.time() - t0
 
                 logger.info(
-                    f"  ✓ Skalierungsfaktor: {scale_result.scale_factor:.4f} "
-                    f"(Konfidenz: {scale_result.confidence:.2f})"
+                    f"  ✓ Scale factor: {scale_result.scale_factor:.4f} "
+                    f"(confidence={scale_result.confidence:.2f}, "
+                    f"method={scale_result.method})"
                 )
+                if scale_result.visible_axes is not None:
+                    logger.info(
+                        f"  Per-axis ratios: {np.round(scale_result.scale_per_axis, 3).tolist()} "
+                        f"→ used axes {scale_result.visible_axes.tolist()}"
+                    )
+                if b2_ransac_transform is not None:
+                    logger.info("  ICP init: from B2 RANSAC transform (GeDi)")
+                else:
+                    logger.info("  ICP init: from FPFH RANSAC (no B2 transform)")
 
         # =================================================================
         # Schritt 8: Pose Estimation
@@ -656,8 +696,13 @@ class OSCARPlusPipeline:
                 timings["step8_pose"] = time.time() - t0
 
                 logger.info(
-                    f"  ✓ Pose geschätzt (Methode: {pose_result.method}, "
-                    f"Konfidenz: {pose_result.confidence:.4f})"
+                    f"  ✓ Pose estimated (method={pose_result.method}, "
+                    f"confidence={pose_result.confidence:.4f})"
+                )
+                logger.info(
+                    f"  Translation: [{pose_result.translation[0]:.4f}, "
+                    f"{pose_result.translation[1]:.4f}, "
+                    f"{pose_result.translation[2]:.4f}] m"
                 )
 
         # --- Debug-Viz: Schritt 7+8 ---
@@ -1082,6 +1127,22 @@ class OSCARPlusPipeline:
                      "cad_model_path": getattr(c, "cad_model_path", "")}
                     for i, c in enumerate(cands)])
 
+        # --- B2 Geometry Re-ranking ---
+        if "geometry_reranking" in results:
+            cands = results["geometry_reranking"].candidates
+            _write("rankings_b2_geometry.csv",
+                   ["rank", "object_id", "gedi_score", "chamfer_score",
+                    "geometry_score", "ransac_fitness", "fused_score", "cad_model_path"],
+                   [{"rank": i + 1, "object_id": c.object_id,
+                     "gedi_score": round(float(c.gedi_score), 1),
+                     "chamfer_score": round(float(c.chamfer_score), 8)
+                         if c.chamfer_score < float("inf") else "inf",
+                     "geometry_score": round(float(c.geometry_score), 4),
+                     "ransac_fitness": round(float(c.ransac_fitness), 6),
+                     "fused_score": round(float(c.fused_score), 6),
+                     "cad_model_path": getattr(c, "cad_model_path", "")}
+                    for i, c in enumerate(cands)])
+
         # --- Scale gate rejections ---
         if "scale_gate" in results:
             rejections = results["scale_gate"].get("rejections", [])
@@ -1137,7 +1198,7 @@ Beispiel:
     parser.add_argument("--cad_models", required=True, help="Pfad zum CAD-Modell-Ordner")
     parser.add_argument("--camera", default=None, help="Pfad zu scene_camera.json (BOP-Format)")
     parser.add_argument("--output", default="pipeline_output", help="Ausgabeordner")
-    parser.add_argument("--fusion_method", default="weighted_sum", choices=["weighted_sum", "intersection", "rank_fusion"])
+    parser.add_argument("--fusion_method", default="weighted_sum", choices=["weighted_sum", "intersection", "rank_fusion", "majority_voting"])
     parser.add_argument("--pose_method", default="icp", choices=["foundationpose", "megapose", "icp"])
     parser.add_argument("--foundationpose_url", default="http://foundationpose:5050", help="URL des FoundationPose HTTP-Service")
     parser.add_argument("--foundationpose_refine_iter", type=int, default=5, help="Refinement-Iterationen fuer FoundationPose register()")
@@ -1148,6 +1209,8 @@ Beispiel:
     parser.add_argument("--shape-encoder", choices=["ulip2", "uni3d"], default="ulip2",
                         dest="shape_encoder",
                         help="Shape encoder for Step 5 matching (ablation E7)")
+    parser.add_argument("--num-views", type=int, default=42, dest="num_views",
+                        help="Number of rendered views per object to use (ablation O4: 8/16/42)")
     parser.add_argument("--clip_top_k", type=int, default=20)
     parser.add_argument("--dino_top_k", type=int, default=5)
     parser.add_argument("--ulip_top_k", type=int, default=5)
@@ -1224,6 +1287,7 @@ def main():
         foundationpose_url=args.foundationpose_url,
         foundationpose_est_refine_iter=args.foundationpose_refine_iter,
         foundationpose_debug=args.foundationpose_debug,
+        num_views=args.num_views,
         clip_top_k=args.clip_top_k,
         dino_top_k=args.dino_top_k,
         ulip2_top_k=args.ulip_top_k,

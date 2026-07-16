@@ -17,11 +17,160 @@ import argparse
 #from decimal import Decimal, getcontext
 #getcontext().prec = 28  # Set the precision for the decimal calculations.
  
-object_folder = '../object_database/ycbv_gso'
-object_images = '../object_images/ycbv_gso/'
-allowed_exts = ['.glb', '.obj']
+object_folder = os.environ.get('OBJECT_FOLDER', '../object_database/ycbv_gso')
+object_images = os.environ.get('OBJECT_IMAGES', '../object_images/ycbv_gso/')
+allowed_exts = ['.glb', '.obj', '.ply']  # PLY added for BOP datasets (T-LESS, LM-O, ITODD)
 overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
 render_only = os.environ.get('RENDER_ONLY', '').strip()
+num_views = int(os.environ.get('NUM_VIEWS', '42'))  # Ablation O4; default 42 (full icosphere)
+
+
+# ---------------------------------------------------------------------------
+# Icosphere viewpoint generation (following CNOS, Nguyen et al. ICCV 2023)
+# ---------------------------------------------------------------------------
+# CNOS uses 42 viewpoints from a Blender icosphere at subdivision level 1
+# (upper hemisphere only).  Subdivision level 2 gives 162 viewpoints but
+# showed no improvement over 42 in their experiments (CNOS Table 3).
+#
+# Ref: Nguyen et al., "CNOS: A Strong Baseline for CAD-based Novel Object
+#      Segmentation", ICCV 2023.
+#      Code: https://github.com/nv-nguyen/cnos
+#      Viewpoint generation: https://github.com/nv-nguyen/template-pose
+#
+# We generate all 42 icosphere vertices and order them by farthest-point
+# sampling (FPS) so that any prefix (the first N views) gives the best
+# possible angular coverage for that N.  This allows the thesis ablation
+# O4 to test any V in {8, 16, 42} — or any other count up to 42 — without
+# needing separate rendering runs.
+# ---------------------------------------------------------------------------
+
+def _generate_icosphere_vertices(subdivisions=1):
+    """Generate vertices of an icosphere via recursive subdivision.
+
+    Starts from a regular icosahedron (12 vertices, 20 faces) and
+    subdivides each triangle into 4 smaller triangles, projecting new
+    vertices onto the unit sphere.
+
+    Subdivision 0 → 12 vertices
+    Subdivision 1 → 42 vertices  (CNOS default)
+    Subdivision 2 → 162 vertices
+
+    Returns:
+        np.ndarray of shape (N, 3) — unit-sphere vertex positions.
+    """
+    # --- Icosahedron base vertices ---
+    phi = (1.0 + math.sqrt(5.0)) / 2.0  # golden ratio
+    verts = [
+        (-1,  phi, 0), ( 1,  phi, 0), (-1, -phi, 0), ( 1, -phi, 0),
+        ( 0, -1,  phi), ( 0,  1,  phi), ( 0, -1, -phi), ( 0,  1, -phi),
+        ( phi, 0, -1), ( phi, 0,  1), (-phi, 0, -1), (-phi, 0,  1),
+    ]
+    # Normalize to unit sphere
+    verts = [np.array(v, dtype=np.float64) for v in verts]
+    verts = [v / np.linalg.norm(v) for v in verts]
+
+    # --- Icosahedron faces (20 triangles) ---
+    faces = [
+        (0,11,5), (0,5,1), (0,1,7), (0,7,10), (0,10,11),
+        (1,5,9), (5,11,4), (11,10,2), (10,7,6), (7,1,8),
+        (3,9,4), (3,4,2), (3,2,6), (3,6,8), (3,8,9),
+        (4,9,5), (2,4,11), (6,2,10), (8,6,7), (9,8,1),
+    ]
+
+    # --- Subdivide ---
+    for _ in range(subdivisions):
+        edge_midpoints = {}
+        new_faces = []
+        for tri in faces:
+            mids = []
+            for i in range(3):
+                edge = tuple(sorted((tri[i], tri[(i + 1) % 3])))
+                if edge not in edge_midpoints:
+                    mid = (verts[edge[0]] + verts[edge[1]]) / 2.0
+                    mid = mid / np.linalg.norm(mid)  # project onto sphere
+                    edge_midpoints[edge] = len(verts)
+                    verts.append(mid)
+                mids.append(edge_midpoints[edge])
+            a, b, c = tri
+            m0, m1, m2 = mids
+            new_faces.extend([
+                (a, m0, m2), (b, m1, m0), (c, m2, m1), (m0, m1, m2)
+            ])
+        faces = new_faces
+
+    return np.array(verts, dtype=np.float64)
+
+
+def _fps_ordering(points):
+    """Order points by farthest-point sampling for maximum spread.
+
+    Starts from the point with highest elevation (most "top-down" view),
+    then iteratively picks the point farthest from all already-selected
+    points.  Any prefix of the returned ordering gives the best angular
+    coverage for that count.
+
+    Args:
+        points: (N, 3) array of unit-sphere positions.
+
+    Returns:
+        List of indices into points, length N.
+    """
+    N = len(points)
+    # Start from highest-elevation point
+    start = int(np.argmax(points[:, 2]))
+    selected = [start]
+    min_dists = np.full(N, np.inf)
+
+    for _ in range(N - 1):
+        last = points[selected[-1]]
+        # Geodesic distance ≈ Euclidean distance on unit sphere is monotonic
+        dists = np.linalg.norm(points - last, axis=1)
+        min_dists = np.minimum(min_dists, dists)
+        # Exclude already selected
+        min_dists_copy = min_dists.copy()
+        for idx in selected:
+            min_dists_copy[idx] = -1.0
+        next_idx = int(np.argmax(min_dists_copy))
+        selected.append(next_idx)
+
+    return selected
+
+
+def generate_icosphere_positions(num_views, distance, ratio, subdivisions=1):
+    """Generate camera positions from an icosphere, ordered by FPS.
+
+    Following CNOS (Nguyen et al., ICCV 2023): icosphere subdivision 1
+    gives 42 upper-hemisphere viewpoints.  FPS ordering ensures that any
+    prefix (first N views) gives approximately optimal angular coverage.
+
+    Args:
+        num_views: How many views to generate (max 42 for subdiv=1).
+        distance: Object bounding-box max dimension.
+        ratio: Camera distance multiplier (default 1.15).
+        subdivisions: Icosphere subdivision level (1→42, 2→162).
+
+    Returns:
+        List of Vector positions, length = min(num_views, available).
+    """
+    all_verts = _generate_icosphere_vertices(subdivisions)
+
+    # CNOS uses all 42 icosphere vertices (full sphere), not just the upper
+    # hemisphere.  This provides view coverage for objects that can be seen
+    # from any angle (not just tabletop).
+    print(f"Icosphere subdiv={subdivisions}: {len(all_verts)} vertices")
+
+    # FPS ordering for optimal subsets
+    ordering = _fps_ordering(all_verts)
+
+    # Scale to camera distance
+    r = distance * ratio
+    n = min(num_views, len(all_verts))
+    positions = []
+    for i in range(n):
+        v = all_verts[ordering[i]]
+        positions.append(Vector((v[0] * r, v[1] * r, v[2] * r)))
+
+    return positions
 
 
 def infer_model_id(file_path):
@@ -44,6 +193,8 @@ def file_priority(fname):
         return 2
     if base.endswith('.glb'):
         return 3
+    if base == 'model.ply' or base.endswith('.ply'):
+        return 4  # BOP PLY models (T-LESS, LM-O, ITODD)
     return 9
 
 
@@ -67,8 +218,18 @@ for model_id, filename in model_files:
     if render_only and model_id != render_only:
         continue
     folder_path = os.path.join(object_images, model_id)
-    if overwrite_existing or not os.path.isdir(folder_path):
+    if overwrite_existing:
         pending_models.append((model_id, filename))
+    elif not os.path.isdir(folder_path):
+        pending_models.append((model_id, filename))
+    else:
+        # Check if all views are rendered (resumability after interruption)
+        all_done = all(
+            os.path.exists(os.path.join(folder_path, f'{model_id}_{v}.png'))
+            for v in range(num_views)
+        )
+        if not all_done:
+            pending_models.append((model_id, filename))
 
 print(f"Total models found: {len(model_files)}")
 print(f"Models to render now: {len(pending_models)} (overwrite_existing={overwrite_existing})")
@@ -338,6 +499,8 @@ for model_id, filename in pending_models:
         bpy.ops.import_scene.gltf(filepath=model_path)
     elif ext.lower() == ".obj":
         bpy.ops.import_scene.obj(filepath=model_path)
+    elif ext.lower() == ".ply":
+        bpy.ops.import_mesh.ply(filepath=model_path)
 
     print('begin*************')
     # Assuming objects are mesh objects
@@ -350,94 +513,85 @@ for model_id, filename in pending_models:
 
     distance = max(bbox_size.x, bbox_size.y, bbox_size.z)
     ratio = 1.15
-    elevation_factor = 0.2
 
     camera = bpy.context.scene.camera
     name = model_id
-    for camera_opt in range(-1, 8):
-        # use transparent background to adjust camera distance
-        if camera_opt == -1:
-            bpy.context.scene.render.image_settings.color_mode = 'RGBA'
-            bpy.context.scene.render.film_transparent = True
-            camera.location = Vector((distance * ratio, - distance * ratio, distance * elevation_factor * ratio))
-        elif camera_opt == 0:
-            img_path = os.path.join(model_dir, f'{name}_bg.png')
-            img = Image.open(img_path)
-            img_array = np.array(img)
-            if np.sum(img_array<10) > 1020000:
-                print(name, 'WARNING: rendered image may contain too much white space')
 
-            # change to white background to render the final 8 views
-            bpy.context.scene.world.node_tree.nodes["Background"].inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
-            bpy.context.scene.render.film_transparent = False
-            camera.location = Vector((distance * ratio, - distance * ratio, distance * elevation_factor * ratio))
+    # --- Generate icosphere viewpoints (CNOS-style, FPS-ordered) ---
+    ico_positions = generate_icosphere_positions(num_views, distance, ratio)
+    actual_num_views = len(ico_positions)
+    print(f"  Rendering {actual_num_views} icosphere views for '{model_id}'")
 
-            # check if the object is within the image
-            while True:
-                flag_list = []
-                for obj in mesh_objects:
-                    bbox_image = project_points_to_camera_space(obj, camera)
-                    if np.max(np.array(bbox_image) > 512) or np.min(np.array(bbox_image) < 0):
-                        flag_list.append(0)
-                        ratio += 0.1
-                        camera.location = Vector((distance * ratio, - distance * ratio, distance * elevation_factor * ratio))
-                if len(flag_list) == 0:
-                    break
-        elif camera_opt == 1:
-            camera.location = Vector((- distance * ratio,  distance * ratio, distance * elevation_factor * ratio))
-        elif camera_opt == 2:
-            elevation_factor = 0.5
-            camera.location = Vector((distance * ratio,  -distance * ratio*0.5, distance * elevation_factor * ratio))
-        elif camera_opt == 3:
-            elevation_factor = 0.7
-            camera.location = Vector((- distance * ratio *0.5,  distance * ratio, distance * elevation_factor * ratio))
-        elif camera_opt == 4:
-            camera.location = Vector((distance * ratio,  distance * ratio, distance * elevation_factor * ratio))
-        elif camera_opt == 5:
-            camera.location = Vector((-distance * ratio,  -distance * ratio, distance * elevation_factor * ratio))
-        elif camera_opt == 6:
-            elevation_factor = 0.5
-            camera.location = Vector((distance * ratio,  distance * ratio*0.5, -distance * elevation_factor * ratio))
-        elif camera_opt == 7:
-            elevation_factor = 0.7
-            camera.location = Vector((- distance * ratio *0.5,  -distance * ratio, -distance * elevation_factor * ratio))
+    # --- Step -1: transparent background render to calibrate camera distance ---
+    bpy.context.scene.render.image_settings.color_mode = 'RGBA'
+    bpy.context.scene.render.film_transparent = True
+    camera.location = ico_positions[0]  # use first view for calibration
 
-        # Make the camera point at the bounding box center
+    direction = (bbox_center - camera.location).normalized()
+    quat = direction.to_track_quat('-Z', 'Y')
+    camera.rotation_euler = quat.to_euler()
+    camera.data.clip_start = 0.1
+    camera.data.clip_end = max(1000, distance * 2)
+    bpy.context.scene.camera = bpy.data.objects['Camera']
+    bpy.context.scene.render.resolution_x = 512
+    bpy.context.scene.render.resolution_y = 512
+
+    bg_path = os.path.join(model_dir, f'{name}_bg.png')
+    bpy.context.scene.render.filepath = bg_path
+    if not os.path.exists(bg_path) or overwrite_existing:
+        bpy.ops.render.render(write_still=True)
+
+    # Check if object fits in frame; increase ratio if needed
+    img = Image.open(bg_path)
+    img_array = np.array(img)
+    if np.sum(img_array < 10) > 1020000:
+        print(name, 'WARNING: rendered image may contain too much white space')
+
+    while True:
+        flag_list = []
+        for obj in mesh_objects:
+            bbox_image = project_points_to_camera_space(obj, camera)
+            if np.max(np.array(bbox_image) > 512) or np.min(np.array(bbox_image) < 0):
+                flag_list.append(0)
+                ratio += 0.1
+                # Regenerate positions with new ratio
+                ico_positions = generate_icosphere_positions(num_views, distance, ratio)
+                camera.location = ico_positions[0]
+                direction = (bbox_center - camera.location).normalized()
+                quat = direction.to_track_quat('-Z', 'Y')
+                camera.rotation_euler = quat.to_euler()
+        if len(flag_list) == 0:
+            break
+
+    # --- Switch to white background for final renders ---
+    bpy.context.scene.world.node_tree.nodes["Background"].inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
+    bpy.context.scene.render.film_transparent = False
+
+    # --- Render all views ---
+    for view_idx, cam_pos in enumerate(ico_positions):
+        camera.location = cam_pos
+
+        # Point camera at bounding box center
         direction = (bbox_center - camera.location).normalized()
         quat = direction.to_track_quat('-Z', 'Y')
         camera.rotation_euler = quat.to_euler()
 
         camera.data.clip_start = 0.1
         camera.data.clip_end = max(1000, distance * 2)
-
         bpy.context.scene.camera = bpy.data.objects['Camera']
         bpy.context.scene.render.resolution_x = 512
         bpy.context.scene.render.resolution_y = 512
 
-        if camera_opt == -1:
-            file_path = os.path.join(model_dir, f'{name}_bg.png')
-            bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path) and not overwrite_existing:
-               continue
-        else:
-            file_path = os.path.join(model_dir, f'{name}_{camera_opt}.png')
-            bpy.context.scene.render.filepath = file_path
-            if os.path.exists(file_path) and not overwrite_existing:
-               continue
+        file_path = os.path.join(model_dir, f'{name}_{view_idx}.png')
+        bpy.context.scene.render.filepath = file_path
+        if os.path.exists(file_path) and not overwrite_existing:
+            continue
 
         bpy.ops.render.render(write_still=True)
 
-        if camera_opt>=0:
-            RT = get_3x4_RT_matrix_from_blender(camera)
-            
-            model_name = model_id
-            RT_path = os.path.join(model_dir, f"{model_name}_view{camera_opt}_CamMatrix.npy")
-            os.makedirs(model_dir, exist_ok=True)
-            np.save(RT_path, RT)
-
-
-            if os.path.exists(RT_path):
-                continue
-            np.save(RT_path, RT)
+        # Save camera matrix
+        RT = get_3x4_RT_matrix_from_blender(camera)
+        RT_path = os.path.join(model_dir, f"{model_id}_view{view_idx}_CamMatrix.npy")
+        np.save(RT_path, RT)
 
 bpy.ops.wm.quit_blender()
