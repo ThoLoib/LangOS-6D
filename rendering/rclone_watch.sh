@@ -57,28 +57,34 @@ prev_count=0
 idle_rounds=0
 
 while true; do
-    # Count completed object folders (those with at least 1 PNG)
+    # Count total output files: PNGs (renders) + NPZs (partial PCs) + descriptions JSON
+    cur_count=0
     if [[ -d "$IMAGES_DIR" ]]; then
-        cur_count=$(find "$IMAGES_DIR" -maxdepth 2 -name "*.png" | sed 's|/[^/]*$||' | sort -u | wc -l)
-    else
-        cur_count=0
+        png_count=$(find "$IMAGES_DIR" -maxdepth 2 -name "*.png" | wc -l)
+        npz_count=$(find "$IMAGES_DIR" -maxdepth 2 -name "*.npz" | wc -l)
+        cur_count=$((png_count + npz_count))
+    fi
+    # Also count descriptions file (changes size as objects are added)
+    if [[ -d "$DB_DIR" ]]; then
+        desc_size=$(find "$DB_DIR" -name "descriptions_attributes.json" -printf '%s' 2>/dev/null || echo 0)
+        cur_count=$((cur_count + ${desc_size:-0}))
     fi
 
     new=$((cur_count - prev_count))
     timestamp=$(date '+%H:%M:%S')
 
     if [[ $cur_count -gt 0 ]]; then
-        echo "[$timestamp] $cur_count objects with renders (+$new new). Syncing..."
+        echo "[$timestamp] ${png_count:-0} PNGs, ${npz_count:-0} NPZs (+$new new). Syncing..."
 
         # Sync images
-        rclone sync "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
+        rclone copy "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
             --transfers 8 --checkers 16 \
             --stats-one-line --stats 0 \
             2>&1 | grep -v "^$" | tail -1 || true
 
         # Sync object_database if it exists (descriptions, symlinks)
         if [[ -d "$DB_DIR" ]]; then
-            rclone sync "$DB_DIR" "$REMOTE/object_database/$DATASET" \
+            rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
                 --transfers 4 --checkers 8 \
                 --stats-one-line --stats 0 \
                 2>&1 | grep -v "^$" | tail -1 || true
@@ -95,9 +101,9 @@ while true; do
         if [[ $idle_rounds -ge 2 ]]; then
             echo "[$timestamp] No new objects for $((INTERVAL * 2))s. Final sync and exit."
             # One last sync to be sure
-            rclone sync "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
+            rclone copy "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
                 --transfers 8 --checkers 16 2>/dev/null || true
-            [[ -d "$DB_DIR" ]] && rclone sync "$DB_DIR" "$REMOTE/object_database/$DATASET" \
+            [[ -d "$DB_DIR" ]] && rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
                 --transfers 4 --checkers 8 2>/dev/null || true
             echo "[$timestamp] All synced. Exiting."
             exit 0
