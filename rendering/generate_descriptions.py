@@ -160,11 +160,10 @@ def main():
         descriptions[obj_id] = {"image_descriptions": image_descriptions}
         print(f"  [{i+1}/{len(pending)}] {obj_id}: {len(image_descriptions)} images done")
 
-        # Incremental save every 10 objects
-        if (i + 1) % 10 == 0:
-            with open(args.output, "w") as f:
-                json.dump(descriptions, f, indent=2)
-            print(f"  Saved checkpoint ({total_captions} captions so far)")
+        # Save after every object (each takes ~2 min with 42 views,
+        # so losing progress on interrupt is expensive)
+        with open(args.output, "w") as f:
+            json.dump(descriptions, f, indent=2)
 
     # Final save
     with open(args.output, "w") as f:
