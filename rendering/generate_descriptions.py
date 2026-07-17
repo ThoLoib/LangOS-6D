@@ -31,7 +31,6 @@ def parse_args():
     p.add_argument("--images_dir", required=True, help="Directory with rendered images (object_images/{dataset}/)")
     p.add_argument("--output", required=True, help="Output JSON path")
     p.add_argument("--overwrite", action="store_true", help="Regenerate all descriptions")
-    p.add_argument("--view", type=int, default=0, help="View index to use for description (default: 0)")
     p.add_argument("--prompt", default="Extract visual attributes of the object in the image: object type, brand name, color, material, and label text.",
                    help="LLaVA prompt")
     return p.parse_args()
@@ -84,12 +83,31 @@ def main():
         if os.path.isdir(os.path.join(args.images_dir, d))
     ])
 
-    # Filter to objects that need descriptions
-    pending = [d for d in object_dirs if d not in descriptions]
+    # Filter to objects that need descriptions (partially described objects
+    # are resumed — only missing images within them are captioned)
+    if args.overwrite:
+        pending = object_dirs
+    else:
+        pending = []
+        for d in object_dirs:
+            if d not in descriptions:
+                pending.append(d)
+            else:
+                # Check if all images in this object have been described
+                obj_dir = os.path.join(args.images_dir, d)
+                image_files = sorted([
+                    f for f in os.listdir(obj_dir)
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+                    and not f.endswith("_bg.png")
+                ])
+                existing = descriptions[d].get("image_descriptions", {})
+                if len(existing) < len(image_files):
+                    pending.append(d)
+
     print(f"Total objects: {len(object_dirs)}, already described: {len(descriptions)}, pending: {len(pending)}")
 
     if not pending:
-        print("All objects already described. Use --overwrite to regenerate.")
+        print("All objects fully described. Use --overwrite to regenerate.")
         return
 
     # Load model
@@ -101,47 +119,54 @@ def main():
     processor = AutoProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf")
     print(f"Model loaded on {device}")
 
-    # Generate descriptions
+    # Generate descriptions for ALL views of each object
+    # (matches original OSCAR behavior: one caption per rendered image)
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    total_captions = 0
 
     for i, obj_id in enumerate(pending):
         obj_dir = os.path.join(args.images_dir, obj_id)
 
-        # Find the target view image
-        # Try: {obj_id}_{view}.png (standard naming)
-        img_path = os.path.join(obj_dir, f"{obj_id}_{args.view}.png")
-        if not os.path.exists(img_path):
-            # Fallback: first PNG that isn't _bg.png
-            pngs = sorted([
-                f for f in os.listdir(obj_dir)
-                if f.endswith(".png") and not f.endswith("_bg.png")
-            ])
-            if pngs:
-                img_path = os.path.join(obj_dir, pngs[0])
-            else:
-                print(f"  [{i+1}/{len(pending)}] SKIP {obj_id}: no PNG found")
-                continue
+        image_files = sorted([
+            f for f in os.listdir(obj_dir)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+            and not f.endswith("_bg.png")
+        ])
 
-        try:
-            image = Image.open(img_path).convert("RGB")
-            caption = generate_caption(model, processor, image, args.prompt)
-            img_name = os.path.basename(img_path)
-            descriptions[obj_id] = {"image_descriptions": {img_name: caption}}
-            print(f"  [{i+1}/{len(pending)}] {obj_id}: {caption[:80]}...")
-        except Exception as e:
-            print(f"  [{i+1}/{len(pending)}] ERROR {obj_id}: {e}")
+        if not image_files:
+            print(f"  [{i+1}/{len(pending)}] SKIP {obj_id}: no images found")
             continue
 
-        # Incremental save every 50 objects
-        if (i + 1) % 50 == 0:
+        existing_data = descriptions.get(obj_id, {})
+        image_descriptions = existing_data.get("image_descriptions", {})
+
+        for filename in image_files:
+            if filename in image_descriptions and not args.overwrite:
+                continue
+
+            img_path = os.path.join(obj_dir, filename)
+            try:
+                image = Image.open(img_path).convert("RGB")
+                caption = generate_caption(model, processor, image, args.prompt)
+                image_descriptions[filename] = caption
+                total_captions += 1
+            except Exception as e:
+                print(f"  [{i+1}/{len(pending)}] ERROR {obj_id}/{filename}: {e}")
+                continue
+
+        descriptions[obj_id] = {"image_descriptions": image_descriptions}
+        print(f"  [{i+1}/{len(pending)}] {obj_id}: {len(image_descriptions)} images described")
+
+        # Incremental save every 10 objects
+        if (i + 1) % 10 == 0:
             with open(args.output, "w") as f:
                 json.dump(descriptions, f, indent=2)
-            print(f"  Saved {len(descriptions)} descriptions (checkpoint)")
+            print(f"  Saved checkpoint ({total_captions} captions so far)")
 
     # Final save
     with open(args.output, "w") as f:
         json.dump(descriptions, f, indent=2)
-    print(f"Done. {len(descriptions)} total descriptions saved to {args.output}")
+    print(f"Done. {len(descriptions)} objects, {total_captions} new captions saved to {args.output}")
 
 
 if __name__ == "__main__":
