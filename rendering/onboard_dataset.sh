@@ -88,7 +88,8 @@ done
 # Auto-detect Blender
 # ---------------------------------------------------------------------------
 if [[ -z "$BLENDER_BIN" ]]; then
-    for candidate in "$SCRIPT_DIR"/blender-*/blender; do
+    # Search: Docker image path (/blender/), then local rendering/ dir
+    for candidate in /blender/blender-*/blender "$SCRIPT_DIR"/blender-*/blender; do
         if [[ -x "$candidate" ]]; then
             BLENDER_BIN="$candidate"
             break

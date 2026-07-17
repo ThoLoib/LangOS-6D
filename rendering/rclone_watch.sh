@@ -82,10 +82,17 @@ while true; do
             --stats-one-line --stats 0 \
             2>&1 | grep -v "^$" | tail -1 || true
 
-        # Sync object_database if it exists (descriptions, symlinks)
+        # Sync object_database (descriptions JSON, CAD metadata)
         if [[ -d "$DB_DIR" ]]; then
+            # Use --checksum so the growing descriptions JSON always gets
+            # re-uploaded even if mtime doesn't change (Docker volume quirk)
+            desc_file="$DB_DIR/descriptions_attributes.json"
+            if [[ -f "$desc_file" ]]; then
+                local_size=$(stat -c%s "$desc_file" 2>/dev/null || echo 0)
+                echo "[$timestamp]   descriptions: $(( local_size / 1024 )) KB"
+            fi
             rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
-                --transfers 4 --checkers 8 \
+                --transfers 4 --checkers 8 --checksum \
                 --stats-one-line --stats 0 \
                 2>&1 | grep -v "^$" | tail -1 || true
         fi
