@@ -140,22 +140,25 @@ def main():
         existing_data = descriptions.get(obj_id, {})
         image_descriptions = existing_data.get("image_descriptions", {})
 
-        for filename in image_files:
-            if filename in image_descriptions and not args.overwrite:
-                continue
+        pending_images = [f for f in image_files if f not in image_descriptions or args.overwrite]
+        if not pending_images:
+            print(f"  [{i+1}/{len(pending)}] {obj_id}: all {len(image_files)} images already described")
+            continue
 
+        for j, filename in enumerate(pending_images):
             img_path = os.path.join(obj_dir, filename)
             try:
                 image = Image.open(img_path).convert("RGB")
                 caption = generate_caption(model, processor, image, args.prompt)
                 image_descriptions[filename] = caption
                 total_captions += 1
+                print(f"  [{i+1}/{len(pending)}] {obj_id} [{j+1}/{len(pending_images)}] {filename}: {caption[:60]}...")
             except Exception as e:
                 print(f"  [{i+1}/{len(pending)}] ERROR {obj_id}/{filename}: {e}")
                 continue
 
         descriptions[obj_id] = {"image_descriptions": image_descriptions}
-        print(f"  [{i+1}/{len(pending)}] {obj_id}: {len(image_descriptions)} images described")
+        print(f"  [{i+1}/{len(pending)}] {obj_id}: {len(image_descriptions)} images done")
 
         # Incremental save every 10 objects
         if (i + 1) % 10 == 0:
