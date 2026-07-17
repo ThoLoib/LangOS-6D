@@ -1,6 +1,38 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-09
+> Last updated: 2026-07-17
+
+## Update 2026-07-17 (thesis-approach: onboarding pipeline, multi-dataset fixes, cache optimization)
+
+### Onboarding Pipeline (Docker + rclone)
+- **Architecture**: Docker handles GPU work (Blender rendering, partial PCs, LLaVA descriptions); WSL handles rclone sync to Google Drive. Two-terminal workflow.
+- **`rendering/onboard_dataset.sh`**: runs inside Docker — `prepare → render → partial → describe`, all idempotent/resumable. Removed rclone (not available in Docker).
+- **`rendering/onboard_and_sync.sh`** (new): WSL-side launcher — starts Docker preprocessing + `rclone_watch.sh` in background, does final sync, optional `--delete-after-sync`.
+- **`rendering/rclone_watch.sh`** (new): background sync watcher, syncs `object_images/` and `object_database/` every N seconds, auto-exits after 2 idle intervals.
+- Uses `rclone copy` (not `sync`) to prevent deleting previously-synced files from remote.
+
+### Multi-Dataset Model ID Fix
+- **`rendering/rendering.py` — `infer_model_id()`**: fixed critical bug where MI3DOR (3848→21), SHREC'18 (3308→1), and HouseCat6D collapsed to few IDs. Generic filenames (`model.ply`, `textured_simple.obj`) use parent dir as ID; specific filenames use stem.
+- Added `MESH_GLOB` for SHREC'18 in `onboard_dataset.sh`.
+
+### PLY Vertex Color Support
+- BOP PLY models (LM-O, T-LESS, ITODD) now render with vertex colors. Creates a Blender material node chain: Vertex Color → Principled BSDF → Output.
+
+### Cache Optimization (Ablation O4)
+- **DINO/SigLIP cache**: now stores ALL views; `num_views` filtering applied at runtime via `_apply_view_limit()`. Same cache file serves V=8, 16, or 42.
+- **ULIP partial cache**: same approach — `_apply_partial_view_limit()` trims at runtime.
+- Cache filename no longer includes `num_views`, preventing redundant cache rebuilds during ablation O4.
+
+### Datasets Verified
+| Dataset | Objects | Rendering | Partial PCs | Descriptions |
+|---------|---------|-----------|-------------|-------------|
+| LM-O | 8 | ✓ tested | ✓ tested (336 views) | ✓ tested |
+| T-LESS | 30 | ✓ ready | ✓ ready | ✓ ready |
+| ITODD | 28 | ✓ ready | ✓ ready | ✓ ready |
+| YCB-V/GSO | 1051 | ✓ ready | ✓ ready | ✓ ready |
+| MI3DOR | 3848 | ✓ fixed | ✓ ready | ✓ ready |
+| SHREC'18 | 3308 | ✓ fixed | ✓ fixed (MESH_GLOB) | ✓ ready |
+| HouseCat6D | 199 | ✓ fixed | ✓ ready | ✓ ready |
 
 ## Update 2026-07-09 (thesis-approach: align codebase with thesis methodology)
 

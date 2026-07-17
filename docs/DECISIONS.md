@@ -1,5 +1,44 @@
 # Decisions
 
+## 2026-07-17 View-count-independent caches for DINO/SigLIP and ULIP partial
+
+Decision
+- DINO/SigLIP and ULIP partial caches always store embeddings for ALL available views (42 for icosphere subdiv=1). The `num_views` parameter is applied as a runtime filter after cache load, not during cache generation. Cache filenames no longer include `num_views`.
+
+Rationale
+- Views are FPS-ordered: the first 8 of 42 are always identical images/point clouds regardless of when `num_views` is set. Caching per-view-count caused redundant multi-hour cache rebuilds during ablation O4 (V ∈ {8, 16, 42}) — 3 separate caches encoding the same data.
+- Runtime trimming is O(N) dictionary/tensor slicing, negligible vs. encoding cost.
+
+Alternatives considered
+- Keep per-view-count caches — rejected: wastes disk and encoding time for identical data.
+- Lazy per-view encoding with partial cache merge — rejected: added complexity for no benefit since all 42 views are precomputed anyway.
+
+## 2026-07-17 infer_model_id: generic vs. specific filename heuristic
+
+Decision
+- `infer_model_id()` in `rendering.py` uses a whitelist of generic model filenames (`model.ply`, `model.obj`, `textured_simple.obj`, etc.) to decide the ID strategy. Generic names → parent directory is the object ID. Non-generic names → filename stem is the object ID.
+
+Rationale
+- Datasets have two layout patterns: (a) one directory per object with a standardized mesh name (BOP, YCB-V/GSO), and (b) flat or category directories with many uniquely-named mesh files (MI3DOR, SHREC'18, HouseCat6D). The old code always used parent directory, collapsing MI3DOR from 3848 to 21 objects, SHREC'18 from 3308 to 1.
+- The generic name whitelist is small, stable, and covers all known dataset conventions.
+
+Alternatives considered
+- Count files per directory to detect shared dirs — rejected: breaks for YCB-V/GSO directories that have multiple format alternatives (textured_simple.obj + model.obj).
+- Per-dataset config flag — rejected: adds manual configuration burden; the heuristic works automatically for all 7 datasets.
+
+## 2026-07-17 Docker preprocessing + WSL rclone sync (two-process architecture)
+
+Decision
+- Preprocessing (Blender, partial PCs, LLaVA) runs inside Docker via `onboard_dataset.sh`. Rclone sync runs on the WSL host via `rclone_watch.sh`. The two processes run in parallel — Docker writes to mounted volume, WSL rclone reads from same path.
+
+Rationale
+- Docker container has GPU access and Python dependencies (numpy, trimesh, transformers) but no rclone. WSL has rclone but not the Python stack. Keeping them separate avoids installing rclone in Docker or Python deps on bare WSL.
+- `rclone copy` (not `sync`) prevents deletion of previously-synced remote files when local files are cleaned up for disk space.
+
+Alternatives considered
+- Install rclone inside Docker — rejected: adds config complexity (OAuth tokens, service accounts) to the container.
+- Run everything on WSL without Docker — rejected: no numpy/trimesh/transformers on bare WSL Python.
+
 ## 2026-04-23 OSCAR+ eval: CLIP-pruned DINO/ULIP derived by id-filter on single full pass
 
 Decision

@@ -1008,6 +1008,7 @@ class ShapeMatcher:
             for obj_id in self._cad_embeddings:
                 if obj_id not in self._cad_paths and obj_id in mesh_items_dict:
                     self._cad_paths[obj_id] = mesh_items_dict[obj_id]
+            self._apply_partial_view_limit()
             return
 
         self._cad_embeddings = {}
@@ -1052,20 +1053,45 @@ class ShapeMatcher:
         if count > 0:
             self._save_partial_cache(cache_path)
 
+        # Apply view limit after caching (cache stores all views)
+        self._apply_partial_view_limit()
+
+    def _apply_partial_view_limit(self) -> None:
+        """Trim per-object embeddings to config.num_views.
+
+        The cache stores ALL views.  This trims the stacked tensor
+        so ablation O4 (V in {8, 16, 42}) works without cache rebuild.
+        """
+        max_views = getattr(self.config, "num_views", None)
+        if max_views is None or not self._cad_embeddings:
+            return
+
+        trimmed = 0
+        for obj_id, emb in self._cad_embeddings.items():
+            if emb.ndim == 2 and emb.shape[0] > max_views:
+                self._cad_embeddings[obj_id] = emb[:max_views]
+                trimmed += 1
+
+        if trimmed:
+            logger.info(
+                "Partial view limit applied: %d objects trimmed to %d views",
+                trimmed, max_views,
+            )
+
     def _collect_partial_items(
         self, partial_pc_dir: str
     ) -> Dict[str, List[Tuple[int, str]]]:
         """Discover partial .npz files grouped by object ID.
 
-        Respects config.num_views to limit how many views per object are
-        loaded (thesis ablation O4: V in {8, 16, 32}).
+        Always collects ALL available views so the cache is reusable
+        across num_views ablations (O4: V in {8, 16, 42}).
+        View filtering is applied after cache load/build.
 
         Returns:
             {obj_id: [(view_idx, npz_path), ...]}
         """
         import re
         result: Dict[str, List[Tuple[int, str]]] = {}
-        max_views = getattr(self.config, "num_views", None)
 
         if not os.path.isdir(partial_pc_dir):
             return result
@@ -1084,8 +1110,6 @@ class ShapeMatcher:
 
             if views:
                 views.sort()
-                if max_views is not None:
-                    views = views[:max_views]
                 result[entry] = views
 
         return result

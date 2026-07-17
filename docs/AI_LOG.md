@@ -1,5 +1,30 @@
 # AI Log
 
+## 2026-07-17 Onboarding pipeline, multi-dataset model ID fix, cache optimization
+
+Goal
+- Create an automated preprocessing pipeline for all thesis datasets (render, partial PCs, descriptions) that works across Docker (GPU) and WSL (rclone sync to Google Drive).
+- Fix `infer_model_id()` which collapsed MI3DOR (3848→21), SHREC'18 (3308→1), and HouseCat6D to a handful of IDs.
+- Make DINO/SigLIP and ULIP partial caches reusable across `num_views` ablation (O4).
+
+Changes
+- `rendering/rendering.py`: rewrote `infer_model_id()` — generic filenames (`model.ply`, `textured_simple.obj`, etc.) use parent dir; specific filenames use stem. Added `_GENERIC_MODEL_NAMES` set. Added PLY vertex color material (Vertex Color → Principled BSDF node chain) after `bpy.ops.import_mesh.ply()`.
+- `rendering/onboard_dataset.sh`: removed all rclone logic (script runs inside Docker where rclone is unavailable). Added `MESH_GLOB` for SHREC'18. Cleaned up leftover `$RCLONE_REMOTE` references that caused `unbound variable` errors.
+- `rendering/onboard_and_sync.sh` (new): WSL-side launcher — starts Docker container running `onboard_dataset.sh`, starts `rclone_watch.sh` in background, runs final sync, supports `--delete-after-sync`, `--skip-describe`, `--step`.
+- `rendering/rclone_watch.sh` (new): background sync watcher for WSL — polls `object_images/` and `object_database/` directories, syncs to Google Drive every `--interval` seconds, auto-exits after 2 idle rounds.
+- `pipeline/step4_dino_reranking.py`: cache path no longer includes `num_views` (uses `_vall_` suffix). Added `_apply_view_limit()` method — trims `_ref_embeddings` to first N views after cache load. Cache always encodes all available views. Encoding loop no longer filters by `max_views`.
+- `pipeline/step5_shape_matching.py`: `_collect_partial_items()` no longer filters by `num_views`. Added `_apply_partial_view_limit()` — trims stacked per-object tensors after cache load/build. Applied on both cache-hit and cache-miss paths.
+
+Bugs fixed
+- BOP PLY models (LM-O, T-LESS, ITODD) rendered as grey blobs — Blender imported vertex colors but had no material to use them.
+- `onboard_dataset.sh` crashed with `$RCLONE_REMOTE: unbound variable` inside Docker due to `set -u` and leftover rclone references.
+- `onboard_and_sync.sh` used `rclone sync` which would delete previously-synced files from remote after local deletion. Changed to `rclone copy`.
+- Old cache system created separate cache files for each `num_views` value, causing redundant multi-hour cache rebuilds during ablation O4.
+
+Results
+- LM-O end-to-end test: 8 objects × 42 views rendered (with vertex colors), 336 partial PCs generated (11s), descriptions generated, all synced to Google Drive.
+- All 7 datasets verified: correct unique model ID counts match expected object counts.
+
 ## 2026-04-23 OSCAR+ evaluation suite: shared eval_common, per-dataset wrappers, MI3DOR partial PCs, single-pass DINO/ULIP
 
 Goal

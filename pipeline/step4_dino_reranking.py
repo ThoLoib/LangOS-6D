@@ -282,14 +282,18 @@ class DINOReRanker:
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _cache_path(self, ref_dir: str) -> str:
-        """Pfad zur Cache-Datei im ref_dir."""
+        """Pfad zur Cache-Datei im ref_dir.
+
+        The cache always stores ALL available views.  View filtering
+        (config.num_views) is applied after loading so that the same cache
+        serves any num_views ablation (O4: V in {8, 16, 42}).
+        """
         fp = self._dir_fingerprint(ref_dir)
-        nv = getattr(self.config, "num_views", None) or "all"
         if self._encoder_type == "siglip":
             model_tag = self.config.siglip_model_name.replace("/", "_")
-            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_v{nv}_{fp}.pt")
+            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_vall_{fp}.pt")
         model_tag = self.config.dino_model_name.replace("/", "_")
-        return os.path.join(ref_dir, f".dino_cache_{model_tag}_v{nv}_{fp}.pt")
+        return os.path.join(ref_dir, f".dino_cache_{model_tag}_vall_{fp}.pt")
 
     def _try_load_cache(self, ref_dir: str) -> bool:
         """Versucht, gecachte Embeddings zu laden.
@@ -369,15 +373,16 @@ class DINOReRanker:
 
         # --- Schnellpfad: Cache laden ---
         if self._try_load_cache(ref_dir):
+            self._apply_view_limit()
             return
 
         # --- Kein Cache -> Bilder batchweise encodieren ---
         logger.info(f"Lade Referenzbilder aus: {ref_dir} (kein Cache, berechne Embeddings...)")
 
         # Schritt 1: Alle Bildpfade sammeln
-        # Respect config.num_views to limit how many views per object are used
-        # (thesis ablation O4: V in {8, 16, 32}).
-        max_views = getattr(self.config, "num_views", None)
+        # Always encode ALL available views so the cache is reusable across
+        # num_views ablations (O4: V in {8, 16, 42}).  View filtering is
+        # applied after loading via _apply_view_limit().
         all_paths: List[str] = []
         all_labels: List[str] = []
         for label in sorted(os.listdir(ref_dir)):
@@ -389,8 +394,6 @@ class DINOReRanker:
                 if fname.lower().endswith((".png", ".jpg", ".jpeg"))
                 and not fname.endswith("_bg.png")
             ])
-            if max_views is not None:
-                view_files = view_files[:max_views]
             for fname in view_files:
                 all_paths.append(os.path.join(label_dir, fname))
                 all_labels.append(label)
@@ -457,8 +460,36 @@ class DINOReRanker:
             len(self._ref_embeddings), len(keys_list),
         )
 
-        # Schritt 4: Cache speichern
+        # Schritt 4: Cache speichern (all views)
         self._save_cache(ref_dir)
+
+        # Schritt 5: View-Limit anwenden (nach Cache-Speicherung)
+        self._apply_view_limit()
+
+    def _apply_view_limit(self) -> None:
+        """Filter loaded embeddings to config.num_views per object.
+
+        The cache always stores ALL views.  This method trims to the
+        first N views per object so that ablation O4 (V in {8, 16, 42})
+        works without rebuilding the cache.
+        """
+        max_views = getattr(self.config, "num_views", None)
+        if max_views is None:
+            return  # Use all views
+
+        trimmed_embeddings: Dict[str, list] = {}
+        for obj_id, views in self._ref_embeddings.items():
+            trimmed_embeddings[obj_id] = views[:max_views]
+
+        total_before = sum(len(v) for v in self._ref_embeddings.values())
+        self._ref_embeddings = trimmed_embeddings
+        total_after = sum(len(v) for v in self._ref_embeddings.values())
+
+        if total_after < total_before:
+            logger.info(
+                "View limit applied: %d → %d views (num_views=%d)",
+                total_before, total_after, max_views,
+            )
 
     def rerank(
         self,

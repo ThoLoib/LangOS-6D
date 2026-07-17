@@ -26,14 +26,18 @@
 #   bash rendering/onboard_dataset.sh --dataset tless --dry-run
 #
 # Supported datasets:
-#   ycbv_gso, MI3DOR, housecat6d     — existing OBJ-based galleries
-#   tless, lmo, itodd                — BOP PLY-based galleries (auto-prepared)
+#   ycbv_gso, MI3DOR, housecat6d, shrec18  — existing OBJ-based galleries
+#   tless, lmo, itodd                      — BOP PLY-based galleries (auto-prepared)
 #
 # Prerequisites:
 #   - Blender 3.4+ installed at rendering/blender-*/blender (for rendering)
 #   - Python 3 with trimesh (for partial PCs)
 #   - Python 3 with transformers + LLaVA (for descriptions, inside Docker)
 #   - BOP datasets extracted in eval/datasets/ (for tless/lmo/itodd)
+#
+# For rclone sync to Google Drive, run rclone_watch.sh in a separate WSL
+# terminal while this script runs inside Docker.  See onboard_and_sync.sh
+# for the full automated workflow (Docker + rclone).
 #
 # Environment variables:
 #   NUM_VIEWS        — Number of icosphere views to render (default: 42)
@@ -57,25 +61,24 @@ DRY_RUN=0
 NUM_VIEWS="${NUM_VIEWS:-42}"
 NUM_POINTS="${NUM_POINTS:-10000}"
 BLENDER_BIN="${BLENDER_BIN:-}"
-
 usage() {
     echo "Usage: $0 --dataset <name> [--step <step>] [--overwrite] [--dry-run]"
     echo ""
-    echo "Datasets: ycbv_gso, MI3DOR, housecat6d, tless, lmo, itodd"
+    echo "Datasets: ycbv_gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
     echo "Steps:    all, prepare, render, partial, describe"
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dataset)   DATASET="$2"; shift 2 ;;
-        --step)      STEP="$2"; shift 2 ;;
-        --overwrite) OVERWRITE=1; shift ;;
-        --dry-run)   DRY_RUN=1; shift ;;
-        --num-views) NUM_VIEWS="$2"; shift 2 ;;
-        --num-points) NUM_POINTS="$2"; shift 2 ;;
-        --help|-h)   usage ;;
-        *)           echo "Unknown option: $1"; usage ;;
+        --dataset)        DATASET="$2"; shift 2 ;;
+        --step)           STEP="$2"; shift 2 ;;
+        --overwrite)      OVERWRITE=1; shift ;;
+        --dry-run)        DRY_RUN=1; shift ;;
+        --num-views)      NUM_VIEWS="$2"; shift 2 ;;
+        --num-points)     NUM_POINTS="$2"; shift 2 ;;
+        --help|-h)        usage ;;
+        *)                echo "Unknown option: $1"; usage ;;
     esac
 done
 
@@ -126,6 +129,12 @@ case "$DATASET" in
         DESC_OUTPUT="$OSCAR_ROOT/object_database/housecat6d/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/object_database/housecat6d/*/*.obj"
         ;;
+    shrec18)
+        CAD_DIR="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad"
+        IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18"
+        DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18/descriptions_attributes.json"
+        MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        ;;
     tless)
         IS_BOP=1
         BOP_SOURCE="$OSCAR_ROOT/eval/datasets/tless/models_cad"
@@ -149,7 +158,7 @@ case "$DATASET" in
         ;;
     *)
         echo "ERROR: Unknown dataset '$DATASET'"
-        echo "Supported: ycbv_gso, MI3DOR, housecat6d, tless, lmo, itodd"
+        echo "Supported: ycbv_gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
         exit 1
         ;;
 esac
@@ -221,8 +230,8 @@ step_prepare() {
         fi
 
         run_or_dry mkdir -p "$obj_dir"
-        # Symlink the PLY file as model.ply
-        run_or_dry ln -sf "$(realpath "$ply_file")" "$obj_dir/model.ply"
+        # Hard copy (not symlink) so the file is visible inside Docker containers
+        run_or_dry cp -f "$ply_file" "$obj_dir/model.ply"
         count=$((count + 1))
     done
 
@@ -252,9 +261,6 @@ step_render() {
         return
     fi
 
-    # The rendering script uses hardcoded paths; we need to override them via
-    # environment variables.  The script reads object_folder and object_images
-    # at the top level, so we patch them via env vars that the script will read.
     cd "$SCRIPT_DIR"
     OBJECT_FOLDER="$CAD_DIR" \
     OBJECT_IMAGES="$IMAGES_DIR" \

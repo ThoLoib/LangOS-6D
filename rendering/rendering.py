@@ -24,6 +24,11 @@ overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
 render_only = os.environ.get('RENDER_ONLY', '').strip()
 num_views = int(os.environ.get('NUM_VIEWS', '42'))  # Ablation O4; default 42 (full icosphere)
 
+def rclone_checkpoint(obj_idx):
+    """Hook for periodic rclone sync.  Currently a no-op inside Docker;
+    use rendering/rclone_watch.sh in a separate WSL terminal instead."""
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Icosphere viewpoint generation (following CNOS, Nguyen et al. ICCV 2023)
@@ -173,17 +178,44 @@ def generate_icosphere_positions(num_views, distance, ratio, subdivisions=1):
     return positions
 
 
+# Generic model filenames that indicate "one model per directory" layout.
+# When a mesh file has one of these names, the parent directory is the object ID.
+# When the filename is NOT generic (e.g. airplane_test_0001.obj), the filename
+# stem IS the object ID — this handles MI3DOR, HouseCat6D, SHREC'18 where
+# multiple objects live in the same directory.
+_GENERIC_MODEL_NAMES = {
+    'textured_simple.obj', 'model.obj', 'textured.obj',
+    'model.glb', 'model.ply', 'mesh.obj', 'mesh.ply',
+}
+
+
 def infer_model_id(file_path):
     norm = os.path.normpath(file_path)
     parts = norm.split(os.sep)
+    fname = parts[-1].lower()
+
+    # ycbv_gso: .../{object_id}/meshes/textured_simple.obj
     if len(parts) >= 3 and parts[-2] == 'meshes':
-        return parts[-3]  # .../<object_id>/meshes/model.obj
-    if len(parts) >= 2:
-        return parts[-2]  # .../<object_id>/textured_simple.obj
+        return parts[-3]
+
+    # Generic filename (model.ply, textured_simple.obj, etc.)
+    # → parent directory is the object ID (BOP, ycbv_gso direct)
+    if fname in _GENERIC_MODEL_NAMES and len(parts) >= 2:
+        return parts[-2]
+
+    # Specific filename (airplane_test_0001.obj, 02691156_xxx.obj, etc.)
+    # → filename stem is the object ID (MI3DOR, SHREC'18, HouseCat6D)
     return os.path.splitext(os.path.basename(file_path))[0]
 
 
 def file_priority(fname):
+    """Priority for choosing between multiple mesh files for the same object.
+
+    Lower = preferred.  Only matters when multiple files map to the same
+    model_id (e.g. textured_simple.obj and model.obj in the same dir).
+    For datasets where each file IS a separate object (MI3DOR, SHREC'18),
+    there's only one file per model_id so priority is irrelevant.
+    """
     base = fname.lower()
     if base == 'textured_simple.obj':
         return 0
@@ -193,8 +225,8 @@ def file_priority(fname):
         return 2
     if base.endswith('.glb'):
         return 3
-    if base == 'model.ply' or base.endswith('.ply'):
-        return 4  # BOP PLY models (T-LESS, LM-O, ITODD)
+    if base.endswith('.ply'):
+        return 4
     return 9
 
 
@@ -474,8 +506,8 @@ def clear_scene():
 # Create new folder structure
 os.makedirs(object_images, exist_ok=True)
 
-for model_id, filename in pending_models:
-    #camera = create_camera()  #
+for _obj_idx, (model_id, filename) in enumerate(pending_models):
+    rclone_checkpoint(_obj_idx)
     # Create a folder for each model
     model_dir = os.path.join(object_images, model_id)
     os.makedirs(model_dir, exist_ok=True)
@@ -501,6 +533,27 @@ for model_id, filename in pending_models:
         bpy.ops.import_scene.obj(filepath=model_path)
     elif ext.lower() == ".ply":
         bpy.ops.import_mesh.ply(filepath=model_path)
+        # PLY models (BOP datasets) often have vertex colors but no material.
+        # Create a material that uses vertex colors so they render correctly.
+        for obj in bpy.context.scene.objects:
+            if obj.type != 'MESH':
+                continue
+            mesh = obj.data
+            if not mesh.vertex_colors and not mesh.color_attributes:
+                continue
+            mat = bpy.data.materials.new(name="VertexColorMat")
+            mat.use_nodes = True
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+            nodes.clear()
+            # Vertex Color node → Principled BSDF → Output
+            vc_node = nodes.new('ShaderNodeVertexColor')
+            bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+            output = nodes.new('ShaderNodeOutputMaterial')
+            links.new(vc_node.outputs['Color'], bsdf.inputs['Base Color'])
+            links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+            obj.data.materials.clear()
+            obj.data.materials.append(mat)
 
     print('begin*************')
     # Assuming objects are mesh objects
