@@ -309,13 +309,8 @@ step_partial() {
 # Step 4: Generate text descriptions (LLaVA)
 # ---------------------------------------------------------------------------
 step_describe() {
-    if [[ -f "$DESC_OUTPUT" ]] && [[ $OVERWRITE -eq 0 ]]; then
-        local existing
-        existing=$(python3 -c "import json; print(len(json.load(open('$DESC_OUTPUT'))))" 2>/dev/null || echo 0)
-        log "Descriptions already exist ($existing entries): $DESC_OUTPUT"
-        log "Use --overwrite to regenerate"
-        return
-    fi
+    # Don't skip — generate_descriptions.py is idempotent and handles
+    # resuming internally (skips already-captioned images per object).
 
     local obj_count
     obj_count=$(count_objects "$CAD_DIR")
