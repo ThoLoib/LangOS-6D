@@ -74,7 +74,7 @@ class PipelineConfig:
     clip_threshold: float = 0.25  # Alternativ: Schwellen-basierte Filterung - noch nicht implementiert
 
     # Pfad zu den Objektbeschreibungen (JSON, erzeugt via description_generator)
-    description_file: str = ""    # z.B. "object_database/ycbv_gso/descriptions_attributes.json"
+    description_file: str = ""    # z.B. "object_database/ycbv/descriptions_attributes.json"
 
     # -------------------------------------------------------------------------
     # Schritt 4 – Bildbasiertes Re-Ranking (DINOv2 / SigLIP)
@@ -103,7 +103,7 @@ class PipelineConfig:
     num_views: Optional[int] = 42  # O4: {8, 16, 42}
 
     # Pfad zu vorgerenderten Referenzbildern
-    reference_images_dir: str = ""  # z.B. "object_images/ycbv_gso/"
+    reference_images_dir: str = ""  # z.B. "object_images/ycbv/"
 
     # -------------------------------------------------------------------------
     # Schritt 5 – Shape Matching (ULIP-2 / Uni3D)
@@ -113,9 +113,19 @@ class PipelineConfig:
     # Uni3D: https://github.com/baaivision/Uni3D (Zhou et al., ICLR 2024)
     #   HF: https://huggingface.co/BAAI/Uni3D
     shape_encoder: str = "ulip2"   # "ulip2" (default) | "uni3d" (ablation E7)
-    uni3d_model_name: str = "BAAI/Uni3D"  # HuggingFace model ID
+    # Uni3D-giant (E7 baseline): EVA-giant point transformer, aligned to the
+    # EVA02-E-14-plus CLIP space (embed_dim 1024). Loaded from the cloned repo
+    # (uni3d_repo_path) + modelzoo checkpoint — see rendering/README / step5.
+    uni3d_model_name: str = "uni3d-g"      # variant tag (part of cache key)
+    uni3d_repo_path: str = "/uni3d"        # cloned baaivision/Uni3D repo
+    uni3d_checkpoint: str = "/uni3d/modelzoo/uni3d-g/model.pt"
+    uni3d_pc_model: str = "eva_giant_patch14_560"  # timm point-transformer
+    uni3d_pc_feat_dim: int = 1408          # EVA-giant hidden dim
+    uni3d_pc_encoder_dim: int = 512        # patch-encoder channel (inference.sh)
+    uni3d_num_group: int = 512             # FPS group centers
+    uni3d_group_size: int = 64             # neighbours per group
     uni3d_num_points: int = 10000          # Points per cloud (same as ULIP-2)
-    uni3d_embed_dim: int = 512             # Uni3D embedding dimension
+    uni3d_embed_dim: int = 1024            # Uni3D-g embed dim (EVA02-E-14-plus)
     ulip_repo_path: str = ""       # Pfad zum geklonten ULIP-Repo (für Model-Imports)
     ulip2_checkpoint: str = ""     # Pfad zum ULIP-2-Modell-Checkpoint (.pt)
     ulip2_backbone: str = "pointbert_colored"  # "pointbert_colored" | "pointbert" | "pointnext"
@@ -148,7 +158,7 @@ class PipelineConfig:
     ulip2_rotation_eval_weight: float = 0.0  # 0.0 = debug-only, >0 = optional rerank contribution
 
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
-    cad_models_dir: str = ""       # z.B. "object_database/ycbv_gso/"
+    cad_models_dir: str = ""       # z.B. "object_database/ycbv/"
 
     # -------------------------------------------------------------------------
     # Schritt 6 – Fusion / Konsens

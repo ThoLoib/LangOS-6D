@@ -61,7 +61,7 @@ usage() {
     echo "  --overwrite           Overwrite existing outputs"
     echo "  --dry-run             Show what would be done"
     echo ""
-    echo "Datasets: ycbv_gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
+    echo "Datasets: ycbv_gso, ycbv, gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
     exit 1
 }
 
@@ -86,14 +86,25 @@ done
 command -v rclone &>/dev/null || { echo "ERROR: rclone not found on WSL. Install it first."; exit 1; }
 command -v docker &>/dev/null || { echo "ERROR: docker not found."; exit 1; }
 
+# Queue halt guard: if this file exists, refuse to START a new dataset. Used to
+# stop an already-running queue loop from advancing to its next dataset without
+# killing the dataset currently in flight (which is already past this check).
+if [[ -f "$OSCAR_ROOT/.halt_queue" ]]; then
+    echo "[halt] $OSCAR_ROOT/.halt_queue present — refusing to start dataset '$DATASET'"
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Dataset → images dir mapping (must match onboard_dataset.sh)
 # ---------------------------------------------------------------------------
 case "$DATASET" in
     ycbv_gso)  IMAGES_SUBDIR="object_images/ycbv_gso" ;;
+    ycbv)      IMAGES_SUBDIR="object_images/ycbv" ;;
+    gso)       IMAGES_SUBDIR="object_images/gso" ;;
     MI3DOR)    IMAGES_SUBDIR="object_images/MI3DOR" ;;
     housecat6d) IMAGES_SUBDIR="object_images/housecat6d" ;;
     shrec18)   IMAGES_SUBDIR="object_images/shrec18" ;;
+    shrec18_fixed) IMAGES_SUBDIR="object_images/shrec18_fixed" ;;
     tless)     IMAGES_SUBDIR="object_images/tless" ;;
     lmo)       IMAGES_SUBDIR="object_images/lmo" ;;
     itodd)     IMAGES_SUBDIR="object_images/itodd" ;;
@@ -187,7 +198,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
     # Sync images
     if [[ -d "$IMAGES_DIR" ]]; then
         rclone copy "$IMAGES_DIR" "$REMOTE/$IMAGES_SUBDIR" \
-            --transfers 8 --checkers 16 \
+            --transfers 32 --checkers 32 \
             --stats-one-line --stats 5s \
             --log-level NOTICE 2>&1 || true
     fi
@@ -195,7 +206,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
     # Sync object_database (descriptions, metadata)
     if [[ -d "$DB_DIR" ]]; then
         rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
-            --transfers 4 --checkers 8 \
+            --transfers 32 --checkers 32 \
             --stats-one-line --stats 0 \
             --log-level NOTICE 2>&1 || true
     fi

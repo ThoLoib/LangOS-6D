@@ -437,66 +437,105 @@ class Uni3DEncoder(nn.Module):
         self.config = config
         self.device = config.device
         self._model = None
-        self._embed_dim = getattr(config, "uni3d_embed_dim", 512)
+        self._embed_dim = getattr(config, "uni3d_embed_dim", 1024)
 
     def _load(self):
         if self._model is not None:
             return
+        import sys
+        import types
 
-        model_name = getattr(self.config, "uni3d_model_name", "BAAI/Uni3D")
-        logger.info("Loading Uni3D model: %s ...", model_name)
+        repo = getattr(self.config, "uni3d_repo_path", "/uni3d")
+        ckpt = getattr(self.config, "uni3d_checkpoint",
+                       "/uni3d/modelzoo/uni3d-g/model.pt")
+        if not os.path.isfile(ckpt):
+            raise RuntimeError(
+                f"Uni3D checkpoint not found: {ckpt}. Download it from "
+                f"https://huggingface.co/BAAI/Uni3D (modelzoo/uni3d-g/model.pt) "
+                f"and place it under {os.path.dirname(ckpt)}.")
 
+        logger.info("Building Uni3D (%s) from %s ...",
+                    getattr(self.config, "uni3d_pc_model", "?"), repo)
+
+        # The Uni3D repo and the ULIP repo both expose a top-level ``models``
+        # package. In the precompute both encoders run in one process, so the
+        # first-imported ``models`` would shadow the other. Isolate this import:
+        # evict any cached ``models*`` (e.g. ULIP's), import Uni3D's, then
+        # restore — the built model keeps its class references either way.
+        saved = {k: v for k, v in sys.modules.items()
+                 if k == "models" or k.startswith("models.")}
+        for k in saved:
+            del sys.modules[k]
+        sys.path.insert(0, repo)
         try:
-            # Uni3D is distributed as a torch.hub model via its GitHub repo
-            # or can be loaded from HuggingFace with custom code
-            self._model = torch.hub.load(
-                "baaivision/Uni3D", "uni3d_base",
-                trust_repo=True,
+            from models.uni3d import create_uni3d
+            args = types.SimpleNamespace(
+                pc_model=getattr(self.config, "uni3d_pc_model",
+                                 "eva_giant_patch14_560"),
+                pretrained_pc="",          # EVA weights come from the full ckpt
+                drop_path_rate=0.0,
+                pc_feat_dim=getattr(self.config, "uni3d_pc_feat_dim", 1408),
+                pc_encoder_dim=getattr(self.config, "uni3d_pc_encoder_dim", 512),
+                embed_dim=self._embed_dim,
+                group_size=getattr(self.config, "uni3d_group_size", 64),
+                num_group=getattr(self.config, "uni3d_num_group", 512),
+                patch_dropout=0.0,
             )
-        except Exception:
-            # Fallback: try loading from HuggingFace with transformers
-            logger.info("torch.hub failed, trying HuggingFace AutoModel...")
+            model = create_uni3d(args)
+        finally:
             try:
-                from transformers import AutoModel
-                self._model = AutoModel.from_pretrained(
-                    model_name, trust_remote_code=True,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Could not load Uni3D model '{model_name}'. "
-                    f"Ensure the model is available via torch.hub or HuggingFace.\n"
-                    f"Install: pip install timm\n"
-                    f"Error: {exc}"
-                )
+                sys.path.remove(repo)
+            except ValueError:
+                pass
+            for k in [k for k in sys.modules
+                      if k == "models" or k.startswith("models.")]:
+                del sys.modules[k]
+            sys.modules.update(saved)
 
-        self._model = self._model.to(self.device)
-        self._model.eval()
+        state = torch.load(ckpt, map_location="cpu", weights_only=False)
+        for key in ("module", "state_dict", "model"):
+            if isinstance(state, dict) and key in state \
+                    and isinstance(state[key], dict):
+                state = state[key]
+                break
+        sd = OrderedDict((k.replace("module.", ""), v) for k, v in state.items())
+        res = model.load_state_dict(sd, strict=False)
+        # Only the point-cloud branch is used at inference; missing keys for the
+        # unused image head are expected. A missing point_encoder.* key is not.
+        pe_missing = [k for k in res.missing_keys if k.startswith("point_encoder")]
+        if pe_missing:
+            raise RuntimeError(
+                f"Uni3D load: {len(pe_missing)} point_encoder weights missing "
+                f"(e.g. {pe_missing[:3]}) — checkpoint/arch mismatch.")
+        logger.info("Uni3D checkpoint loaded (missing=%d, unexpected=%d)",
+                    len(res.missing_keys), len(res.unexpected_keys))
 
+        self._model = model.to(self.device).eval()
         n_params = sum(p.numel() for p in self._model.parameters())
-        logger.info(
-            "Uni3D loaded: %.1fM params, embed_dim=%d, device=%s",
-            n_params / 1e6, self._embed_dim, self.device,
-        )
+        logger.info("Uni3D loaded: %.1fM params, embed_dim=%d, device=%s",
+                    n_params / 1e6, self._embed_dim, self.device)
 
     def encode(self, points: np.ndarray, colors: Optional[np.ndarray] = None) -> torch.Tensor:
         """Encode a point cloud into a Uni3D embedding.
 
-        Args:
-            points: (N, 3) xyz coordinates.
-            colors: (N, 3) rgb in [0, 1] (optional, Uni3D uses xyz only).
+        Uni3D consumes xyz+rgb (6 channels): its patch embedder concatenates
+        per-point color to the grouped geometry, so colors are required —
+        zeros are substituted when the source cloud has none (matching the
+        Uni3D data pipeline, which fills missing color with a constant).
 
-        Returns:
-            L2-normalized tensor (1, embed_dim).
+        Returns an L2-normalized tensor (1, embed_dim).
         """
         self._load()
 
         num_points = getattr(self.config, "uni3d_num_points", 10000)
-        # Normalize: same preprocessing as ULIP (unit sphere + resample)
-        pts_norm = normalize_pointcloud(points, colors=None, num_points=num_points)
+        if colors is None:
+            colors = np.zeros((len(points), 3), dtype=np.float32)
+        pts_norm = normalize_pointcloud(points, colors=colors,
+                                        num_points=num_points)  # (num_points, 6)
         pts_tensor = torch.from_numpy(pts_norm).unsqueeze(0).float().to(self.device)
 
         with torch.no_grad():
-            embedding = self._model(pts_tensor)  # (1, embed_dim)
+            embedding = self._model.encode_pc(pts_tensor)  # (1, embed_dim)
             embedding = F.normalize(embedding, p=2, dim=-1)
 
         return embedding
@@ -600,9 +639,10 @@ class ShapeMatcher:
         for obj_id, path in mesh_items:
             try:
                 st = os.stat(path)
+                # size only (no mtime) → fingerprint is stable across
+                # machines so a cache precomputed elsewhere is reused here.
                 inv.append(
-                    f"{obj_id}|{os.path.relpath(path, cad_dir)}|"
-                    f"{int(st.st_mtime_ns)}|{st.st_size}"
+                    f"{obj_id}|{os.path.relpath(path, cad_dir)}|{st.st_size}"
                 )
             except OSError:
                 inv.append(f"{obj_id}|{os.path.relpath(path, cad_dir)}|missing")
@@ -1121,7 +1161,15 @@ class ShapeMatcher:
     ) -> str:
         """Generate cache path for partial-view embeddings."""
         ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
-        meta_parts = [
+        # Encoder type must be part of the fingerprint — otherwise a Uni3D
+        # run (ablation E7) would collide with the ULIP-2 cache, since the
+        # remaining meta fields (backbone/npts/edim/ckpt) are ULIP-2 values
+        # in both cases (mirrors _get_cache_path for full meshes).  The tag
+        # is only added for non-default encoders so existing ULIP-2 caches
+        # keep their fingerprint and are not re-encoded.
+        encoder_tag = ([f"encoder={self._encoder_type}"]
+                       if self._encoder_type != "ulip2" else [])
+        meta_parts = encoder_tag + [
             f"backbone={self.config.ulip2_backbone}",
             f"npts={self.config.ulip2_num_points}",
             f"colors={int(self.config.ulip2_use_colors)}",
@@ -1135,9 +1183,8 @@ class ShapeMatcher:
             for view_idx, path in sorted(views):
                 try:
                     st = os.stat(path)
-                    inv.append(
-                        f"{obj_id}|v{view_idx}|{int(st.st_mtime_ns)}|{st.st_size}"
-                    )
+                    # size only (no mtime) → cross-machine-stable fingerprint
+                    inv.append(f"{obj_id}|v{view_idx}|{st.st_size}")
                 except OSError:
                     inv.append(f"{obj_id}|v{view_idx}|missing")
 
