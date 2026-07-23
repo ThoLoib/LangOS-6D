@@ -600,9 +600,10 @@ class ShapeMatcher:
         for obj_id, path in mesh_items:
             try:
                 st = os.stat(path)
+                # size only (no mtime) → fingerprint is stable across
+                # machines so a cache precomputed elsewhere is reused here.
                 inv.append(
-                    f"{obj_id}|{os.path.relpath(path, cad_dir)}|"
-                    f"{int(st.st_mtime_ns)}|{st.st_size}"
+                    f"{obj_id}|{os.path.relpath(path, cad_dir)}|{st.st_size}"
                 )
             except OSError:
                 inv.append(f"{obj_id}|{os.path.relpath(path, cad_dir)}|missing")
@@ -1121,7 +1122,15 @@ class ShapeMatcher:
     ) -> str:
         """Generate cache path for partial-view embeddings."""
         ckpt_tag = os.path.basename(self.config.ulip2_checkpoint or "no_ckpt")
-        meta_parts = [
+        # Encoder type must be part of the fingerprint — otherwise a Uni3D
+        # run (ablation E7) would collide with the ULIP-2 cache, since the
+        # remaining meta fields (backbone/npts/edim/ckpt) are ULIP-2 values
+        # in both cases (mirrors _get_cache_path for full meshes).  The tag
+        # is only added for non-default encoders so existing ULIP-2 caches
+        # keep their fingerprint and are not re-encoded.
+        encoder_tag = ([f"encoder={self._encoder_type}"]
+                       if self._encoder_type != "ulip2" else [])
+        meta_parts = encoder_tag + [
             f"backbone={self.config.ulip2_backbone}",
             f"npts={self.config.ulip2_num_points}",
             f"colors={int(self.config.ulip2_use_colors)}",
@@ -1135,9 +1144,8 @@ class ShapeMatcher:
             for view_idx, path in sorted(views):
                 try:
                     st = os.stat(path)
-                    inv.append(
-                        f"{obj_id}|v{view_idx}|{int(st.st_mtime_ns)}|{st.st_size}"
-                    )
+                    # size only (no mtime) → cross-machine-stable fingerprint
+                    inv.append(f"{obj_id}|v{view_idx}|{st.st_size}")
                 except OSError:
                     inv.append(f"{obj_id}|v{view_idx}|missing")
 

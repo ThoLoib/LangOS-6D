@@ -30,6 +30,7 @@
 import hashlib
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple
 
@@ -42,6 +43,21 @@ from .config import PipelineConfig
 from .step3_clip_retrieval import CLIPRetrievalResult, CLIPCandidate
 
 logger = logging.getLogger(__name__)
+
+
+def _view_sort_key(fname: str) -> Tuple[int, str]:
+    """Numeric sort key for rendered view filenames.
+
+    View files are named with an unpadded trailing index
+    (``<obj>_0.png`` … ``<obj>_41.png``), so a plain lexicographic sort
+    yields 0, 1, 10, 11, …, 19, 2, 20, … — which breaks the FPS-prefix
+    assumption of ablation O4 (config.num_views: the first N views must
+    be the N FPS-ordered viewpoints).  Sorting by the parsed integer
+    restores rendering order; files without a trailing index fall back
+    to lexicographic order after all indexed ones.
+    """
+    m = re.search(r"(\d+)\.[A-Za-z]+$", os.path.basename(fname))
+    return (int(m.group(1)) if m else 10 ** 9, fname)
 
 
 # ---------------------------------------------------------------------------
@@ -265,20 +281,27 @@ class DINOReRanker:
 
     @staticmethod
     def _dir_fingerprint(ref_dir: str) -> str:
-        """Erzeugt einen Fingerprint aus Dateianzahl + neuester mtime.
+        """Machine-independent fingerprint over the reference views.
 
-        Aendert sich, wenn Bilder hinzugefuegt/entfernt/aktualisiert werden.
+        Hashes the sorted (relative-path, size) of every view.  Sizes are
+        byte-stable across machines (rclone/Drive verify by checksum),
+        whereas the previous mtime-based fingerprint changed after any
+        copy/download — which broke reuse of a cache precomputed on
+        another PC.  Still changes if views are added/removed/edited.
         """
-        total_files = 0
-        latest_mtime = 0.0
+        entries = []
         for root, _dirs, files in os.walk(ref_dir):
             for f in files:
                 if f.lower().endswith((".png", ".jpg", ".jpeg")):
-                    total_files += 1
-                    mt = os.path.getmtime(os.path.join(root, f))
-                    if mt > latest_mtime:
-                        latest_mtime = mt
-        raw = f"v{DINOReRanker.CACHE_VERSION}:{total_files}:{latest_mtime:.6f}"
+                    p = os.path.join(root, f)
+                    rel = os.path.relpath(p, ref_dir)
+                    try:
+                        entries.append(f"{rel}:{os.path.getsize(p)}")
+                    except OSError:
+                        entries.append(f"{rel}:missing")
+        entries.sort()
+        raw = (f"v{DINOReRanker.CACHE_VERSION}:{len(entries)}:"
+               + "|".join(entries))
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _cache_path(self, ref_dir: str) -> str:
@@ -393,7 +416,7 @@ class DINOReRanker:
                 fname for fname in os.listdir(label_dir)
                 if fname.lower().endswith((".png", ".jpg", ".jpeg"))
                 and not fname.endswith("_bg.png")
-            ])
+            ], key=_view_sort_key)
             for fname in view_files:
                 all_paths.append(os.path.join(label_dir, fname))
                 all_labels.append(label)
@@ -473,6 +496,12 @@ class DINOReRanker:
         first N views per object so that ablation O4 (V in {8, 16, 42})
         works without rebuilding the cache.
         """
+        # Re-sort by numeric view index first: caches built before the
+        # natural-sort fix (and any cache, defensively) may hold views in
+        # lexicographic order, which would make views[:N] a non-FPS subset.
+        for obj_id, views in self._ref_embeddings.items():
+            views.sort(key=lambda ep: _view_sort_key(ep[1]))
+
         max_views = getattr(self.config, "num_views", None)
         if max_views is None:
             return  # Use all views

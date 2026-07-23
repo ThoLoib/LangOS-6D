@@ -1,5 +1,37 @@
 # AI Log
 
+## 2026-07-23 Official SHREC'18 eval + two-PC precompute (gallery downloaded, Mesa renders)
+
+Goal
+- Make Stage-1 numbers leaderboard-comparable and offload the expensive reference encoding to the gallery-generating PC.
+
+Changes
+- **Gallery downloaded in full** (3,308 models, 47 GB) from `gdrive:Masterthesis/OSCAR/object_images/shrec18`. Fixed throughput: the shared rclone client_id + default 10 req/s pacer capped it at ~0.2 MB/s; a private OAuth client_id + `--drive-pacer-min-sleep 10ms` took it to ~10 MB/s. Excluded `*_CamMatrix.npy` / `*_bg.png` (pose-only).
+- **Official evaluation** (`experiments/experiment1_shrec18_stage1.py`): new `load_official_gt` (parses `eval/shrec18_official/rgbd.csv`+`cad.csv`) and `score_official` (replicates `evaluate.py`'s loop, reusing the unchanged official `metrics.py` — graded relevance, top-f). `run_ablation`/`aggregate`/`main` now report nDCG/precision/recall/F1/AP/NNT1/NNT2 and select by nDCG. Verified: official `metrics.py` runs under py3.11 (scored the dataset's `results/` lists → P=1.0, nDCG=1.0), and a synthetic `run_ablation` integration test passed.
+- **Two-PC precompute**: `--precompute` mode + `run_pass(build_only=True)` build every gallery reference cache with no query scoring; `precompute_gallery` writes a provenance manifest; `verify_precompute_provenance` warns on commit mismatch at eval start.
+- **Content-stable cache fingerprints** (`step4._dir_fingerprint`, `step5._get_cache_path`, `_get_partial_cache_path`): size+relpath instead of mtime, so caches survive cross-machine transfer.
+- **Mesa/EGL**: committed `oscar-plus-egl` (base image + `libegl1 libgl1-mesa-dri ...`) so Open3D renders query meshes headlessly; `_offscreen_available()` gates GL-vs-splat; adaptive point-splat fallback improved.
+- `SHAPE_AGG_VIEWS=16` (encode 42, aggregate 16); `prepare_queries` hardened to regenerate when a cached index doesn't cover the full query set.
+
+Status
+- Base reference pass encoding on the RTX 4050 (validated `run_pass` on real encoders). Next: gallery PC runs `--precompute`; eval PC pulls caches + runs the grid. Blocked only on the two-PC cache handoff.
+
+## 2026-07-20 Experiment 1 script (Stage 1 SHREC'18 ablation grid) + two latent bug fixes
+
+Goal
+- Implement thesis Experiment 1: the Stage-1 retrieval-tuning ablation grid (E1, E2, E2b, E4, E6, E7, O1, O2, O4, O5) on SHREC'18 ObjectNN+, selecting the best OSCAR+ config by DCG (tie-break mAP).
+
+Changes
+- `experiments/experiment1_shrec18_stage1.py` (new, the only entry point): input validation → GT reconstruction (union-find over `results/`, 20 categories / 1,452 train queries — verified) → query preprocessing (PLY → RGB crop via OffscreenRenderer with numpy point-splat fallback + raw `.npz` point cloud) → cached channel-score passes → per-ablation derivations via the production `ScoreFusion` → PSB/SHREC metrics (NN, FT, ST, E@32, full-list DCG, R@1/5, mAP) → `stage1_summary.csv/.tex` + `best_config.json`. Resumable (`--resume`), geometry gated (`--with-geometry`), smoke-testable (`--limit-queries`, `--allow-partial-gallery`, `--viz-check`).
+- `pipeline/step4_dino_reranking.py`: **bug fix** — view files were sorted lexicographically (`_0, _1, _10, _11, … _19, _2, …`), so `views[:N]` was not the FPS prefix promised by `config.num_views`; ablation O4 would have been silently wrong. Added numeric `_view_sort_key` in `load_reference_images` and a defensive re-sort in `_apply_view_limit` (covers stale caches).
+- `pipeline/step5_shape_matching.py`: **bug fix** — `_get_partial_cache_path` did not include the encoder type, so a Uni3D run (E7) would have collided with the ULIP-2 partial cache. Encoder tag added for non-default encoders only (existing ULIP-2 caches keep their fingerprint).
+- `object_retrieval/eval_common.py`: added `EvalConfig.pipeline_overrides` — arbitrary `PipelineConfig` field overrides applied in `build_pipeline` before components are constructed (unlocks `appearance_encoder`, `shape_encoder`, `ulip2_use_colors`, `num_views`, … for experiments without widening `EvalConfig`).
+
+Verified
+- GT union-find on the real dataset: exactly 20 components, 1,452 queries, 3,305/3,308 CADs (3 distractors), cache reload OK.
+- Derivation tier self-test in the `tholoi/oscar-plus` container: single-channel ranking, min-max weighted fusion (hand-computed), Borda majority voting, O4 view-budget switch, CLIP-pruned scope + tail ordering, hand-computed PSB metrics, -inf sanitation — all passed.
+- Not yet runnable end-to-end: `object_images/shrec18` + `object_database/shrec18/descriptions_attributes.json` are not on local disk (renders live on Google Drive, sync/onboarding incomplete); validation reports this and exits with instructions.
+
 ## 2026-07-17 Onboarding pipeline, multi-dataset model ID fix, cache optimization
 
 Goal

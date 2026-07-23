@@ -1,6 +1,40 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-17
+> Last updated: 2026-07-23
+
+## Update 2026-07-23 (Stage-1: official eval + two-PC precompute)
+
+### Official SHREC'18 evaluation (all runs)
+- GT + scorer are the track's own: clone `https://github.com/hkust-vgd/shrec18` into `eval/shrec18_official/` (gitignored). `rgbd.csv`/`cad.csv` give real category+subcategory for all 2,101 queries / 3,308 CADs; the experiment reuses their `metrics.py` unchanged (graded relevance subcat=2/cat=1, metrics at top-f). Reported metrics: nDCG (selection), precision, recall, F1, AP, NNT1, NNT2. Runs on all 2,101 queries.
+
+### Two-PC precompute (the plan in progress)
+- **Gallery PC** builds all reference caches: `python experiments/experiment1_shrec18_stage1.py --precompute` → writes DINO/SigLIP/ULIP-partial(RGB+XYZ)/ULIP-fullmesh/Uni3D caches into `object_images/shrec18/` and `.../cad/`, plus `object_images/shrec18/precompute_manifest.json`. Ship those `.pt` files + manifest to the eval PC (same rclone path).
+- **Eval PC** pulls them and runs the grid; it only does query embeddings, GeDi (fusion top-5), fusion, metrics.
+- **Cross-machine caches work** because fingerprints are now size+relpath (not mtime). The eval PC prints a provenance warning if the caches were built at a different commit — only the encoder files (`pipeline/step3-5`, `config.py` encoder fields, `eval_common.build_pipeline`) must match; rendering/onboarding may diverge.
+- Container: use `oscar-plus-egl` (base image + Mesa/EGL) so query meshes render headlessly; GPU passthrough via `--gpus all`.
+
+### Key knobs
+- `SHAPE_AGG_VIEWS=16` in the experiment (encode all 42, aggregate top-16). Set to `None` for all 42.
+- Run the full grid: `docker run --rm --gpus all -e EGL_PLATFORM=surfaceless -v <OSCAR>:/app -v <ULIP>:/ulip -w /app oscar-plus-egl python3.11 experiments/experiment1_shrec18_stage1.py --all --resume`.
+
+## Update 2026-07-20 (Experiment 1: Stage-1 SHREC'18 ablation grid runner)
+
+## Update 2026-07-20 (Experiment 1: Stage-1 SHREC'18 ablation grid runner)
+
+### New: `experiments/experiment1_shrec18_stage1.py`
+- Single flag-based entry point for thesis Experiment 1 (Stage 1 — RGB-D retrieval tuning, `subsec:eval_stage1_retrieval`). No data management: the user provides raw SHREC'18 (`eval/datasets/shrec18/shrec18_full/`), rendered views (`object_images/shrec18/`) and descriptions (`object_database/shrec18/descriptions_attributes.json`); the script validates and reports what is missing.
+- Run: `docker compose run --rm oscar python3.11 experiments/experiment1_shrec18_stage1.py --all --resume [--with-geometry]` (gedi service needed only for GeDi-signal ablations). `--list` prints the 31-cell registry; `--limit-queries N --allow-partial-gallery` for smoke tests.
+- GT: category labels reconstructed via union-find over `results/` (20 categories, 1,452 train queries — Stage 1 tunes on the train split; see DECISIONS 2026-07-20).
+- Two-tier execution: cached channel-score passes (base / siglip / ulip_fullmesh / ulip_pc_rgb / ulip_pc_xyz / uni3d) + cheap derivations through the production `ScoreFusion`. O4 needs no re-encoding (FPS-prefix re-aggregation of the 42-view cache).
+- Outputs: `object_retrieval/results_shrec18_stage1/<ablation>/metrics_summary.json`, `stage1_summary.csv`, `stage1_summary.tex` (for `tab:eval_stage1_ablation_grid`), `best_config.json` (max DCG, tie-break mAP — frozen for Stages 2/3a/3b/5).
+
+### Bug fixes shipped with it
+- `step4_dino_reranking.py`: numeric view sorting (lexicographic order broke the FPS-prefix assumption of O4; stale caches re-sorted defensively in `_apply_view_limit`).
+- `step5_shape_matching.py`: partial-view cache fingerprint now includes the encoder type for non-ULIP2 encoders (E7/Uni3D would have reused the ULIP-2 cache).
+- `object_retrieval/eval_common.py`: new `EvalConfig.pipeline_overrides` hook (applied in `build_pipeline` before component construction).
+
+### Blocked on data
+- The rendered gallery + descriptions are not yet complete/local (renders sync to Google Drive via `onboard_and_sync.sh`, LLaVA describe step not run). The script's validation prints the exact onboarding commands.
 
 ## Update 2026-07-17 (thesis-approach: onboarding pipeline, multi-dataset fixes, cache optimization)
 

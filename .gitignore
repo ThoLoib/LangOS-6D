@@ -36,3 +36,6 @@ blender-*/
 !/object_database/.gitkeep
 !/object_images/.gitkeep
 !/results/.gitkeep
+
+# Official SHREC18 eval kit (clone of hkust-vgd/shrec18)
+/eval/shrec18_official/

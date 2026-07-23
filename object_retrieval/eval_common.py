@@ -79,6 +79,12 @@ class EvalConfig:
     ulip2_use_partial_views: bool = False
     ulip_query_cache_path: str = ""
 
+    # Extra PipelineConfig field overrides applied in build_pipeline()
+    # before any component is constructed.  Lets experiment scripts toggle
+    # ablation knobs (appearance_encoder, shape_encoder, num_views,
+    # ulip2_use_colors, ...) without widening EvalConfig for each one.
+    pipeline_overrides: Dict = field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # Metric helpers (verbatim from retrieval_mi3dor_eval.py)
@@ -290,6 +296,18 @@ def build_pipeline(cfg, cad_mesh_items=None):
         ulip2_mode=cfg.ulip2_mode,
         ulip2_use_partial_views=cfg.ulip2_use_partial_views,
     )
+
+    # Apply experiment-level overrides (must happen before components are
+    # built, since encoders read the config at construction time).
+    for _k, _v in cfg.pipeline_overrides.items():
+        if not hasattr(config, _k):
+            raise AttributeError(f"pipeline_overrides: unknown "
+                                 f"PipelineConfig field '{_k}'")
+        setattr(config, _k, _v)
+    # Keep EvalConfig's view of partial-view usage in sync so the
+    # partial-vs-fullmesh branch below follows the override.
+    if "ulip2_use_partial_views" in cfg.pipeline_overrides:
+        cfg.ulip2_use_partial_views = config.ulip2_use_partial_views
 
     print("[init] Loading CLIP descriptions...")
     clip_retr = CLIPRetriever(config)

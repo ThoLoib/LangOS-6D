@@ -1,5 +1,40 @@
 # Decisions
 
+## 2026-07-23 Stage-1: official SHREC'18 evaluation for all runs + two-PC precompute
+
+Decision
+- **Adopt the official SHREC'18 evaluation everywhere** (tuning ablations and final numbers), superseding the reconstructed category-only GT. The experiment loads the track's own `rgbd.csv`/`cad.csv` (real category+subcategory for all 2,101 queries / 3,308 CADs, cloned from `hkust-vgd/shrec18` into `eval/shrec18_official/`, gitignored) and scores with the track's unchanged `metrics.py` (graded relevance: subcategory=2, category=1). Metric set is now nDCG/precision/recall/F1/AP/NNT1/NNT2 at top-f; best config = highest (graded) nDCG, tie-break mAP. Runs on all 2,101 queries.
+- **Split the compute across two PCs.** The gallery-generating PC precomputes the query-independent reference embeddings (DINO, SigLIP, ULIP partial RGB + XYZ-only, ULIP full-mesh, Uni3D) via `python experiments/experiment1_shrec18_stage1.py --precompute`; the eval PC does only query-side work, GeDi (fusion top-5), fusion, and metrics.
+- **Cache fingerprints are now content-stable** (`step4._dir_fingerprint`, `step5._get_cache_path`, `_get_partial_cache_path`): hash of file **size + relative path** instead of mtime, so a cache built on one PC is reused on the other (mtimes change after copy/Drive; sizes are byte-stable).
+- **Provenance manifest + verify-on-load**: `--precompute` writes `object_images/shrec18/precompute_manifest.json` (encoders, checkpoint, dims, code commit); the eval PC warns loudly if the shipped caches were built at a different commit, guarding against encoder-path divergence between the two repos.
+- **Shape channel: encode all 42 partial views, aggregate the top-16** for the first experiment (`SHAPE_AGG_VIEWS=16` in the experiment script). Full-resolution embeddings stay in the cache as the reusable asset; only the retrieval-time pooling is trimmed.
+- **Query crops rendered with Mesa/EGL** in a derived image `oscar-plus-egl` (base image lacks `libEGL`); `_offscreen_available()` auto-uses the GL mesh renderer when EGL is present, else the CPU point-splat.
+
+Rationale
+- The official GT+scorer are the only way OSCAR+ numbers are comparable to the published participants; using them for tuning too keeps one consistent metric. The two-PC split removes the ~13 h reference-encoding bottleneck from the eval PC by running it on the otherwise-idle gallery PC, where the data is already local.
+
+Alternatives considered
+- Reconstructed union-find GT (category-only, train split) — kept as a fallback (`build_gt`) but superseded now that the official CSVs are available.
+- Capping the *encoding* at 16 views — rejected: throws away the full embeddings; instead encode 42, aggregate 16.
+- Requiring identical Docker/repo on both PCs — relaxed to "identical encoder files + provenance check"; rendering/onboarding code may diverge freely.
+
+## 2026-07-20 Stage-1 experiment runner: two-tier execution, reconstructed GT, train split only
+
+Decision
+- `experiments/experiment1_shrec18_stage1.py` is the single entry point for thesis Experiment 1 (Stage 1 ablation grid on SHREC'18 ObjectNN+). It is flag-based (no subcommands) and never downloads/manages data — the user provides raw SHREC'18, rendered views, and descriptions; the script only validates presence.
+- Execution is split into expensive cached *channel-score passes* (one per encoder×reference combo: base, siglip, ulip_fullmesh, ulip_pc_rgb, ulip_pc_xyz, uni3d) and cheap *derivations* (fusion weights/method, scoping, view budget, geometry re-ranking) computed from the cached vectors. Derivations reuse `pipeline/step6_fusion.ScoreFusion` on synthetic result objects rather than re-implementing fusion.
+- SHREC'18 category GT is reconstructed by union-find over the `results/` relevance lists (exactly 20 components; 1,452 train queries, 3,305/3,308 CADs). Stage 1 therefore tunes on the labeled train split only; the 3 unlisted CADs stay as distractors. An official label file with the same JSON schema can be dropped in as replacement.
+- Geometry ablations (E2, O1c–e) are gated behind `--with-geometry`; GeDi-signal cells are skipped with a warning when the gedi service is unreachable. O1e approximates "GeDi inside fusion" on a text+view top-10 pool (full-database GeDi RANSAC is infeasible).
+- E7/O5 force `ulip2_mode="pc"` in both arms so the point cloud (not the query image) is what varies; the BASE config keeps the repo default `cross` mode.
+
+Rationale
+- One pass over 42 cached views serves all O4 budgets (FPS prefix), all fusion/scope variants, and both E1/O2 cascade arms — the grid runs in roughly one encoder pass per encoder combo instead of one per grid cell.
+- The dump ships without category labels; the co-occurrence graph over the organiser-provided training lists provably partitions into the 20 track categories (README guarantees list purity).
+
+Alternatives considered
+- Running `eval_common.run_evaluation` per grid cell — rejected: cannot express full-database 3-channel fusion, majority voting, pc-mode, or geometry re-ranking, and would re-encode per cell.
+- Waiting for official GT for all 2,101 queries — rejected for now: blocks the experiment; train-split tuning is defensible for a tuning stage.
+
 ## 2026-07-17 View-count-independent caches for DINO/SigLIP and ULIP partial
 
 Decision
