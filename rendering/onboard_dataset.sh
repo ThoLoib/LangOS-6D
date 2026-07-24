@@ -26,8 +26,8 @@
 #   bash rendering/onboard_dataset.sh --dataset tless --dry-run
 #
 # Supported datasets:
-#   ycbv_gso, MI3DOR, housecat6d, shrec18  — existing OBJ-based galleries
-#   tless, lmo, itodd                      — BOP PLY-based galleries (auto-prepared)
+#   ycbv_gso, ycbv, gso, MI3DOR, housecat6d, shrec18  — existing OBJ-based galleries
+#   tless, lmo, itodd                                 — BOP PLY-based galleries (auto-prepared)
 #
 # Prerequisites:
 #   - Blender 3.4+ installed at rendering/blender-*/blender (for rendering)
@@ -64,7 +64,7 @@ BLENDER_BIN="${BLENDER_BIN:-}"
 usage() {
     echo "Usage: $0 --dataset <name> [--step <step>] [--overwrite] [--dry-run]"
     echo ""
-    echo "Datasets: ycbv_gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
+    echo "Datasets: ycbv_gso, ycbv, gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
     echo "Steps:    all, prepare, render, partial, describe"
     exit 1
 }
@@ -118,6 +118,16 @@ case "$DATASET" in
         IMAGES_DIR="$OSCAR_ROOT/object_images/ycbv_gso"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/ycbv_gso/descriptions_attributes.json"
         ;;
+    ycbv)
+        CAD_DIR="$OSCAR_ROOT/object_database/ycbv"
+        IMAGES_DIR="$OSCAR_ROOT/object_images/ycbv"
+        DESC_OUTPUT="$OSCAR_ROOT/object_database/ycbv/descriptions_attributes.json"
+        ;;
+    gso)
+        CAD_DIR="$OSCAR_ROOT/object_database/gso"
+        IMAGES_DIR="$OSCAR_ROOT/object_images/gso"
+        DESC_OUTPUT="$OSCAR_ROOT/object_database/gso/descriptions_attributes.json"
+        ;;
     MI3DOR)
         CAD_DIR="$OSCAR_ROOT/object_database/MI3DOR/model/test"
         IMAGES_DIR="$OSCAR_ROOT/object_images/MI3DOR"
@@ -134,6 +144,15 @@ case "$DATASET" in
         CAD_DIR="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad"
         IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18/descriptions_attributes.json"
+        MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        ;;
+    shrec18_fixed)
+        # Same CAD source as shrec18 (the "shrec18" in the path also triggers the
+        # coincident-face z-fight fix in rendering.py), but separate output dirs
+        # so the corrected run coexists with the original for comparison.
+        CAD_DIR="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad"
+        IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18_fixed"
+        DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18_fixed/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
         ;;
     tless)
@@ -159,7 +178,7 @@ case "$DATASET" in
         ;;
     *)
         echo "ERROR: Unknown dataset '$DATASET'"
-        echo "Supported: ycbv_gso, MI3DOR, housecat6d, shrec18, tless, lmo, itodd"
+        echo "Supported: ycbv_gso, ycbv, gso, MI3DOR, housecat6d, shrec18, shrec18_fixed, tless, lmo, itodd"
         exit 1
         ;;
 esac

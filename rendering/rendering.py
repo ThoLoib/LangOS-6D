@@ -2,7 +2,8 @@ import os
 import json
 import shutil
 import bpy
-import sys 
+import bmesh
+import sys
 import mathutils
 from mathutils import Vector, Matrix, Euler
 import numpy as np
@@ -503,6 +504,63 @@ def clear_scene():
 
 ### Main Code ###
 
+# SHREC'18 (SketchUp/3D-Warehouse export) needs two source-specific fixups that
+# must NOT touch other datasets:
+#   1. Inverted "d" convention (d = transparency, 0 = opaque) — corrected by
+#      alpha = 1 - d. Other datasets use standard d (opaque) or none, so
+#      inverting their alpha would wrongly make them transparent.
+#   2. Double-walled geometry: nearly every surface is two coincident faces,
+#      whose overlapping twins often carry different materials (textured vs an
+#      untextured black one). Once opaque they z-fight into a checkerboard;
+#      resolved by collapsing each coincident set to one face, keeping the
+#      textured one.
+IS_SHREC18 = 'shrec18' in object_folder
+
+def _material_has_texture(mat):
+    if mat is None or not mat.use_nodes:
+        return False
+    return any(node.type == 'TEX_IMAGE' for node in mat.node_tree.nodes)
+
+def resolve_coincident_faces(obj):
+    me = obj.data
+    materials = me.materials
+    textured_flags = [_material_has_texture(m) for m in materials]
+
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+
+    # Group faces by the rounded positions of their vertices — NOT by vertex
+    # index, and WITHOUT welding vertices. An earlier version welded via
+    # remove_doubles to make coincident faces share indices, but remove_doubles
+    # drops coincident duplicate faces itself, arbitrarily, before the
+    # keep-the-textured-face choice below runs — which deleted textured faces
+    # (e.g. a TV screen image) whenever the untextured twin happened to win, and
+    # also collapsed nearby distinct geometry. Position grouping leaves the kept
+    # face — its vertices, UVs and material — completely untouched.
+    groups = {}
+    for face in bm.faces:
+        key = tuple(sorted(
+            (round(v.co.x, 4), round(v.co.y, 4), round(v.co.z, 4))
+            for v in face.verts))
+        groups.setdefault(key, []).append(face)
+
+    to_delete = []
+    for faces in groups.values():
+        if len(faces) < 2:
+            continue
+        # Keep a textured face if any twin has one; else keep the first.
+        keep = next((f for f in faces
+                     if f.material_index < len(textured_flags)
+                     and textured_flags[f.material_index]), faces[0])
+        to_delete.extend(f for f in faces if f is not keep)
+
+    if to_delete:
+        bmesh.ops.delete(bm, geom=to_delete, context='FACES')
+        bm.to_mesh(me)
+    bm.free()
+    me.update()
+
 # Create new folder structure
 os.makedirs(object_images, exist_ok=True)
 
@@ -559,7 +617,32 @@ for _obj_idx, (model_id, filename) in enumerate(pending_models):
     # Assuming objects are mesh objects
     mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
     print(mesh_objects)
-    
+
+    # SHREC'18 (SketchUp/3D-Warehouse export) writes the MTL "d" field with the
+    # inverse of its official meaning: it uses d as TRANSPARENCY (0 = opaque,
+    # 1 = fully transparent), not dissolve (1 = opaque). Evidence: 14465 of the
+    # 15362 materials are d 0 and only 18 are d 1 — the dataset is furniture, so
+    # "almost everything opaque, a few glass/window parts transparent" is the
+    # only sensible reading. Blender's importer takes d literally as dissolve
+    # and sets Principled Alpha = d, so d 0 becomes fully transparent (the whole
+    # object vanishes). Correct it by inverting: alpha = 1 - d. This is safe
+    # because every material in this dataset carries an explicit d line, so the
+    # imported Alpha always equals the file's d.
+    if IS_SHREC18:
+        for obj in mesh_objects:
+            for mat in obj.data.materials:
+                if mat is None or not mat.use_nodes:
+                    continue
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf is None:
+                    continue
+                alpha_input = bsdf.inputs.get("Alpha")
+                if alpha_input is not None and not alpha_input.is_linked:
+                    alpha_input.default_value = 1.0 - alpha_input.default_value
+
+        for obj in mesh_objects:
+            resolve_coincident_faces(obj)
+
     # Compute the bounding box for the objects
     normalization_range = 1.0
     bbox_center, bbox_size = normalize_and_center_objects(mesh_objects, normalization_range)

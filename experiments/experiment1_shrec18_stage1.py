@@ -185,6 +185,12 @@ O1E_POOL = 10          # O1e: GeDi-in-fusion pool size.  Full-database GeDi
                        # a text+view shortlist — documented deviation.
 
 ULIP_CKPT_DEFAULT = "/ulip/checkpoints/ulip2_pointbert_10k.pt"
+# O5 XYZ-only arm uses the released ULIP-2 *xyz* PointBERT (8,192 pts, no RGB,
+# input_dim=3, SLIP ViT-B tower) — the colored 10k checkpoint has a 6-channel
+# input conv and cannot encode xyz-only clouds. Its basename is part of the
+# cache fingerprint (step5 _get_partial_cache_path), so the eval PC must stage
+# the same file at the same path/name to reuse these caches.
+ULIP_CKPT_XYZ = "/ulip/checkpoints/ulip2_pointbert_8k_xyz.pt"
 
 # Official SHREC'18 evaluation kit (git clone of hkust-vgd/shrec18): the
 # real category+subcategory GT (rgbd.csv/cad.csv, all 2,101 queries and
@@ -731,7 +737,13 @@ PASS_DEFS: "OrderedDict[str, dict]" = OrderedDict([
                            partial=True, overrides={})),
     ("ulip_pc_xyz",   dict(channels=("shape",), ulip2_mode="pc",
                            partial=True,
-                           overrides={"ulip2_use_colors": False})),
+                           overrides={"ulip2_use_colors": False,
+                                      "ulip2_backbone": "pointbert",
+                                      "ulip2_checkpoint": ULIP_CKPT_XYZ,
+                                      "ulip2_num_points": 8192,
+                                      # SLIP ViT-B tower → 512-d space (the
+                                      # colored 10k arm is ViT-g / 1280-d)
+                                      "ulip2_embed_dim": 512})),
     ("uni3d",         dict(channels=("shape",), ulip2_mode="pc",
                            partial=True,
                            overrides={"shape_encoder": "uni3d"})),

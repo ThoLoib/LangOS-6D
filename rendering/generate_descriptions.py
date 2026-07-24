@@ -33,10 +33,22 @@ def parse_args():
     p.add_argument("--overwrite", action="store_true", help="Regenerate all descriptions")
     p.add_argument("--prompt", default="Extract visual attributes of the object in the image: object type, brand name, color, material, and label text.",
                    help="LLaVA prompt")
+    p.add_argument("--batch-size", type=int, default=8,
+                   help="Images captioned per forward pass. Every image still gets "
+                        "its own caption; batching only improves GPU throughput.")
     return p.parse_args()
 
 
-def generate_caption(model, processor, image, prompt):
+def _strip_assistant(text):
+    text = text.strip()
+    if "ASSISTANT:" in text:
+        text = text.split("ASSISTANT:")[-1].strip()
+    return text
+
+
+def _encode_one(processor, image, prompt):
+    """Encode a single image+prompt with the exact template the original
+    one-at-a-time path used (proven correct)."""
     conversation = [{
         "role": "user",
         "content": [
@@ -44,22 +56,47 @@ def generate_caption(model, processor, image, prompt):
             {"type": "text", "text": prompt}
         ]
     }]
-    inputs = processor.apply_chat_template(
+    return processor.apply_chat_template(
         conversation,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
-        return_tensors="pt"
-    ).to(model.device, torch.float16)
+        return_tensors="pt",
+    )
 
-    with torch.no_grad():
-        outputs = model.generate(**inputs, max_new_tokens=100)
 
-    response = processor.batch_decode(outputs, skip_special_tokens=True)[0].strip()
-    # Extract assistant response (after "ASSISTANT:")
-    if "ASSISTANT:" in response:
-        response = response.split("ASSISTANT:")[-1].strip()
-    return response
+def generate_captions(model, processor, images, prompt):
+    """Caption a list of PIL images, returning one caption per image in order.
+
+    Each image is encoded with the identical template the single-image path
+    uses, then the encodings are stacked into one batch for a single forward
+    pass. Every caption uses the same prompt and LLaVA-1.5 emits a fixed number
+    of image tokens per image, so all sequences share the same length — the
+    stack is exact (no padding) and greedy decoding yields the same text as
+    captioning one image at a time. On CUDA OOM the batch is split and retried,
+    so an over-large batch size degrades gracefully instead of failing.
+    """
+    if not images:
+        return []
+    encs = [_encode_one(processor, img, prompt) for img in images]
+    batch = {k: torch.cat([e[k] for e in encs], dim=0) for k in encs[0]}
+    for k in batch:
+        batch[k] = batch[k].to(model.device)
+    if "pixel_values" in batch:
+        batch["pixel_values"] = batch["pixel_values"].to(torch.float16)
+
+    try:
+        with torch.no_grad():
+            outputs = model.generate(**batch, max_new_tokens=100)
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        if len(images) == 1:
+            raise
+        mid = len(images) // 2
+        return (generate_captions(model, processor, images[:mid], prompt)
+                + generate_captions(model, processor, images[mid:], prompt))
+
+    return [_strip_assistant(t) for t in processor.batch_decode(outputs, skip_special_tokens=True)]
 
 
 def main():
@@ -145,16 +182,18 @@ def main():
             print(f"  [{i+1}/{len(pending)}] {obj_id}: all {len(image_files)} images already described")
             continue
 
-        for j, filename in enumerate(pending_images):
-            img_path = os.path.join(obj_dir, filename)
+        for k in range(0, len(pending_images), args.batch_size):
+            batch_files = pending_images[k:k + args.batch_size]
             try:
-                image = Image.open(img_path).convert("RGB")
-                caption = generate_caption(model, processor, image, args.prompt)
-                image_descriptions[filename] = caption
-                total_captions += 1
-                print(f"  [{i+1}/{len(pending)}] {obj_id} [{j+1}/{len(pending_images)}] {filename}: {caption[:60]}...")
+                images = [Image.open(os.path.join(obj_dir, f)).convert("RGB") for f in batch_files]
+                captions = generate_captions(model, processor, images, args.prompt)
+                for filename, caption in zip(batch_files, captions):
+                    image_descriptions[filename] = caption
+                    total_captions += 1
+                done = min(k + len(batch_files), len(pending_images))
+                print(f"  [{i+1}/{len(pending)}] {obj_id} [{done}/{len(pending_images)}] {batch_files[-1]}: {captions[-1][:60]}...")
             except Exception as e:
-                print(f"  [{i+1}/{len(pending)}] ERROR {obj_id}/{filename}: {e}")
+                print(f"  [{i+1}/{len(pending)}] ERROR {obj_id} batch@{k}: {e}")
                 continue
 
         descriptions[obj_id] = {"image_descriptions": image_descriptions}

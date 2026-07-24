@@ -4,7 +4,8 @@ services:
     build: .
     volumes:
       - .:/app
-      - ../ULIP:/ulip
+      - ../ULIP_thesis:/ulip
+      - ../Uni3D:/uni3d
       - hf_cache:/root/.cache/huggingface
       - torch_cache:/root/.cache/torch
       - clip_cache:/root/.cache/clip

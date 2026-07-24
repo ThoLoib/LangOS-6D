@@ -1,0 +1,73 @@
+diff --git a/models/point_encoder.py b/models/point_encoder.py
+index 7ad3753..77770be 100644
+--- a/models/point_encoder.py
++++ b/models/point_encoder.py
+@@ -1,17 +1,43 @@
+ import torch
+ import torch.nn as nn
+-from pointnet2_ops import pointnet2_utils
+ 
+ import logging
+ 
+-def fps(data, number):
+-    '''
+-        data B N 3
+-        number int
+-    '''
+-    fps_idx = pointnet2_utils.furthest_point_sample(data, number) 
+-    fps_data = pointnet2_utils.gather_operation(data.transpose(1, 2).contiguous(), fps_idx).transpose(1,2).contiguous()
+-    return fps_data
++try:
++    from pointnet2_ops import pointnet2_utils
++
++    def fps(data, number):
++        '''
++            data B N 3
++            number int
++        '''
++        fps_idx = pointnet2_utils.furthest_point_sample(data, number)
++        fps_data = pointnet2_utils.gather_operation(data.transpose(1, 2).contiguous(), fps_idx).transpose(1, 2).contiguous()
++        return fps_data
++except Exception:  # pointnet2_ops (CUDA ext) unavailable — pure-PyTorch FPS.
++    # Deterministic farthest-point sampling seeded at index 0, matching the
++    # pointnet2 CUDA kernel's default first pick, so gallery embeddings built
++    # here are identical to those from a machine that has the CUDA op.
++    def fps(data, number):
++        '''
++            data B N 3  (or B N C, sampling on first 3 dims' geometry)
++            number int
++        '''
++        B, N, C = data.shape
++        device = data.device
++        centroids = torch.zeros(B, number, dtype=torch.long, device=device)
++        distance = torch.full((B, N), 1e10, device=device)
++        farthest = torch.zeros(B, dtype=torch.long, device=device)
++        batch_indices = torch.arange(B, dtype=torch.long, device=device)
++        for i in range(number):
++            centroids[:, i] = farthest
++            centroid = data[batch_indices, farthest, :].view(B, 1, C)
++            dist = torch.sum((data - centroid) ** 2, dim=-1)
++            mask = dist < distance
++            distance[mask] = dist[mask]
++            farthest = torch.max(distance, dim=-1)[1]
++        return torch.gather(
++            data, 1, centroids.unsqueeze(-1).expand(-1, -1, C))
+ 
+ # https://github.com/Strawberry-Eat-Mango/PCT_Pytorch/blob/main/util.py 
+ def knn_point(nsample, xyz, new_xyz):
+diff --git a/models/uni3d.py b/models/uni3d.py
+index 795e469..d5dc0e2 100644
+--- a/models/uni3d.py
++++ b/models/uni3d.py
+@@ -2,7 +2,10 @@ import torch
+ import timm
+ import numpy as np
+ from torch import nn
+-from . import losses
++try:
++    from . import losses  # pulls in the training/data stack (h5py, etc.)
++except Exception:         # inference-only use: losses/get_filter_loss unused
++    losses = None
+ 
+ from .point_encoder import PointcloudEncoder
+ 

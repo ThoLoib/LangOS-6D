@@ -78,7 +78,7 @@ while true; do
 
         # Sync images
         rclone copy "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
-            --transfers 8 --checkers 16 \
+            --transfers 32 --checkers 32 \
             --stats-one-line --stats 0 \
             2>&1 | grep -v "^$" | tail -1 || true
 
@@ -92,7 +92,7 @@ while true; do
                 echo "[$timestamp]   descriptions: $(( local_size / 1024 )) KB"
             fi
             rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
-                --transfers 4 --checkers 8 --checksum \
+                --transfers 32 --checkers 32 --checksum \
                 --stats-one-line --stats 0 \
                 2>&1 | grep -v "^$" | tail -1 || true
         fi
@@ -109,9 +109,9 @@ while true; do
             echo "[$timestamp] No new objects for $((INTERVAL * 2))s. Final sync and exit."
             # One last sync to be sure
             rclone copy "$IMAGES_DIR" "$REMOTE/object_images/$DATASET" \
-                --transfers 8 --checkers 16 2>/dev/null || true
+                --transfers 32 --checkers 32 2>/dev/null || true
             [[ -d "$DB_DIR" ]] && rclone copy "$DB_DIR" "$REMOTE/object_database/$DATASET" \
-                --transfers 4 --checkers 8 2>/dev/null || true
+                --transfers 32 --checkers 32 2>/dev/null || true
             echo "[$timestamp] All synced. Exiting."
             exit 0
         fi
