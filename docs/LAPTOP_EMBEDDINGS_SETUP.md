@@ -59,6 +59,57 @@ Then mount it: docker-compose `- ~/thesis/Uni3D:/uni3d` (already added on galler
 - `eval/datasets/shrec18/shrec18_full/cad/.ulip_cache_*.pt` — ULIP full-mesh
   (path-mirrored; depends only on the CAD meshes, identical for shrec18 &
   shrec18_fixed).
+- `object_database/shrec18_fixed/.clip_text_cache_*.pt` — CLIP-text
+  (description) embeddings.
+
+## 5. Query-side caches (for rerunning the Stage-1 ablation grid, not just the
+##    live pipeline) — `eval/datasets/shrec18/stage1/` on Drive
+
+These are new (2026-07-24) and cover the *query* side, not the gallery:
+running `experiments/experiment1_shrec18_stage1.py --ablations ... --all`
+needs a rendered snapshot + point cloud for all 2101 official queries, plus
+their encoder embeddings — expensive to build (the point-cloud passes are
+~1-2s/query, unbatched). All of it is now cached and shipped:
+
+- `eval/datasets/shrec18/stage1/queries/<qid>.png` + `<qid>.npz` — the
+  per-query rendered snapshot + extracted point cloud, derived from the raw
+  `.ply` scans (see §6). `gt/queries_index.json` indexes them.
+- `eval/datasets/shrec18/stage1/query_pc_cache/pc_query_cache_<hash>.pt` —
+  point-cloud query embeddings for the `pc`-mode passes (`ulip_pc_rgb`,
+  `ulip_pc_xyz`, `uni3d`). Content-fingerprinted the same way as the gallery
+  caches (encoder + checkpoint + dims, not path/mtime) — one file per
+  distinct encoder config, never collide.
+- `object_retrieval/results_shrec18_fixed_stage1/_cache/ulip_query_img_cache.pt`
+  — query-side embeddings for the `cross`-mode passes (image → ULIP-2 joint
+  space). Shared across all `cross`-mode passes (they use the same image
+  encoder regardless of which gallery checkpoint is being matched against).
+
+Pull these to the same relative paths and `experiments/experiment1_shrec18_stage1.py`
+picks them up automatically (cache-hit, no re-encoding) — as long as the
+query set matches (see §6, official GT kit) and the encoder config for a
+given pass is unchanged from what built the cache.
+
+## 6. Official SHREC'18 evaluation kit + raw query distribution
+
+Two more prerequisites, needed only for *running ablations* (not for the
+live per-scene pipeline):
+
+- GT labels (small, git-clonable):
+  ```bash
+  git clone https://github.com/hkust-vgd/shrec18 eval/shrec18_official
+  ```
+- Raw query scans + official relevance lists (`rgbd/*.ply`, `results/*.txt`
+  — NOT included in the gallery/query caches above, since they're the
+  *source* data, not derived embeddings):
+  ```bash
+  wget https://hkust-vgd.ust.hk/scenenn/shrec18/shrec18_full_jan28.zip
+  unzip shrec18_full_jan28.zip "shrec18_full/rgbd/*" "shrec18_full/results/*" \
+      -d eval/datasets/shrec18/
+  rm shrec18_full_jan28.zip   # 6.2GB archive, only rgbd/+results/ (~16GB) needed
+  ```
+  Only needed if you don't already have `eval/datasets/shrec18/shrec18_full/{rgbd,results}/`
+  populated — if the query caches (§5) already cover the queries you care
+  about, you may not need this at all.
 
 ## Summary of what unblocks each arm on the eval PC
 | Arm | Blocked? | To unblock |

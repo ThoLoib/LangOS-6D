@@ -334,11 +334,19 @@ def build_pipeline(cfg, cad_mesh_items=None):
 
     if cad_mesh_items:
         shape_m = ShapeMatcher(config)
-        try:
-            shape_m._load_model()
-        except Exception as exc:
-            print(f"[init] ULIP model load failed: {exc}")
-            shape_m = None
+        # Only ULIP-2 needs an explicit _load_model() call here — it builds
+        # the PointBERT architecture (upstream ULIP code always prints
+        # "training from scratch for pointbert.", regardless of whether a
+        # checkpoint is then loaded onto it). Uni3D is loaded lazily inside
+        # encode_pointcloud()/load_cad_models() on first use instead, so
+        # calling _load_model() for shape_encoder="uni3d" would build and
+        # load a full unused ULIP-2 PointBERT for nothing.
+        if getattr(config, "shape_encoder", "ulip2") != "uni3d":
+            try:
+                shape_m._load_model()
+            except Exception as exc:
+                print(f"[init] ULIP model load failed: {exc}")
+                shape_m = None
 
         if shape_m is not None and cfg.ulip2_use_partial_views:
             # --- Partial-view path: encode per-view .npz embeddings ---

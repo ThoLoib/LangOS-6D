@@ -1,5 +1,43 @@
 # AI Log
 
+## 2026-07-24 Uni3D-g integration, ULIP-2 XYZ-only arm, CLIP-text cache, standalone precompute tool
+
+Goal
+- Add the remaining two Stage-1 ablation encoders (ULIP-2 XYZ-only O5, Uni3D-g E7) so all 6 embedding passes can run unattended on the gallery PC.
+- Give the CLIP-text channel an on-disk cache like DINO/ULIP already have.
+- Extract the embedding-precompute driver out of the SHREC'18-specific ablation script into a clean, dataset-agnostic tool someone unfamiliar with the codebase can run.
+
+Changes
+- `docker-compose.yml`: mounted `../Uni3D:/uni3d`; repointed `../ULIP` → `../ULIP_thesis` (the real clone with checkpoints — the old mount was an empty root-owned dir).
+- `pipeline/config.py`: added Uni3D-g fields (`uni3d_model_name="uni3d-g"`, `pc_model=eva_giant_patch14_560`, `embed_dim=1024`, etc.).
+- `pipeline/step5_shape_matching.py`: real `Uni3DEncoder` (`_load`/`encode`) — builds the model from the mounted repo + checkpoint with import isolation from ULIP's own `models` package (both expose a top-level `models` module; naive import would collide), encodes xyz+rgb (6-ch) via `normalize_pointcloud`. Cache key (`_get_partial_cache_path`) already included an `encoder=` tag for non-ULIP2 encoders, so Uni3D/XYZ-ULIP/colored-ULIP caches get distinct digests with no collisions.
+- `experiments/experiment1_shrec18_stage1.py`: added `ULIP_CKPT_XYZ` and wired the `ulip_pc_xyz` pass to the released ULIP-2 8k-xyz PointBERT checkpoint (input_dim=3, 512-d SLIP ViT-B tower — distinct from the colored 10k/1280-d checkpoint).
+- `pipeline/step3_clip_retrieval.py`: `CLIPRetriever` now caches description text embeddings to disk (`.clip_text_cache_<model>_<hash>.pt`, next to the description file). Fingerprint = CLIP model name + description texts (content, not path/mtime) — labels are intentionally excluded so an `id_to_label` remap doesn't invalidate the cache.
+- `tools/precompute_embeddings.py` (new): standalone, dataset-agnostic version of the `--precompute` path from `experiment1_shrec18_stage1.py`. Same `PASS_DEFS`/`run_pass` logic, but as ~370 readable lines with no SHREC'18 ablation/evaluation code, real `--dataset`/`--data-root`/`--images-dir`/`--desc-file`/`--results-root` CLI args, `--list`/`--dry-run`/`--passes` subset selection, and a top-level tqdm progress bar. `validate_inputs()` was relaxed to only require `<data_root>/cad/` (the original required SHREC'18's raw `rgbd/`/`results/` query-GT folders too, which don't exist for other datasets and aren't needed to build gallery embeddings).
+- `docs/LAPTOP_EMBEDDINGS_SETUP.md` (new) + `docs/uni3d_inference.patch` (new): what an eval/query-side machine needs to reproduce these embeddings — exact checkpoint filenames, the two Uni3D inference patches (optional `pointnet2_ops`/pure-torch FPS fallback, optional `losses` import) as a `git apply`-able patch against upstream `64e03c3`, `timm==1.0.25` pin, and the FPS-portability warning (CUDA vs. pure-torch FPS must match on both machines or E7 scores silently mismatch).
+- `README.md`: replaced the outdated manual-Blender/`description_genertor` preprocessing section with the current `onboard_and_sync.sh`/`onboard_dataset.sh` workflow, and added a new "Precomputing Gallery Embeddings" section documenting `tools/precompute_embeddings.py` and the 6-pass table.
+
+Bugs fixed
+- ULIP-2 XYZ-only pass crashed (`RuntimeError`, `Conv1d(6,...)` fed 3-channel input) — the colored checkpoint has `input_dim=6`; fixed by switching to the XYZ-only checkpoint (`input_dim=3`) and its native 512-d embed dim (was defaulting to the colored arm's 1280-d, causing a `pc_projection` size mismatch).
+- Uni3D import crashed on `pointnet2_ops` (hard CUDA-ext dependency, no fallback upstream) and `h5py` (pulled in via `models.uni3d` → `losses` → the training data stack) — patched both to be optional for inference-only use.
+
+## 2026-07-24 (cont.) Query PC cache, generalized precompute tool, autonomous multi-dataset orchestrator
+
+Goal
+- Cache the expensive query-side point-cloud embeddings (previously re-encoded every run).
+- Make `tools/precompute_embeddings.py` work for any dataset's CAD layout, not just shrec18's `cad/*.obj`.
+- Set up autonomous gallery preprocessing for MI3DOR + ycbv + gso + housecat6d + tless + itodd (renders + partial PCs + descriptions + gallery embeddings, NO queries/ablations), triggered after shrec18_fixed fully completes.
+
+Changes
+- `experiments/experiment1_shrec18_stage1.py`: added `_pc_query_cache_path()` + `_load_or_build_pc_query_cache()` — the pc-mode passes (ulip_pc_rgb/xyz, uni3d) now cache query point-cloud embeddings under `eval/datasets/shrec18/stage1/query_pc_cache/` (content-fingerprinted by encoder config; was re-encoded ~1-2s/query every run, the single biggest ablation cost). The `cross`-mode image-query cache already existed; this closes the gap for the far more expensive pc branch.
+- `tools/precompute_embeddings.py`: added `--mesh-glob` (per-dataset CAD glob; only the ulip_fullmesh pass reads meshes). `validate_inputs()` now derives the gallery from `rendered ∩ described` (meshes optional — a missing/partial mesh set only warns and only affects ulip_fullmesh). `--data-root` is now optional when `--mesh-glob` is given.
+- `oscar_queue_ctl/preprocess_galleries.sh` (new, host-side): waits for shrec18_fixed's two completion flags (`embed_shrec18_fixed.ok` gallery + `query_caches_shrec18_fixed.ok`), verifies shrec18_fixed renders are on Drive and deletes them locally to free space, then for each of the six datasets runs onboard (render/partial/describe via `onboard_and_sync.sh`) → embed (5 mesh-free passes: base/siglip/ulip_pc_rgb/ulip_pc_xyz/uni3d) → sync caches → reconcile-verify → delete local → notify. HALT-ON-ERROR between every step; disk pre-flight (≥60 GB) before each dataset. Runs as systemd --user unit `oscar-preprocess-galleries` (linger on → survives logout).
+- `oscar_queue_ctl/watch_ablation_run.sh` (new): waits on the query-cache-building run via Docker **container** status (NOT `kill -0` on the inner PID — that PID runs as root and `thomas` gets EPERM, which is indistinguishable from "gone" and fired the sync prematurely — a bug caught and fixed this session), then rclone-syncs `eval/datasets/shrec18/stage1` + `ulip_query_img_cache.pt` to Drive and touches the `query_caches_shrec18_fixed.ok` gate flag.
+
+Bugs fixed
+- `object_retrieval/eval_common.py`: `build_pipeline` unconditionally called `shape_m._load_model()` (builds a full ULIP-2 PointBERT, prints "training from scratch for pointbert.") even for `shape_encoder="uni3d"` passes, wasting a model load. Now skipped for uni3d (loaded lazily on first encode instead).
+- Watcher premature-fire bug (root-PID `kill -0` EPERM) — see above; rewrote to poll `docker inspect .State.Running`.
+
 ## 2026-07-17 Onboarding pipeline, multi-dataset model ID fix, cache optimization
 
 Goal

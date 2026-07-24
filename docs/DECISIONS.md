@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-24 Standalone `tools/precompute_embeddings.py` instead of generalizing the ablation script in place
+
+Decision
+- Extracted the embedding-precompute driver (`PASS_DEFS`/`run_pass`/`precompute_gallery`) into a new, separate `tools/precompute_embeddings.py` rather than relaxing `experiments/experiment1_shrec18_stage1.py`'s existing `--precompute` path (which was already dataset-parameterized via CLI flags, just buried in a 2000-line SHREC'18 ablation/evaluation script).
+
+Rationale
+- The underlying machinery was already dataset-agnostic in practice (paths are CLI args, `PASS_DEFS` never references SHREC'18), but nobody unfamiliar with the codebase would find or trust that, given the filename and the surrounding ablation-grid/GT-reconstruction code. A clean, purpose-built file is what "reusable and someone can run it themselves" actually requires — not just capability, but discoverability.
+- Editing `experiment1_shrec18_stage1.py` in place risked touching code paths shared with the actively-running gallery precompute job for `shrec18_fixed` (mid-run at the time). A separate file has zero blast radius on that job.
+
+Alternatives considered
+- Add a `--dataset` shortcut flag to the existing script that fills in the SHREC'18-shaped defaults — rejected: doesn't fix the discoverability/readability problem, and the script's `validate_inputs()` still hard-requires SHREC'18's raw query/GT folders that don't apply to other datasets.
+- Import and re-export the existing script's internals from the new file instead of duplicating `PASS_DEFS` — rejected: importing `experiment1_shrec18_stage1.py` as a module executes ~150 lines of SHREC'18-specific module-level setup (GT paths, official-kit checks) for no benefit; a small, deliberate duplication of the pass config (six short dict entries) is more readable than that coupling.
+
+## 2026-07-24 CLIP-text embeddings get a disk cache like DINO/ULIP
+
+Decision
+- `CLIPRetriever.load_descriptions()` now caches the encoded description embeddings to disk (`.clip_text_cache_<model>_<hash>.pt`), instead of re-encoding all description texts in memory on every process start.
+
+Rationale
+- Even though CLIP-text encoding is fast in isolation (~1 min for ~139k SHREC'18-fixed captions), it was previously invisible/unmeasured — bundled into a larger "base pass" log block that also includes much slower DINO image encoding. A cache makes the cost disappear entirely on reruns/resumes, and — same as the DINO/ULIP caches — travels to another machine via the same content-based (not path/mtime-based) fingerprint.
+- Consistency: every other embedding channel in this pipeline (DINO, SigLIP, ULIP ×3, Uni3D) already persists to disk; CLIP-text was the one silent exception.
+
+Alternatives considered
+- Leave it in-memory-only since it's "fast enough" — rejected: inconsistent with every other channel, and "fast enough" isn't free across dozens of dataset (re)runs.
+
 ## 2026-07-17 View-count-independent caches for DINO/SigLIP and ULIP partial
 
 Decision

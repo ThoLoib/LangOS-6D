@@ -161,71 +161,110 @@ With the current compose mounts, the following data persists across container re
 
 ---
 
-## Rendering & Object Database
+## Preprocessing a New Dataset
 
-The database must be rendered before retrieval. Each object needs multi-view images and a CAD model.
+Preprocessing a CAD gallery for retrieval is two stages, run in order:
 
-**Database layout:**
+1. **Render + partial point clouds + descriptions** (`rendering/onboard_and_sync.sh` / `onboard_dataset.sh`)
+2. **Embedding caches** — CLIP-text, DINOv2, SigLIP, ULIP-2 ×3, Uni3D (`tools/precompute_embeddings.py`)
+
+Both stages are idempotent and resumable: rerunning skips whatever's already built and only computes what's missing or changed.
+
+**Database layout** (what stage 1 produces, and what stage 2 reads):
 ```text
 OSCAR/
 +-- object_database/{dataset}/
 |   +-- {object_id}/
 |       +-- textured_simple.obj          <- CAD model (or meshes/model.obj)
 |       +-- texture_map.png              <- texture (optional)
-|       +-- descriptions_attributes.json
+|   +-- descriptions_attributes.json     <- VLM captions, one entry per rendered view
 +-- object_images/{dataset}/
     +-- {object_id}/
-        +-- {obj_id}_0.png … _7.png            <- rendered views (8 angles)
-        +-- {obj_id}_view0_CamMatrix.npy … _7   <- 3x4 camera matrices
-        +-- {obj_id}_view0_partial.npz  … _7    <- partial point clouds (optional)
+        +-- {obj_id}_0.png … _41.png            <- rendered views (42 icosphere angles)
+        +-- {obj_id}_view0_CamMatrix.npy … _41   <- 3x4 camera matrices
+        +-- {obj_id}_view0_partial.npz  … _41    <- per-view partial point clouds
 ```
 
-**Render with Blender:**
+### Stage 1 — Render, partial point clouds, descriptions
+
+**Recommended: one command, from WSL/host** (Docker rendering + rclone sync to Drive):
 ```bash
-cd rendering
-wget https://huggingface.co/datasets/tiange/Cap3D/resolve/main/misc/blender.zip
-unzip blender.zip
-# Edit object_folder / object_images paths in rendering.py, then:
-./blender-3.4.1-linux-x64/blender -b -P rendering.py
+bash rendering/onboard_and_sync.sh --dataset MI3DOR --remote gdrive:Masterthesis/OSCAR
+
+# Only specific sub-steps (render | partial | describe):
+bash rendering/onboard_and_sync.sh --dataset MI3DOR --remote gdrive:... --step render
+# Skip descriptions for now, run them later separately:
+bash rendering/onboard_and_sync.sh --dataset MI3DOR --remote gdrive:... --skip-describe
+# See what would run without doing it:
+bash rendering/onboard_and_sync.sh --dataset MI3DOR --remote gdrive:... --dry-run
 ```
+Supported dataset names (see `rendering/onboard_dataset.sh` header): `ycbv_gso, ycbv, gso, MI3DOR, housecat6d, shrec18` (OBJ-based) and `tless, lmo, itodd` (BOP PLY-based, auto-prepared).
 
-**Generate descriptions:**
+**Without Drive sync** (Docker-only — same rendering, no rclone):
 ```bash
-python description_genertor/descriptions_ycbv_gso_attributes.py
+bash rendering/onboard_dataset.sh --dataset MI3DOR
+bash rendering/onboard_dataset.sh --dataset MI3DOR --step render     # one step
+bash rendering/onboard_dataset.sh --dataset MI3DOR --step render --overwrite
 ```
+Steps run, in order: `prepare` (BOP PLY → object_database layout, only for tless/lmo/itodd) → `render` (42-view Blender renders) → `partial` (per-view partial point clouds) → `describe` (VLM captions → `descriptions_attributes.json`).
 
-### Partial Point Cloud Preprocessing (for `--ulip-partial-views`)
+**Manual / individual scripts**, if you need to run one step directly instead of via the orchestrator:
 
-Generates view-dependent partial point clouds from CAD meshes using front-face culling.
-Each object gets one `.npz` file per viewpoint (8 views), stored alongside the rendered images.
-
-**Prerequisites:**
-- Rendered images and camera matrices must already exist (`rendering.py` output above)
-- CAD models in `object_database/{dataset}/{object_id}/` (supports nested layouts like `meshes/model.obj`)
-- `trimesh` and `rtree` installed in the Python environment
-
-**Run inside the OSCAR container:**
 ```bash
+# Render (needs Blender 3.4+ at rendering/blender-*/blender):
+cd rendering && ./blender-3.4.1-linux-x64/blender -b -P rendering.py
+# (env vars: OBJECT_FOLDER, OBJECT_IMAGES, NUM_VIEWS — see onboard_dataset.sh for how it sets these)
+
+# Partial point clouds (front-face-culled per-view point clouds, for ULIP-2 partial mode):
 python3.11 rendering/generate_partial_pointclouds.py \
-    --cad_dir object_database/ycbv_gso/ \
-    --images_dir object_images/ycbv_gso/
+    --cad_dir object_database/MI3DOR/ \
+    --images_dir object_images/MI3DOR/ \
+    --num_points 10000
+
+# Descriptions (VLM captions per rendered view):
+python3 rendering/generate_descriptions.py \
+    --images_dir object_images/MI3DOR/ \
+    --output object_database/MI3DOR/descriptions_attributes.json
 ```
 
-**Arguments:**
-| Flag | Default | Description |
+`generate_partial_pointclouds.py`: loads each CAD mesh via trimesh, normalizes to the same unit bounding box `rendering.py` uses, and for every view loads the stored camera matrix, samples 50k points on the mesh surface, keeps only front-facing points (face normal · view direction > 0), and resamples down to `--num_points`. Output: compressed `.npz` per view with keys `points` (N,3) and `colors` (N,3). ~1s/object.
+
+### Stage 2 — Embedding caches
+
+Once stage 1 has produced renders + partial point clouds + descriptions, build the gallery embeddings with **`tools/precompute_embeddings.py`** — a small, dataset-agnostic script (dataset choice is just paths, nothing in the code is dataset-specific):
+
+```bash
+docker compose run --rm oscar bash -lc \
+  "python3 tools/precompute_embeddings.py \
+     --dataset MI3DOR \
+     --data-root eval/datasets/mi3dor/mi3dor_full \
+     --images-dir object_images/MI3DOR \
+     --desc-file object_database/MI3DOR/descriptions_attributes.json \
+     --results-root object_retrieval/results_MI3DOR_stage1"
+
+# List the 6 passes with a one-line description of each, no paths needed:
+python3 tools/precompute_embeddings.py --list
+
+# Check gallery readiness (CAD/render/description counts) without building anything:
+python3 tools/precompute_embeddings.py --dataset MI3DOR --data-root ... --images-dir ... \
+    --desc-file ... --results-root ... --dry-run
+
+# Rebuild only specific passes:
+python3 tools/precompute_embeddings.py --dataset MI3DOR ... --passes siglip,uni3d
+```
+
+| Pass | Builds | Cache file |
 |---|---|---|
-| `--cad_dir` | (required) | Path to CAD models directory |
-| `--images_dir` | (required) | Path to rendered images directory (output goes here) |
-| `--num_points` | 10000 | Points per partial PC (matches ULIP-2 expectation) |
-| `--overwrite` | false | Regenerate existing `.npz` files |
+| `base` | CLIP-text (descriptions), DINOv2 (rendered views), ULIP-2 colored partial-view shape | `.clip_text_cache_*.pt`, `.dino_cache_*.pt`, `.ulip_partial_cache_*.pt` |
+| `siglip` | SigLIP image embeddings (alternative to DINOv2) | `.siglip_cache_*.pt` |
+| `ulip_fullmesh` | ULIP-2 colored, full CAD mesh (no partial views) | `<data_root>/cad/.ulip_cache_*.pt` |
+| `ulip_pc_rgb` | ULIP-2 colored, partial-view, PC-mode query tag — reuses `base`'s cache (same config), near-instant | (same file as `base`) |
+| `ulip_pc_xyz` | ULIP-2 XYZ-only (8k pts, no color), partial-view | `.ulip_partial_cache_*.pt` (different digest) |
+| `uni3d` | Uni3D-g, partial-view point clouds | `.ulip_partial_cache_*.pt` (different digest, `encoder=uni3d` tag) |
 
-**How it works:**
-1. Loads each CAD mesh via trimesh
-2. Normalizes to unit bounding box (same as `rendering.py`: center on bbox center, scale max dimension to 1.0)
-3. For each of the 8 views: loads the stored 3×4 camera matrix, computes the camera position, samples 50k points on the mesh surface, keeps only front-facing points (face normal · view direction > 0), resamples to `num_points`
-4. Saves as compressed `.npz` with keys `points` (N,3) and `colors` (N,3)
+Note the distinction between what each channel embeds: `clip`/`dino`/`siglip` embed the *rendered images*; `shape` (built by `base`, `ulip_fullmesh`, `ulip_pc_rgb`, `ulip_pc_xyz`, `uni3d`) embeds the object's *3D point cloud/geometry* — no images involved, even though the underlying model (ULIP-2) shares a joint embedding space with images and text.
 
-**Performance:** ~1 second per object, ~10 minutes for 1051 YCBV-GSO objects (8 views each).
+All caches are content-fingerprinted (model config + source data — never absolute paths or mtimes), so they're safe to copy/rclone to another machine, as long as that machine reproduces query-side encoding with the identical checkpoints/patches. See `docs/LAPTOP_EMBEDDINGS_SETUP.md` for exactly what an eval machine needs (checkpoints, the Uni3D inference patch for portable FPS, `timm` version) to consume caches built here.
 
 ---
 

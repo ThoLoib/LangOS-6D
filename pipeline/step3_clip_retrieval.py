@@ -26,8 +26,10 @@
 #   - Liste von (object_id, similarity_score) Tupeln, sortiert nach Score
 # =============================================================================
 
+import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 
@@ -181,9 +183,52 @@ class CLIPRetriever:
                 id_to_label.get(lbl, lbl) for lbl in self._desc_labels
             ]
 
+        cache_path = self._cache_path(desc_file)
+        if self._try_load_cache(cache_path):
+            return
+
         logger.info(f"Encodiere {len(self._desc_texts)} Beschreibungen mit CLIP...")
         self._desc_embeddings = self._encode_texts_batch(self._desc_texts)
         logger.info("Beschreibungs-Embeddings berechnet.")
+        self._save_cache(cache_path)
+
+    def _cache_path(self, desc_file: str) -> str:
+        """Cache-Pfad für die Text-Embeddings, neben der Beschreibungsdatei.
+
+        Fingerprint = CLIP-Modellname + Beschreibungstexte (Inhalt, nicht
+        Pfad/mtime) → cross-machine-stabil, wie die DINO/ULIP-Caches.
+        Labels sind absichtlich NICHT Teil des Fingerprints: ein anderes
+        id_to_label-Mapping ändert nicht die encodierten Texte, der Cache
+        bleibt also gültig.
+        """
+        model_tag = self.config.clip_model_name.replace("/", "_")
+        raw = f"v1:{len(self._desc_texts)}\n" + "\n".join(self._desc_texts)
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        cache_dir = os.path.dirname(os.path.abspath(desc_file))
+        return os.path.join(cache_dir, f".clip_text_cache_{model_tag}_{digest}.pt")
+
+    def _try_load_cache(self, cache_path: str) -> bool:
+        """Lädt gecachte Text-Embeddings, falls vorhanden."""
+        if not os.path.isfile(cache_path):
+            return False
+        try:
+            data = torch.load(cache_path, map_location=self.device, weights_only=True)
+            self._desc_embeddings = data["embeddings"].to(self.device)
+            logger.info("CLIP-Text-Cache geladen: %s", os.path.basename(cache_path))
+            return True
+        except Exception as e:
+            logger.warning(
+                "CLIP-Text-Cache konnte nicht geladen werden (%s), encodiere neu.", e
+            )
+            return False
+
+    def _save_cache(self, cache_path: str) -> None:
+        """Speichert die Text-Embeddings auf Platte."""
+        try:
+            torch.save({"embeddings": self._desc_embeddings.cpu()}, cache_path)
+            logger.info("CLIP-Text-Embeddings gespeichert: %s", cache_path)
+        except OSError as e:
+            logger.warning("Konnte CLIP-Text-Cache nicht speichern: %s", e)
 
     def _encode_texts_batch(
         self, texts: List[str], batch_size: int = 32
