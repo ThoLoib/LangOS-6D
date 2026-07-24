@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-07-24 Uni3D-g (E7) + XYZ ULIP-2 (O5): cross-PC embedding portability
+
+Decision
+- **Merged the gallery PC's shape-encoder work (`tessa-pc`) into the official-eval branch.** The real `Uni3DEncoder` (E7, EVA-giant point transformer, embed_dim 1024) loads from a cloned `baaivision/Uni3D` repo (`/uni3d`) + `modelzoo/uni3d-g/model.pt`, import-isolated from ULIP's identically-named `models` package. O5 (`ulip_pc_xyz`) switched to the released ULIP-2 8k-xyz PointBERT (`ulip2_pointbert_8k_xyz.pt`, backbone=pointbert, 8192 pts, 512-d) instead of dropping colours on the 6-ch colored checkpoint (which crashes).
+- **FPS portability fix — the real cross-PC risk.** Upstream Uni3D does FPS via `pointnet2_ops` (a CUDA extension), which changes *which points get sampled* → different embeddings. Neither PC's `tholoi/oscar-plus` image has `pointnet2_ops`. The shipped patch (`docs/uni3d_inference.patch`, applied to Uni3D @ `64e03c3`) wraps that import in try/except with a **deterministic pure-PyTorch FPS seeded at index 0** (matches the CUDA kernel's first pick). Since both PCs lack the CUDA ext, both take the identical pure-torch branch → byte-identical sampling → query embeddings (eval PC) live in the same space as gallery embeddings (gallery PC). **Do NOT `pip install pointnet2_ops` on only one machine** (mixed FPS = silently mismatched E7 embeddings).
+- **timm pinned to 1.0.25 on both PCs** (EVA-giant's timm config shifts across releases). Confirmed identical here and on the gallery PC.
+- Eval-PC mirror steps (repo+patch, two checkpoints, `/uni3d` mount, per-arm unblock table) documented in `docs/LAPTOP_EMBEDDINGS_SETUP.md`.
+
+Rationale
+- Only DINO/SigLIP/ULIP-colored arms ship cleanly as caches; E7/O5 need the eval PC to reproduce the *exact* encoders to embed queries into the gallery's space. The try/except FPS guarantees that without requiring a CUDA extension on either machine.
+
+Alternatives Considered
+- Stand up a private remote for the ~2 GB Uni3D repo (as done for ULIP-thesis) — rejected in favour of a shipped `git apply` patch, which is smaller and *guarantees* the byte-identical FPS.
+- Install `pointnet2_ops` on both PCs — viable but heavier and easy to get half-right (one PC only), so pure-torch FPS is the safer default.
+
 ## 2026-07-23 Stage-1: official SHREC'18 evaluation for all runs + two-PC precompute
 
 Decision

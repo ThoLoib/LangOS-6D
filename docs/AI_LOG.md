@@ -1,6 +1,19 @@
 # AI Log
 
-## 2026-07-23 Official SHREC'18 eval + two-PC precompute (gallery downloaded, Mesa renders)
+## 2026-07-24 Merge tessa-pc: Uni3D-g (E7) + XYZ ULIP-2 (O5), cross-PC FPS portability
+
+Goal
+- Integrate the gallery PC's shape-encoder work and verify the eval PC can embed Uni3D/XYZ-ULIP queries into the same space as the shipped gallery caches.
+
+Changes
+- Merged `origin/tessa-pc` (ea57dffb) into `feat/stage1-official-eval-precompute` (merge `21df33db`): took tessa's `experiment1` (superset — already contained this branch's official-eval + precompute), unioned `config`/`step5` (content-stable fingerprints + real `Uni3DEncoder` coexist), kept this branch's docs + `/eval/shrec18_official/` gitignore line (tessa never touched them). Brought in `docs/uni3d_inference.patch` + `docs/LAPTOP_EMBEDDINGS_SETUP.md`.
+- Verified: eval image `tholoi/oscar-plus` lacks `pointnet2_ops`/`knn_cuda`/`pytorch3d`/`einops` (has `timm 1.0.25`, `open_clip`). Upstream Uni3D `point_encoder.py` FPS hard-depends on `pointnet2_ops`; the patch's try/except → deterministic pure-torch FPS (seeded idx 0) means both PCs take the identical branch. See DECISIONS 2026-07-24.
+- Unrelated in-flight WIP (onboard/bop/ycbv scripts) preserved in `stash@{0}`; onboard scripts left at merged HEAD (conflicted with tessa's onboard edits — user to reconcile).
+
+Still needed on eval PC to run E7/O5
+- Clone `baaivision/Uni3D`@`64e03c3` + `git apply docs/uni3d_inference.patch`, mount `-v ~/thesis/Uni3D:/uni3d`.
+- Mirror checkpoints: `uni3d-g/model.pt` (2.03 GB, HF BAAI/Uni3D) and `ulip2_pointbert_8k_xyz.pt` (HF SFXX/ulip).
+- Sync the `shrec18_fixed` gallery + precomputed `.pt` caches from Drive (gallery name must match — this PC currently has `shrec18`).
 
 Goal
 - Make Stage-1 numbers leaderboard-comparable and offload the expensive reference encoding to the gallery-generating PC.
