@@ -346,6 +346,11 @@ class ScoreFusion:
             k_param: RRF-Glättungsparameter (Standard: 60).
         """
         rrf_scores: Dict[str, float] = {}
+        # CAD-/View-Pfade müssen wie bei _weighted_sum durchgereicht werden,
+        # sonst fehlt Sub-step B2 (Geometrie-Re-Ranking) und Schritt C der
+        # Mesh-Pfad, sobald fusion_method="rank_fusion" produktiv läuft.
+        paths: Dict[str, str] = {}
+        view_paths: Dict[str, str] = {}
 
         def _add_rrf(candidates_list, label_fn, score_fn):
             for rank, c in enumerate(candidates_list, 1):
@@ -356,8 +361,14 @@ class ScoreFusion:
             _add_rrf(clip_result.candidates, lambda c: c.object_id, lambda c: c.score)
         if dino_result:
             _add_rrf(dino_result.candidates, lambda c: c.object_id, lambda c: c.dino_score)
+            for c in dino_result.candidates:
+                if getattr(c, "best_view_path", ""):
+                    view_paths[c.object_id] = c.best_view_path
         if shape_result:
             _add_rrf(shape_result.candidates, lambda c: c.object_id, lambda c: c.shape_score)
+            for c in shape_result.candidates:
+                if c.cad_model_path:
+                    paths[c.object_id] = c.cad_model_path
 
         # Sortieren
         sorted_items = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
@@ -367,6 +378,8 @@ class ScoreFusion:
             candidates.append(FusedCandidate(
                 object_id=obj_id,
                 fused_score=score,
+                cad_model_path=paths.get(obj_id, ""),
+                best_view_path=view_paths.get(obj_id, ""),
             ))
 
         if candidates:
@@ -399,8 +412,12 @@ class ScoreFusion:
         Candidates not present in a channel receive a penalty rank equal to
         the channel's candidate count + 1.
 
-        This follows the multi-strategy voting approach used by SAMURAI in
-        the ROOMELSA setting (Vo et al., 2025).
+        NOTE: this is a plain unweighted Borda count over the three OSCAR+
+        channels.  It is *not* a reproduction of SAMURAI (Vo et al., 2025),
+        whose majority vote runs over several text/silhouette *retrieval
+        strategies* and weights the hybrid ones higher.  The thesis ablation
+        E6 uses Reciprocal Rank Fusion (`_reciprocal_rank_fusion`) instead;
+        this method is kept as an alternative rank-based operator.
 
         Ties are broken by weighted sum of the raw (unnormalised) per-channel
         scores, so the ordering is deterministic.

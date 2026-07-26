@@ -1240,9 +1240,15 @@ Beispiel:
     # Geometry re-ranking (Sub-step B2)
     parser.add_argument("--geometry-reranking", action="store_true", dest="geometry_reranking_enabled",
                         help="Enable Sub-step B2 geometry re-ranking (GeDi + Chamfer)")
-    parser.add_argument("--geometry-reranking-signal", choices=["gedi", "chamfer", "both"],
-                        default="gedi", dest="geometry_reranking_signal",
-                        help="Geometry signal for B2 re-ranking")
+    parser.add_argument("--geometry-reranking-signal",
+                        choices=["fitness", "chamfer_unaligned",
+                                 "chamfer_ransac", "chamfer_icp",
+                                 # legacy aliases (see step_b2 _SIGNAL_ALIASES)
+                                 "gedi", "chamfer", "both"],
+                        default="chamfer_ransac", dest="geometry_reranking_signal",
+                        help="Geometry signal for B2 re-ranking. "
+                             "'chamfer_unaligned' is a diagnostic control and "
+                             "should not be used in production.")
     parser.add_argument("--geometry-reranking-top-k", type=int, default=5,
                         dest="geometry_reranking_top_k",
                         help="Number of fused candidates to re-rank in B2")

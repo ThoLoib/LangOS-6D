@@ -23,16 +23,17 @@ reused unchanged in Stages 2, 3a, 3b and 5.
 
 The grid covered here (pose-side ablations E3/E5 are deferred to Stage 3a):
 
-  E1   channel set (S_text / +S_view / +S_shape / CLIP-pruned)
-  E2   local geometry re-ranking (none / GeDi / trimmed Chamfer / both,
-       plus the legacy scale-gate variant)          [--with-geometry]
+  E1   channel set (each channel alone / S_text+S_view / full fusion /
+       CLIP-pruned / faithful OSCAR cascade)
+  E2   local geometry re-ranking: none / RANSAC fitness / unaligned trimmed
+       distance (diagnostic) / RANSAC-aligned / RANSAC+ICP  [--with-geometry]
   E2b  shape reference: partial rendered views vs. full mesh
   E4   appearance encoder: DINOv2 vs. SigLIP  [zhaiSigmoidLossLanguage2023]
-  E6   fusion: weighted sum vs. majority voting
-       [voSAMURAIShapeAwareMultimodal2025]
+  E6   fusion: weighted sum vs. reciprocal rank fusion
+       [cormackReciprocalRankFusion2009]
   E7   shape encoder: ULIP-2 vs. Uni3D
        [xueULIP2ScalableMultimodal2024, zhouUni3DExploringUnified2023]
-  O1   S_shape redundancy vs. S_GeDi (5 configs)    [--with-geometry for c/d/e]
+  O1   S_shape redundancy vs. S_GeDi (4 configs)    [--with-geometry for c/d]
   O2   scope/ordering: full-database fusion vs. CLIP-pruned cascade
        (OSCAR) vs. visual-first (Stubborn Strawberries,
        [nguyenSHREC2025Retrieval2025])
@@ -173,16 +174,14 @@ VIEW_BUDGETS = (8, 16, 32, 42)  # O4; thesis lists {8,16,32}, 42 added as
                        # the CNOS/repo default (full icosphere)
                        # [nguyenCNOSStrongBaseline2023]
 GEOM_SHORTLIST = 5     # geometry re-ranking shortlist (config default)
+# Full-database S_GeDi would need |queries| x |gallery| RANSAC fits.
+GEDI_FULL_DB_PAIRS = 1452 * N_CADS
 # Number of (FPS-ordered) partial views the shape channel AGGREGATES over at
 # retrieval time.  The reference cache still stores all encoded views (whole
 # dataset); this only trims the top-k_v pooling input.  16 is sufficient for
 # the first experiment and matches the DINO/CNOS view budget; set to None to
 # aggregate over every cached view.
 SHAPE_AGG_VIEWS = 16
-O1E_POOL = 10          # O1e: GeDi-in-fusion pool size.  Full-database GeDi
-                       # (3,308 RANSAC runs/query) is computationally
-                       # infeasible; the thesis protocol is approximated on
-                       # a text+view shortlist — documented deviation.
 
 ULIP_CKPT_DEFAULT = "/ulip/checkpoints/ulip2_pointbert_10k.pt"
 # O5 XYZ-only arm uses the released ULIP-2 *xyz* PointBERT (8,192 pts, no RGB,
@@ -712,11 +711,13 @@ def evaluate_ranking(rels: np.ndarray, num_rel: int) -> Dict[str, float]:
 # all on-disk embedding caches) and produces per-query score vectors over
 # the canonical gallery list.  Pass definitions:
 #
-#   base          CLIP + DINOv2 (all views, per-V aggregation) + ULIP-2
-#                 cross-modal on partial-view references  — the OSCAR+
-#                 default channel stack (thesis Step B1).
+#   base          CLIP + DINOv2 (all views, per-V aggregation) — the
+#                 appearance/semantic half of the OSCAR+ channel stack.
+#                 S_shape is NOT part of this pass: Stage-1 scores the shape
+#                 channel in pc-mode (see ulip_pc_rgb / _BASE_CH).
 #   siglip        appearance channel re-scored with SigLIP (E4).
-#   ulip_fullmesh S_shape with full-mesh reference embeddings (E2b).
+#   ulip_pc_fullmesh  S_shape with full-mesh reference embeddings (E2b),
+#                 pc-mode query.
 #   ulip_pc_rgb   S_shape in pc-mode, query = XYZ+RGB point cloud
 #                 (E7 ULIP-2 arm / O5 RGB arm).  pc-mode is forced for
 #                 these ablations so that the *point cloud* is what varies
@@ -726,12 +727,17 @@ def evaluate_ranking(rels: np.ndarray, num_rel: int) -> Dict[str, float]:
 #   uni3d         S_shape scored by Uni3D (pc-mode only; E7).
 
 PASS_DEFS: "OrderedDict[str, dict]" = OrderedDict([
-    ("base",          dict(channels=("clip", "dino", "shape"),
-                           ulip2_mode="cross", partial=True, overrides={})),
+    ("base",          dict(channels=("clip", "dino"),
+                           ulip2_mode="cross", partial=True, no_shape=True,
+                           overrides={})),
     ("siglip",        dict(channels=("dino",), ulip2_mode="cross",
                            partial=True, no_shape=True,
                            overrides={"appearance_encoder": "siglip"})),
-    ("ulip_fullmesh", dict(channels=("shape",), ulip2_mode="cross",
+    # Full-mesh S_shape reference in pc-mode (E2b).  Mode only affects the
+    # QUERY side, so this reuses both existing caches unchanged: the
+    # full-mesh gallery cache (cad/.ulip_cache_*.pt) and the pc query cache
+    # (keyed on encoder config, not on `partial` — see _pc_query_cache_path).
+    ("ulip_pc_fullmesh", dict(channels=("shape",), ulip2_mode="pc",
                            partial=False, overrides={})),
     ("ulip_pc_rgb",   dict(channels=("shape",), ulip2_mode="pc",
                            partial=True, overrides={})),
@@ -1166,8 +1172,8 @@ class AblationSpec:
     weights: Tuple[float, float, float] = BASE_WEIGHTS
     fusion_method: str = "weighted_sum"
     scope: str = "full"          # "full" | "clip_topk" | "dino_topk"
-    geometry: Optional[str] = None  # None|gedi|chamfer|both|scale_gate|
-                                    # gedi_in_fusion
+    geometry: Optional[str] = None  # None | fitness | chamfer_unaligned |
+                                    # chamfer_ransac | chamfer_icp | scale_gate
     alias_of: Optional[str] = None
     notes: str = ""
 
@@ -1177,11 +1183,17 @@ class AblationSpec:
 
     @property
     def needs_gedi(self) -> bool:
-        return self.geometry in ("gedi", "both", "gedi_in_fusion")
+        # Every signal except the unaligned diagnostic needs GeDi, since
+        # alignment is what GeDi correspondences are for.
+        return self.geometry in ("fitness", "chamfer_ransac", "chamfer_icp")
 
 
+# Stage-1 BASE.  S_shape is scored in **pc-mode**: SHREC'18 queries are real
+# RGB-D scans, so the shape channel encodes the query *point cloud* rather
+# than the query image.  (Stage 2 / MI3DOR keeps cross-mode because it has no
+# depth — thesis subsec:eval_datasets_mi3dor_restricted_role.)
 _BASE_CH = {"clip": ("base", None), "dino": ("base", 42),
-            "shape": ("base", None)}
+            "shape": ("ulip_pc_rgb", None)}
 _TV_CH = {"clip": ("base", None), "dino": ("base", 42)}   # text+view only
 
 
@@ -1196,9 +1208,26 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("E1a_text_only", "E1", "S_text alone",
           bib="pulliOSCAROpenSetCAD2025",
           channels={"clip": ("base", None)}, weights=(1.0, 0.0, 0.0)),
-    _spec("E1b_text_view", "E1", "(S_text, S_view) — OSCAR-equivalent",
+    _spec("E1_view_only", "E1", "S_view alone (appearance channel)",
+          bib="nguyenCNOSStrongBaseline2023",
+          channels={"dino": ("base", 42)}, weights=(0.0, 1.0, 0.0)),
+    _spec("E1_shape_only", "E1", "S_shape alone (pc-mode)",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={"shape": ("ulip_pc_rgb", None)}, weights=(0.0, 0.0, 1.0)),
+    _spec("E1b_text_view", "E1",
+          "(S_text, S_view) — OSCAR's channel set, full-database fusion",
           bib="pulliOSCAROpenSetCAD2025",
           channels=dict(_TV_CH), weights=(0.43, 0.57, 0.0)),
+    # Faithful OSCAR reproduction: CLIP selects the top-k shortlist, DINOv2
+    # arg-maxes *within* it, and there is no shape channel at all
+    # (thesis background.tex, "OSCAR" paragraph).  Weight (0,1,0) + scope
+    # clip_topk makes derive_ranking take the single-channel shortcut: the
+    # pool is ordered by S_view alone, the tail by S_text.  This differs from
+    # E1d/O2_clip_cascade, which score S_view AND S_shape on the shortlist.
+    _spec("E1_oscar_cascade", "E1",
+          "OSCAR cascade: CLIP top-20 shortlist, DINOv2 arg-max within it",
+          bib="pulliOSCAROpenSetCAD2025",
+          channels=dict(_TV_CH), weights=(0.0, 1.0, 0.0), scope="clip_topk"),
     _spec("E1c_full_fusion", "E1",
           "full fusion (S_text, S_view, S_shape) — OSCAR+ BASE config",
           bib="pulliOSCAROpenSetCAD2025, zhouCrossModal3DRepresentation",
@@ -1208,29 +1237,37 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           bib="pulliOSCAROpenSetCAD2025",
           channels=dict(_BASE_CH), scope="clip_topk"),
     # --- E2: local geometry re-ranking (thesis E2) -----------------------
+    # The five configurations of subsec:eval_baselines.  Alignment requires
+    # correspondences, so every *aligned* variant necessarily runs GeDi ->
+    # RANSAC first; a distance without GeDi is by construction unaligned and
+    # serves only as the diagnostic control.
     _spec("E2_none", "E2", "no geometry re-ranking (= BASE)",
           channels=dict(_BASE_CH), alias_of="E1c_full_fusion"),
-    _spec("E2_gedi", "E2", "S_GeDi re-ranking of the fusion top-5",
+    _spec("E2_fitness", "E2", "RANSAC fitness only (no surface distance)",
           bib="caraffaFreeZeTrainingfreeZeroshot2025",
-          channels=dict(_BASE_CH), geometry="gedi"),
-    _spec("E2_chamfer", "E2", "trimmed-Chamfer re-ranking of the top-5",
+          channels=dict(_BASE_CH), geometry="fitness"),
+    _spec("E2_chamfer_unaligned", "E2",
+          "unaligned trimmed distance — diagnostic control, not a method",
           bib="diUREDUnsupervised3D2023",
-          channels=dict(_BASE_CH), geometry="chamfer"),
-    _spec("E2_both", "E2", "GeDi + Chamfer combined",
-          channels=dict(_BASE_CH), geometry="both"),
-    _spec("E2_scale_gate", "E2",
-          "legacy scale-gate variant (subsumed by geometry re-ranking)",
-          channels=dict(_BASE_CH), geometry="scale_gate",
-          notes=("sorted-bbox scale ratio in [0.8, 1.2] accepts the first "
-                 "top-5 candidate; approximation of step7's ICP-based "
-                 "estimate (no depth-scale ICP here).")),
+          channels=dict(_BASE_CH), geometry="chamfer_unaligned",
+          notes=("Expected to underperform E2_chamfer_ransac; it exists to "
+                 "verify that the gain comes from evaluating the distance "
+                 "AFTER alignment (thesis subsec:eval_baselines).")),
+    _spec("E2_chamfer_ransac", "E2",
+          "GeDi-RANSAC alignment, then trimmed surface distance",
+          bib="caraffaFreeZeTrainingfreeZeroshot2025, diUREDUnsupervised3D2023",
+          channels=dict(_BASE_CH), geometry="chamfer_ransac"),
+    _spec("E2_chamfer_icp", "E2",
+          "GeDi-RANSAC + ICP refinement, then trimmed surface distance",
+          bib="caraffaFreeZeTrainingfreeZeroshot2025",
+          channels=dict(_BASE_CH), geometry="chamfer_icp"),
     # --- E2b: partial-view vs full-mesh shape reference ------------------
     _spec("E2b_partial", "E2b", "partial rendered views as S_shape "
           "reference (= BASE)", bib="linSAM6DSegmentAnything2024",
           channels=dict(_BASE_CH), alias_of="E1c_full_fusion"),
     _spec("E2b_fullmesh", "E2b", "full-mesh S_shape reference",
           bib="diUREDUnsupervised3D2023",
-          channels={**_TV_CH, "shape": ("ulip_fullmesh", None)}),
+          channels={**_TV_CH, "shape": ("ulip_pc_fullmesh", None)}),
     # --- E4: appearance encoder ------------------------------------------
     _spec("E4_dinov2", "E4", "DINOv2 appearance channel (= BASE)",
           bib="nguyenCNOSStrongBaseline2023",
@@ -1241,15 +1278,22 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     # --- E6: fusion strategy ---------------------------------------------
     _spec("E6_weighted", "E6", "weighted-sum fusion (= BASE)",
           channels=dict(_BASE_CH), alias_of="E1c_full_fusion"),
-    _spec("E6_majority", "E6", "majority-voting (Borda) fusion",
-          bib="voSAMURAIShapeAwareMultimodal2025",
-          channels=dict(_BASE_CH), fusion_method="majority_voting"),
+    # Rank-based fusion = Reciprocal Rank Fusion (k=60), the standard
+    # scale-free rank combiner.  SAMURAI/COMPASS motivate *why* rank-based
+    # fusion is worth testing, but SAMURAI's own vote runs over text/
+    # silhouette retrieval strategies, not over our three channels — so RRF
+    # is cited on its own terms rather than as a SAMURAI reproduction.
+    _spec("E6_rrf", "E6", "reciprocal rank fusion (RRF, k=60)",
+          bib="cormackReciprocalRankFusion2009",
+          channels=dict(_BASE_CH), fusion_method="rank_fusion"),
     # --- E7: 3D foundation model in S_shape ------------------------------
     # Both arms run in pc-mode so encoder choice is the only difference
     # (Uni3D has no ULIP-style image branch; cross-modal would confound).
-    _spec("E7_ulip2_pc", "E7", "ULIP-2 shape encoder (pc-mode)",
+    # Since Stage-1 BASE is itself pc-mode, the ULIP-2 arm *is* the BASE
+    # config — cross-referenced rather than recomputed.
+    _spec("E7_ulip2_pc", "E7", "ULIP-2 shape encoder (pc-mode) (= BASE)",
           bib="xueULIP2ScalableMultimodal2024",
-          channels={**_TV_CH, "shape": ("ulip_pc_rgb", None)}),
+          channels=dict(_BASE_CH), alias_of="E1c_full_fusion"),
     _spec("E7_uni3d", "E7", "Uni3D shape encoder (pc-mode)",
           bib="zhouUni3DExploringUnified2023, "
               "vandenherrewegenFinetuning3DFoundation2024",
@@ -1263,16 +1307,15 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("O1c_gedi_post_fusion", "O1",
           "S_GeDi as post-fusion re-ranker (no S_shape)",
           channels=dict(_TV_CH), weights=(0.43, 0.57, 0.0),
-          geometry="gedi"),
+          geometry="fitness"),
     _spec("O1d_shape_plus_gedi", "O1", "S_shape in fusion + S_GeDi rerank",
-          channels=dict(_BASE_CH), geometry="gedi", alias_of="E2_gedi"),
-    _spec("O1e_gedi_in_fusion", "O1",
-          "S_GeDi replaces S_shape inside the fusion score",
-          channels=dict(_TV_CH), geometry="gedi_in_fusion",
-          notes=(f"GeDi inlier counts min-max-normalized as the shape "
-                 f"channel on the text+view top-{O1E_POOL} pool "
-                 f"(full-database GeDi is infeasible — documented "
-                 f"approximation of the thesis protocol).")),
+          channels=dict(_BASE_CH), geometry="fitness",
+          alias_of="E2_fitness"),
+    # NOTE: "S_GeDi replaces S_shape inside the fusion score" (the former
+    # O1e) is intentionally absent.  It requires a GeDi score for EVERY
+    # gallery entry, i.e. |queries| x |gallery| = 1,452 x 3,308 ~ 4.8M RANSAC
+    # fits — see --bench-gedi for the measured per-fit cost.  S_GeDi is
+    # therefore only evaluable as a post-fusion re-ranker (O1c/O1d).
     # --- O2: scope and ordering ------------------------------------------
     _spec("O2_full_database", "O2", "simultaneous full-database fusion "
           "(= BASE)", channels=dict(_BASE_CH),
@@ -1576,45 +1619,71 @@ class _GeometryEngine:
     # -- scoring -----------------------------------------------------------
     def pair_scores(self, qid: str, npz_path: str, cad_ids: Sequence[str],
                     signal: str) -> Dict[str, dict]:
-        """GeDi/Chamfer scores for (qid x cad_ids); cached pairs are free."""
-        need_fields = {"gedi": ("gedi",), "chamfer": ("chamfer",),
-                       "both": ("gedi", "chamfer"),
-                       "gedi_in_fusion": ("gedi",)}[signal]
+        """Geometry scores for (qid x cad_ids); cached pairs are free.
+
+        Cache records are keyed per SIGNAL, because D_trim under different
+        alignments is a different quantity: the unaligned diagnostic, the
+        RANSAC-aligned distance and the ICP-refined distance must never be
+        read from one another's entries.
+        """
+        # Field names are signal-scoped; "fitness" is shared by every signal
+        # that performs a registration (it is the same RANSAC either way).
+        need_fields = {
+            "fitness": ("fitness",),
+            "chamfer_unaligned": ("d_unaligned",),
+            "chamfer_ransac": ("fitness", "d_ransac"),
+            "chamfer_icp": ("fitness", "d_icp"),
+        }[signal]
         missing = [c for c in cad_ids
                    if any(self.cache.get((qid, c), {}).get(f) is None
                           for f in need_fields)]
         if missing:
             from pipeline.step6_fusion import FusedCandidate
             rr = self._get_reranker()
-            sig = "both" if signal in ("both",) else \
-                  ("gedi" if "gedi" in need_fields else "chamfer")
             obs = self._query_cloud(npz_path)
             cands = [FusedCandidate(object_id=c, fused_score=0.0,
                                     cad_model_path=c) for c in missing]
             rr.config.geometry_reranking_top_k = len(cands)
-            res = rr.rerank(cands, obs, signal=sig)
+            res = rr.rerank(cands, obs, signal=signal)
+            dist_field = {"chamfer_unaligned": "d_unaligned",
+                          "chamfer_ransac": "d_ransac",
+                          "chamfer_icp": "d_icp"}.get(signal)
             for gc in res.candidates:
                 rec = dict(self.cache.get((qid, gc.object_id),
                                           {"qid": qid, "cad": gc.object_id}))
-                if "gedi" in need_fields:
-                    rec["gedi"] = float(gc.gedi_score)
-                if "chamfer" in need_fields:
-                    rec["chamfer"] = (None if np.isinf(gc.chamfer_score)
-                                      else float(gc.chamfer_score))
+                rec["failed"] = bool(gc.registration_failed)
+                if "fitness" in need_fields:
+                    rec["fitness"] = float(gc.ransac_fitness)
+                if dist_field:
+                    rec[dist_field] = (None if np.isinf(gc.chamfer_score)
+                                       else float(gc.chamfer_score))
+                if signal == "chamfer_icp":
+                    rec["icp_fitness"] = float(gc.icp_fitness)
+                    rec["icp_rmse"] = float(gc.icp_inlier_rmse)
                 self.cache[(qid, gc.object_id)] = rec
                 self._append_cache(rec)
         return {c: self.cache.get((qid, c), {}) for c in cad_ids}
 
-    def geometry_score(self, rec: dict, signal: str) -> float:
-        """Same combination rule as GeometryReRanker._compute_geometry_score."""
-        gedi = rec.get("gedi") or 0.0
-        cham = rec.get("chamfer")
-        cham = float("inf") if cham is None else cham
-        if signal == "gedi":
-            return gedi
-        if signal == "chamfer":
-            return -cham
-        return gedi + (-cham * 1000.0)
+    def geometry_score(self, rec: dict, signal: str) -> Tuple[float, float]:
+        """Sort key mirroring GeometryReRanker's ranking rule.
+
+        Returns (primary, tiebreak) with higher = better: failed
+        registrations sink to -inf, distance signals rank by -D_trim, and
+        RANSAC fitness breaks ties (thesis Sec. 3.3 — no arbitrary scale
+        factor combining an inlier statistic with a distance).
+        """
+        fitness = rec.get("fitness") or 0.0
+        if rec.get("failed"):
+            return (float("-inf"), fitness)
+        if signal == "fitness":
+            return (fitness, fitness)
+        field = {"chamfer_unaligned": "d_unaligned",
+                 "chamfer_ransac": "d_ransac",
+                 "chamfer_icp": "d_icp"}[signal]
+        d = rec.get(field)
+        if d is None:
+            return (float("-inf"), fitness)
+        return (-float(d), fitness)
 
     # -- scale gate (legacy E2 variant, thesis "Scale gate (legacy)") ------
     def cad_extent(self, cad_id: str) -> Optional[np.ndarray]:
@@ -1650,9 +1719,54 @@ class _GeometryEngine:
         return cad_ids
 
 
+def bench_gedi(paths: dict, index: List[dict], object_ids: List[str],
+               n_pairs: int) -> None:
+    """Measure the per-pair GeDi+RANSAC cost and extrapolate to full-database.
+
+    Backs the thesis claim that using S_GeDi *inside* the fusion score (rather
+    than as a post-fusion re-ranker) is computationally infeasible: it would
+    need one registration per (query, gallery entry) pair.  Descriptor
+    extraction on the gallery side is amortisable; the RANSAC fit is not, so
+    that is what is timed here.
+    """
+    import time
+
+    geom = _GeometryEngine(paths)
+    if not geom.gedi_available():
+        raise SystemExit("[bench] GeDi service unavailable — start it with "
+                         "`docker compose up -d gedi` and retry.")
+
+    rng = np.random.RandomState(42)
+    q = index[int(rng.randint(len(index)))]
+    cads = [object_ids[i] for i in rng.choice(len(object_ids),
+                                              min(n_pairs, len(object_ids)),
+                                              replace=False)]
+    print(f"[bench] timing {len(cads)} GeDi+RANSAC fits "
+          f"(query {q['id']}) ...")
+
+    t0 = time.perf_counter()
+    for cad in cads:
+        # One pair at a time, bypassing the cache, so the timing reflects a
+        # single registration rather than a batched shortlist.
+        geom.cache.pop((q["id"], cad), None)
+        geom.pair_scores(q["id"], q["npz"], [cad], "chamfer_ransac")
+    elapsed = time.perf_counter() - t0
+
+    per_fit = elapsed / max(len(cads), 1)
+    total_s = per_fit * GEDI_FULL_DB_PAIRS
+    print(f"\n[bench] {len(cads)} fits in {elapsed:.1f}s "
+          f"-> {per_fit * 1000:.0f} ms per fit")
+    print(f"[bench] full-database S_GeDi = 1,452 queries x {N_CADS} CADs "
+          f"= {GEDI_FULL_DB_PAIRS:,} fits")
+    print(f"[bench] extrapolated: {total_s / 3600:.0f} h "
+          f"({total_s / 86400:.1f} days) of RANSAC alone, per ablation cell.")
+    print("[bench] -> S_GeDi is reported as a post-fusion re-ranker only "
+          "(thesis O1c/O1d).")
+
+
 def apply_geometry(spec: AblationSpec, qid: str, npz_path: str,
                    ranking: List[int], object_ids: List[str],
-                   geom: _GeometryEngine, vecs_for_o1e=None) -> List[int]:
+                   geom: _GeometryEngine) -> List[int]:
     """Apply the spec's geometry stage to a derived base ranking."""
     idx = {oid: i for i, oid in enumerate(object_ids)}
 
@@ -1661,32 +1775,11 @@ def apply_geometry(spec: AblationSpec, qid: str, npz_path: str,
         new = geom.scale_gate(npz_path, top)
         return [idx[o] for o in new] + ranking[GEOM_SHORTLIST:]
 
-    if spec.geometry == "gedi_in_fusion":
-        # O1e: GeDi inliers min-max-normalized replace S_shape in the
-        # weighted sum, on the text+view top-O1E_POOL pool.
-        pool = ranking[:O1E_POOL]
-        pool_ids = [object_ids[i] for i in pool]
-        recs = geom.pair_scores(qid, npz_path, pool_ids, "gedi_in_fusion")
-        g = np.array([recs[o].get("gedi") or 0.0 for o in pool_ids])
-        rng = g.max() - g.min()
-        g_n = (g - g.min()) / rng if rng > 0 else np.zeros_like(g)
-        c = vecs_for_o1e["clip"][pool]
-        d = vecs_for_o1e["dino"][pool]
-
-        def mm(v):
-            r = v.max() - v.min()
-            return (v - v.min()) / r if r > 0 else np.zeros_like(v)
-
-        fused = (BASE_WEIGHTS[0] * mm(c) + BASE_WEIGHTS[1] * mm(d)
-                 + BASE_WEIGHTS[2] * g_n)
-        order = np.argsort(-fused, kind="stable")
-        return [pool[i] for i in order] + ranking[O1E_POOL:]
-
-    # gedi / chamfer / both: re-order the top-5 shortlist (Sub-step B2)
+    # Sub-step B2: re-order the fusion top-k shortlist.
     top = [object_ids[i] for i in ranking[:GEOM_SHORTLIST]]
     recs = geom.pair_scores(qid, npz_path, top, spec.geometry)
-    scored = sorted(top, key=lambda o: -geom.geometry_score(
-        recs[o], spec.geometry))
+    scored = sorted(top, key=lambda o: geom.geometry_score(
+        recs[o], spec.geometry), reverse=True)
     return [idx[o] for o in scored] + ranking[GEOM_SHORTLIST:]
 
 
@@ -1718,18 +1811,11 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
         qc = q_label[0]
         if freqs.get(qc, 0) == 0:
             continue        # query category unknown to the official GT
-        base_vecs = None
-        if spec.geometry == "gedi_in_fusion":
-            base_vecs = {ch: (stores[p]["queries"][qid][ch][b]
-                              if isinstance(stores[p]["queries"][qid][ch], dict)
-                              else stores[p]["queries"][qid][ch])
-                         for ch, (p, b) in spec.channels.items()}
         ranking = derive_ranking(spec, qid, stores, object_ids,
                                  fusion_mod, cad_dir)
         if spec.geometry:
             ranking = apply_geometry(spec, qid, q["npz"], ranking,
-                                     object_ids, geom,
-                                     vecs_for_o1e=base_vecs)
+                                     object_ids, geom)
         ranked_ids = [object_ids[i] for i in ranking]
         m = score_official(ranked_ids, q_label, cad_labels, freqs)
         if m is None:
@@ -1776,9 +1862,26 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
     return summary
 
 
+def _resolve_alias_root(name: str) -> str:
+    """Follow an alias chain to the cell that is actually computed.
+
+    Aliases may chain (O5_xyzrgb -> E7_ulip2_pc -> E1c_full_fusion once BASE
+    is pc-mode).  Resolving to the root means a cell can be materialized even
+    when the intermediate alias is not part of the selected run.
+    """
+    seen = set()
+    while name in ABLATIONS and ABLATIONS[name].alias_of:
+        if name in seen:            # defensive: never loop on a cyclic chain
+            break
+        seen.add(name)
+        name = ABLATIONS[name].alias_of
+    return name
+
+
 def write_alias(spec: AblationSpec, paths: dict) -> Optional[dict]:
     """Materialize an alias cell by copying its canonical metrics."""
-    src = os.path.join(paths["results_root"], spec.alias_of,
+    root = _resolve_alias_root(spec.alias_of)
+    src = os.path.join(paths["results_root"], root,
                        "metrics_summary.json")
     if not os.path.isfile(src):
         return None
@@ -1991,6 +2094,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                     help="gallery PC: build all reference embedding caches "
                          "(no queries/ablations) + a provenance manifest to "
                          "ship to the eval PC")
+    ap.add_argument("--bench-gedi", type=int, default=0, metavar="N",
+                    help="time N GeDi+RANSAC fits and extrapolate the cost of "
+                         "full-database S_GeDi, then exit (see thesis O1)")
     ap.add_argument("--viz-check", type=int, default=0, metavar="N",
                     help="save a contact sheet of N query crops")
     ap.add_argument("--data-root", default=DEFAULTS["data_root"])
@@ -2028,6 +2134,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         object_ids = validate_inputs(paths, args.allow_partial_gallery)
         precompute_gallery(paths, object_ids,
                            resume=args.resume and not args.overwrite)
+        return
+
+    # ---- GeDi cost benchmark (thesis O1 feasibility claim) and exit ------
+    if args.bench_gedi:
+        object_ids = validate_inputs(paths, args.allow_partial_gallery)
+        gt = load_official_gt(paths["data_root"], paths["stage1_root"])
+        index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
+        bench_gedi(paths, index, object_ids, args.bench_gedi)
         return
 
     specs = select_ablations(args.ablations, args.all, args.with_geometry)

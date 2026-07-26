@@ -163,7 +163,10 @@ class PipelineConfig:
     # -------------------------------------------------------------------------
     # Schritt 6 – Fusion / Konsens
     # -------------------------------------------------------------------------
-    fusion_method: str = "weighted_sum"  # "weighted_sum" | "intersection" | "rank_fusion"
+    # "weighted_sum" | "intersection" | "rank_fusion" | "majority_voting"
+    # "rank_fusion" = Reciprocal Rank Fusion (Cormack et al., SIGIR 2009);
+    # it is the rank-based fusion evaluated as thesis ablation E6.
+    fusion_method: str = "weighted_sum"
     weight_clip: float = 0.3
     weight_dino: float = 0.4
     weight_ulip: float = 0.3
@@ -175,7 +178,12 @@ class PipelineConfig:
     # GeDi: https://github.com/fabiopoiesi/gedi
     # Paper: "Learning General and Distinctive 3D Local Deep Descriptors" (Poiesi & Boscaini, 2022)
     geometry_reranking_enabled: bool = True
-    geometry_reranking_signal: str = "gedi"  # "gedi" | "chamfer" | "both"
+    # "fitness" | "chamfer_unaligned" | "chamfer_ransac" | "chamfer_icp"
+    # (legacy aliases "gedi"/"chamfer"/"both" are still accepted).
+    # Default is the aligned distance: the thesis defines D_trim on the
+    # transformed observation, so an unaligned default would silently
+    # contradict Eq. eq:methods_trimmed_surface_distance.
+    geometry_reranking_signal: str = "chamfer_ransac"
     geometry_reranking_top_k: int = 5        # Shortlist size from fusion for B2 re-ranking
 
     # GeDi descriptor settings
