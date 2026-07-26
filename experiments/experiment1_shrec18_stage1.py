@@ -852,6 +852,72 @@ def _pass_provenance(pass_key: str, pipe_cfg, need) -> dict:
     }
 
 
+def _pc_query_cache_path(paths: dict, pipe_cfg) -> str:
+    """Cache path for pc-mode query point-cloud embeddings.
+
+    Same fingerprint fields as step5_shape_matching's gallery partial-view
+    cache (encoder identity + checkpoint + dims) — content-based, not
+    path/mtime-based, so it stays valid across --results-root and
+    --limit-queries changes and never collides between ulip_pc_rgb,
+    ulip_pc_xyz, and uni3d (different checkpoints/dims each).
+    """
+    import hashlib
+    encoder = getattr(pipe_cfg, "shape_encoder", "ulip2")
+    if encoder == "uni3d":
+        meta = (f"encoder=uni3d|model={pipe_cfg.uni3d_model_name}|"
+               f"npts={pipe_cfg.uni3d_num_points}|"
+               f"ckpt={os.path.basename(pipe_cfg.uni3d_checkpoint or '')}")
+    else:
+        meta = (f"encoder=ulip2|backbone={pipe_cfg.ulip2_backbone}|"
+               f"npts={pipe_cfg.ulip2_num_points}|"
+               f"colors={int(pipe_cfg.ulip2_use_colors)}|"
+               f"edim={pipe_cfg.ulip2_embed_dim}|"
+               f"ckpt={os.path.basename(pipe_cfg.ulip2_checkpoint or '')}")
+    digest = hashlib.sha256(meta.encode("utf-8")).hexdigest()[:16]
+    # Lives under stage1_root (dataset-scoped, same as queries_index.json),
+    # not results_root, so it survives switching --results-root between runs.
+    cache_dir = os.path.join(paths["stage1_root"], "query_pc_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"pc_query_cache_{digest}.pt")
+
+
+def _load_or_build_pc_query_cache(paths: dict, pipe_cfg, index: List[dict],
+                                  shape_m) -> Dict[str, "torch.Tensor"]:
+    """Load (or build+save) query point-cloud embeddings for a pc-mode pass.
+
+    Mirrors eval_common.pre_encode_ulip_queries' cache-then-encode pattern
+    for the image branch, extended to the point-cloud branch, which
+    previously had no cache at all — this is the expensive step (one
+    point-cloud forward pass per query, not batched), so this is worth far
+    more than the image-branch cache in wall-clock time saved on reruns.
+    """
+    import torch
+
+    cache_path = _pc_query_cache_path(paths, pipe_cfg)
+    if os.path.isfile(cache_path):
+        print(f"[pc-query-cache] loading {cache_path}...")
+        cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+        missing = [q for q in index if q["id"] not in cache]
+        if not missing:
+            print(f"[pc-query-cache] {len(cache)} embeddings loaded.")
+            return cache
+        print(f"[pc-query-cache] {len(missing)}/{len(index)} queries "
+              f"missing from cache — encoding those.")
+    else:
+        cache = {}
+        missing = index
+
+    from tqdm import tqdm
+    for q in tqdm(missing, desc="pc-query pre-enc", unit="query"):
+        data = np.load(q["npz"])
+        emb = shape_m.encode_pointcloud(data["points"], colors=data["colors"])
+        cache[q["id"]] = emb.detach().cpu()
+
+    torch.save(cache, cache_path)
+    print(f"[pc-query-cache] saved {len(cache)} embeddings -> {cache_path}")
+    return cache
+
+
 def precompute_gallery(paths: dict, object_ids: List[str],
                        resume: bool) -> None:
     """Build every gallery *reference* cache with no query scoring.
@@ -1005,6 +1071,18 @@ def run_pass(pass_key: str, paths: dict, index: List[dict],
             os.makedirs(os.path.dirname(cache_img), exist_ok=True)
             torch.save(ulip_img_cache, cache_img)
 
+    # --- point-cloud query cache (pc-mode passes) --------------------------
+    # Unlike the cross-modal image branch above, this had NO cache at all:
+    # every pc-mode pass (ulip_pc_rgb, ulip_pc_xyz, uni3d) re-encoded every
+    # query's point cloud from scratch, every single run — the single most
+    # expensive step in the whole ablation grid (~1-2s/query, one at a time,
+    # no batching). Keyed by encoder config (not path/mtime), same fields as
+    # the gallery partial-view cache, so ulip_pc_rgb/xyz/uni3d never collide
+    # and stay valid across --results-root / --limit-queries changes.
+    pc_query_cache = None
+    if "shape" in need and pdef["ulip2_mode"] != "cross":
+        pc_query_cache = _load_or_build_pc_query_cache(paths, pipe_cfg, index, shape_m)
+
     by_id = {q["id"]: q for q in index}
     store = {"pass": pass_key, "object_ids": object_ids, "queries": {}}
     for qi, qid in enumerate(qids):
@@ -1038,9 +1116,7 @@ def run_pass(pass_key: str, paths: dict, index: List[dict],
                     qe = shape_m.encode_image(roi or Image.open(q["png"]))
                 qe = qe.to(pipe_cfg.device)
             else:
-                data = np.load(q["npz"])
-                qe = shape_m.encode_pointcloud(
-                    data["points"], colors=data["colors"])
+                qe = pc_query_cache[qid].to(pipe_cfg.device)
             with torch.no_grad():
                 sims = (qe.float() @ shape_big.T).squeeze(0).float().cpu()
             # partial refs: multi-view pooling over the first SHAPE_AGG_VIEWS
