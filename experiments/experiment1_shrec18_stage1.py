@@ -543,6 +543,48 @@ def _render_query_splat(points, colors, n, u, v, size: int):
     return img
 
 
+def _render_query_surface(mesh, n, u, v, size: int,
+                          n_samples: int = 200000, seed: int = 0):
+    """Headless SOLID-surface render — pure numpy, no GL.
+
+    The raw SHREC'18 query scans carry only ~10^3 vertices, so splatting the
+    vertices alone leaves a dotted, holey cloud that does not read as a rigid
+    segmented object (bad crop for the DINOv2/CLIP/SigLIP appearance
+    channels).  Here we area-weight-sample points *on the triangle faces*
+    (barycentric), so the whole surface is covered, then reuse the z-buffered
+    point splatter.  The result is a filled, shaded object crop.
+
+    Deterministic (fixed ``seed``) so each query renders identically on every
+    run/machine.  Returns ``None`` if the mesh has no usable faces (caller
+    then falls back to vertex splatting).
+    """
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.triangles)
+    if len(faces) == 0 or len(verts) == 0:
+        return None
+    vcols = (np.asarray(mesh.vertex_colors, dtype=np.float32)
+             if mesh.has_vertex_colors()
+             else np.full((len(verts), 3), 0.5, dtype=np.float32))
+    tri = verts[faces]                                   # (F, 3, 3)
+    areas = 0.5 * np.linalg.norm(
+        np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+    total = float(areas.sum())
+    if total <= 0:
+        return None
+    rng = np.random.RandomState(seed)
+    fidx = rng.choice(len(faces), size=n_samples, p=areas / total)
+    r1 = np.sqrt(rng.random_sample(n_samples).astype(np.float32))
+    r2 = rng.random_sample(n_samples).astype(np.float32)
+    bary = np.stack([1.0 - r1, r1 * (1.0 - r2), r1 * r2], axis=1)  # (S, 3)
+    fv = faces[fidx]                                     # (S, 3)
+    s_pts = (bary[:, :, None] * verts[fv]).sum(axis=1)   # (S, 3)
+    s_cols = (bary[:, :, None] * vcols[fv]).sum(axis=1)  # (S, 3)
+    # Keep the raw vertices too so silhouette edges stay crisp.
+    pts = np.concatenate([verts, s_pts], axis=0)
+    cols = np.concatenate([vcols, s_cols], axis=0)
+    return _render_query_splat(pts, cols, n, u, v, size)
+
+
 def _crop_to_content(img: np.ndarray, margin: int = 8) -> np.ndarray:
     mask = np.any(np.abs(img.astype(np.int16) - _GREY) > 6, axis=2)
     if not mask.any():
@@ -623,13 +665,24 @@ def prepare_queries(data_root: str, stage1_root: str, gt: dict,
         n, u, v = _view_basis(pts, nrm)
 
         img = None
-        if offscreen_ok and mesh.has_triangles():
+        # Primary: pure-numpy solid-surface render from the mesh faces (no GL,
+        # deterministic) — gives a filled rigid-object crop for the appearance
+        # encoders instead of the sparse dotted vertex splat.
+        if mesh.has_triangles():
+            try:
+                img = _render_query_surface(mesh, n, u, v, size)
+            except Exception as exc:
+                print(f"[prepare] surface render failed ({exc}); "
+                      f"trying other renderers.")
+        # Optional GL path (only if libEGL is present and forced on).
+        if img is None and offscreen_ok and mesh.has_triangles():
             try:
                 img = _render_query_offscreen(mesh, n, size)
             except Exception as exc:
                 print(f"[prepare] OffscreenRenderer unavailable ({exc}); "
                       f"falling back to point splatting for all queries.")
                 offscreen_ok = False
+        # Fallback: vertex point-splat (face-less clouds).
         if img is None:
             img = _render_query_splat(pts, cols, n, u, v, size)
         Image.fromarray(_crop_to_content(img)).save(png)
