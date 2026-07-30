@@ -145,6 +145,11 @@ class GeometryCandidate:
     fused_score: float = 0.0
     gedi_score: float = 0.0
     chamfer_score: float = float("inf")
+    # Populated only under rerank(all_aligned=True): D_trim under the RANSAC
+    # transform and under the ICP-refined transform, both measured from the
+    # SAME registration.  See the `all_aligned` docstring for why.
+    d_ransac: float = float("inf")
+    d_icp: float = float("inf")
     geometry_score: float = 0.0
     ransac_transformation: Optional[np.ndarray] = None
     ransac_fitness: float = 0.0
@@ -210,6 +215,7 @@ class GeometryReRanker:
         fused_candidates: List[FusedCandidate],
         observed_pcd,
         signal: Optional[str] = None,
+        all_aligned: bool = False,
     ) -> GeometryReRankingResult:
         """Re-rank fused candidates using geometric signals.
 
@@ -217,6 +223,22 @@ class GeometryReRanker:
             fused_candidates: Shortlist from Step B1 fusion.
             observed_pcd: Open3D PointCloud of the observed partial object.
             signal: Override for config.geometry_reranking_signal.
+            all_aligned: Also populate `d_ransac` and `d_icp` on every
+                candidate, so that the three aligned signals (fitness,
+                chamfer_ransac, chamfer_icp) can be read off ONE registration.
+
+                GeDi + RANSAC costs ~35 s/query and dominates everything else
+                (the trimmed distance alone, measured as the chamfer_unaligned
+                ablation, is ~0.5 s/query; ICP is local refinement and far
+                cheaper than feature RANSAC).  Scoring the three signals in
+                separate passes therefore pays that 35 s three times to obtain
+                three cheap readouts of the same alignment — ~60 h instead of
+                ~26 h over the 2,101 SHREC'18 queries.
+
+                Note this makes fitness and d_ransac come from the SAME RANSAC
+                run rather than from independent stochastic ones.  That is a
+                deliberate change: they are then two readouts of one alignment,
+                which is what the E2 grid is meant to compare.
 
         Returns:
             GeometryReRankingResult with re-ranked candidates.
@@ -236,8 +258,9 @@ class GeometryReRanker:
         )
 
         voxel_size = self.config.voxel_size or 0.005
-        needs_registration = signal in _ALIGNED_SIGNALS or signal == "fitness"
-        needs_distance = signal in _DISTANCE_SIGNALS
+        needs_registration = (signal in _ALIGNED_SIGNALS or signal == "fitness"
+                              or all_aligned)
+        needs_distance = signal in _DISTANCE_SIGNALS or all_aligned
 
         # Compute GeDi descriptors for observed cloud (once)
         obs_gedi = None
@@ -259,6 +282,8 @@ class GeometryReRanker:
                 signal = "chamfer_unaligned"
                 needs_registration = False
                 needs_distance = True
+                # No alignment means no aligned distances to harvest.
+                all_aligned = False
 
         # Downsample observed cloud for the surface distance (once)
         obs_down = None
@@ -301,7 +326,8 @@ class GeometryReRanker:
 
                 # Optional ICP refinement (thesis: T_j = T_ICP if it
                 # succeeds, else T_RANSAC).
-                if signal == "chamfer_icp" and not gc.registration_failed:
+                if ((signal == "chamfer_icp" or all_aligned)
+                        and not gc.registration_failed):
                     icp = self._icp_refine(
                         observed_pcd, cad_pcd, gc.ransac_transformation,
                     )
@@ -309,7 +335,12 @@ class GeometryReRanker:
                         gc.icp_transformation = np.array(icp.transformation)
                         gc.icp_fitness = float(icp.fitness)
                         gc.icp_inlier_rmse = float(icp.inlier_rmse)
-                        gc.transformation = gc.icp_transformation
+                        # T_j for the ICP signal only.  Under all_aligned with
+                        # a non-ICP requested signal, the reported transform
+                        # must stay T_RANSAC — harvesting d_icp on the side
+                        # must not change what `signal` means.
+                        if signal == "chamfer_icp":
+                            gc.transformation = gc.icp_transformation
 
             # --- Trimmed one-sided surface distance -----------------------
             if needs_distance and obs_down is not None:
@@ -318,19 +349,43 @@ class GeometryReRanker:
                     # registration — it would be silently incomparable.
                     gc.chamfer_score = float("inf")
                 else:
-                    src = obs_down
-                    if signal in _ALIGNED_SIGNALS and gc.transformation is not None:
-                        # Transform the OBSERVATION into the CAD frame; this
-                        # is the T_j of Eq. eq:methods_trimmed_surface_distance
-                        # and matches the one-sided obs->CAD direction below.
-                        src = o3d.geometry.PointCloud(obs_down)
-                        src.transform(gc.transformation)
                     cad_down = cad_pcd.voxel_down_sample(voxel_size)
-                    gc.chamfer_score = trimmed_chamfer_distance(
-                        np.asarray(src.points),
-                        np.asarray(cad_down.points),
-                        trim_ratio=self.config.chamfer_trim_ratio,
-                    )
+
+                    def _d_trim(transform) -> float:
+                        """D_trim with the OBSERVATION carried into the CAD
+                        frame by `transform` (None = unaligned diagnostic).
+                        This is the T_j of
+                        Eq. eq:methods_trimmed_surface_distance and matches
+                        the one-sided obs->CAD direction."""
+                        src = obs_down
+                        if transform is not None:
+                            src = o3d.geometry.PointCloud(obs_down)
+                            src.transform(transform)
+                        return trimmed_chamfer_distance(
+                            np.asarray(src.points),
+                            np.asarray(cad_down.points),
+                            trim_ratio=self.config.chamfer_trim_ratio,
+                        )
+
+                    if all_aligned:
+                        # Both aligned distances off the one registration.
+                        # ICP falling back to T_RANSAC mirrors the thesis rule
+                        # T_j = T_ICP if it succeeds, else T_RANSAC.
+                        gc.d_ransac = _d_trim(gc.ransac_transformation)
+                        gc.d_icp = (_d_trim(gc.icp_transformation)
+                                    if gc.icp_transformation is not None
+                                    else gc.d_ransac)
+
+                    if signal == "chamfer_ransac":
+                        gc.chamfer_score = (gc.d_ransac if all_aligned
+                                            else _d_trim(gc.ransac_transformation))
+                    elif signal == "chamfer_icp":
+                        gc.chamfer_score = (gc.d_icp if all_aligned
+                                            else _d_trim(gc.transformation))
+                    elif signal == "chamfer_unaligned":
+                        gc.chamfer_score = _d_trim(None)
+                    # signal == "fitness": no distance is part of that signal,
+                    # so chamfer_score stays inf even under all_aligned.
 
             # Combined geometry score
             gc.geometry_score = self._compute_geometry_score(gc, signal)

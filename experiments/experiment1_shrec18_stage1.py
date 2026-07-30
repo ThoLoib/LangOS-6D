@@ -1559,6 +1559,10 @@ def make_fusion_module(spec: AblationSpec):
 
 GEOM_VOXEL = 0.02   # unit-sphere-scale voxel size for B2 (repo default
                     # 0.002 assumes metric tabletop scenes)
+GEDI_RETRIES = 4    # retries when the GeDi service drops out mid-run
+GEDI_WAIT_S = 300   # how long to wait for it to come back before aborting
+QUERY_MAX_PTS = 500_000   # cap on query cloud size fed to GeDi/RANSAC
+                          # (larger clouds crash the service; see _query_cloud)
 
 
 class _GeometryEngine:
@@ -1637,19 +1641,53 @@ class _GeometryEngine:
 
     def gedi_available(self) -> bool:
         if self._gedi_available is None:
-            try:
-                from pipeline.gedi_descriptors import GeDiDescriptorModule
-                from pipeline.config import PipelineConfig
-                self._gedi_available = bool(
-                    GeDiDescriptorModule(PipelineConfig()).available)
-            except Exception as exc:
-                print(f"[geometry] GeDi probe failed: {exc}")
-                self._gedi_available = False
+            # A SINGLE 5s probe is not enough to decide whether to skip four
+            # ablations: on 2026-07-28 it timed out against a service that was
+            # healthy throughout (the GeDi Flask server is single-threaded, so
+            # /health blocks behind any in-flight descriptor call, and a
+            # cold container's first DNS lookup adds to that).  The cost of a
+            # false negative here is silently dropping E2_fitness /
+            # chamfer_ransac / chamfer_icp / O1c from the grid, so retry.
+            self._gedi_available = self._wait_for_gedi(GEDI_WAIT_S)
             if not self._gedi_available:
                 print("[geometry] GeDi service unreachable "
                       "(docker compose up -d gedi) — GeDi-signal "
                       "ablations will be skipped.")
         return self._gedi_available
+
+    def _gedi_healthy(self) -> bool:
+        """LIVE probe of the GeDi service (unlike the cached gedi_available).
+
+        Needed to tell a genuine registration failure apart from the service
+        having died mid-run.  The two are indistinguishable at the call site
+        — both surface as ``registration_failed`` — but only the first may be
+        written to the resumable cache.
+        """
+        try:
+            import requests
+            from pipeline.config import PipelineConfig
+            url = getattr(PipelineConfig(), "gedi_url", "http://gedi:5060")
+            # Generous timeout: the service is a single-threaded Flask dev
+            # server, so /health queues behind any in-flight descriptor
+            # computation (~5s each) rather than answering immediately.
+            return requests.get(f"{url}/health", timeout=30).status_code == 200
+        except Exception:
+            return False
+
+    def _wait_for_gedi(self, timeout_s: int) -> bool:
+        """Block until the GeDi service answers again, or give up.
+
+        Covers the compose auto-restart window (model reload ~60-90s).
+        """
+        import time
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self._gedi_healthy():
+                print("[geometry] GeDi is back — resuming.", flush=True)
+                time.sleep(5)          # let the model finish warming up
+                return True
+            time.sleep(10)
+        return False
 
     def _query_cloud(self, npz_path: str):
         import open3d as o3d
@@ -1659,6 +1697,22 @@ class _GeometryEngine:
         r = np.linalg.norm(pts, axis=1).max()
         if r > 0:
             pts /= r
+        # Cap only the pathological clouds.  SHREC'18 scans run from 540 to
+        # 5.7M points (median 27.5k); 145 of the 2,101 exceed 1M, and handing
+        # one of those to GeDi kills the service outright (silent `exit=0`,
+        # observed 5x on query 0d2ff0fffe... / 4.45M points).
+        #
+        # Deliberately NOT voxel_down_sample(GEOM_VOXEL): that was tried on
+        # 2026-07-28 and, while it did stop the crashes, it decimated every
+        # query to 0.5-14k points and RANSAC then ran to its iteration limit
+        # on the sparse correspondences — 40 min/query vs 26 s (~58 days for
+        # the grid).  Dense queries are what makes registration converge fast.
+        # 999k points is the largest cloud observed to work; 500k keeps a 2x
+        # margin under that and 9x under the smallest crash.
+        if len(pts) > QUERY_MAX_PTS:
+            sel = np.random.default_rng(0).choice(      # deterministic
+                len(pts), QUERY_MAX_PTS, replace=False)
+            pts = pts[np.sort(sel)]
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
         pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(
             radius=GEOM_VOXEL * 4, max_nn=30))
@@ -1681,12 +1735,23 @@ class _GeometryEngine:
         """
         # Field names are signal-scoped; "fitness" is shared by every signal
         # that performs a registration (it is the same RANSAC either way).
+        #
+        # The three ALIGNED signals all require the same GeDi + RANSAC step,
+        # which at ~35 s/query dominates everything else (the trimmed distance
+        # on its own — the chamfer_unaligned ablation — is ~0.5 s/query, and
+        # ICP is local refinement).  So they are computed together in one pass
+        # (rerank(all_aligned=True)) and cached together: whichever aligned
+        # ablation runs first pays the registration, the other two are free
+        # cache hits.  Scoring them separately cost ~60 h instead of ~26 h
+        # over the 2,101 official queries.
+        _ALIGNED_FIELDS = ("fitness", "d_ransac", "d_icp")
         need_fields = {
-            "fitness": ("fitness",),
+            "fitness": _ALIGNED_FIELDS,
             "chamfer_unaligned": ("d_unaligned",),
-            "chamfer_ransac": ("fitness", "d_ransac"),
-            "chamfer_icp": ("fitness", "d_icp"),
+            "chamfer_ransac": _ALIGNED_FIELDS,
+            "chamfer_icp": _ALIGNED_FIELDS,
         }[signal]
+        all_aligned = need_fields is _ALIGNED_FIELDS
         missing = [c for c in cad_ids
                    if any(self.cache.get((qid, c), {}).get(f) is None
                           for f in need_fields)]
@@ -1697,22 +1762,60 @@ class _GeometryEngine:
             cands = [FusedCandidate(object_id=c, fused_score=0.0,
                                     cad_model_path=c) for c in missing]
             rr.config.geometry_reranking_top_k = len(cands)
-            res = rr.rerank(cands, obs, signal=signal)
+            # A dead GeDi service fails every fit, and those failures must NOT
+            # be cached as if they were real (the B2 policy then ranks the
+            # candidate last, permanently).  On 2026-07-27 this poisoned 2,845
+            # pairs across 10h before anyone noticed.
+            #
+            # The service also restarts on its own (compose `restart:
+            # unless-stopped`) and needs ~60-90s to reload the model, so a
+            # blanket abort would end a 15h run over a 90s blip.  Wait for it
+            # to come back and retry; abort only if it stays down.
+            for attempt in range(1, GEDI_RETRIES + 1):
+                res = rr.rerank(cands, obs, signal=signal,
+                                all_aligned=all_aligned)
+                n_bad = sum(1 for gc in res.candidates
+                            if gc.registration_failed)
+                if (signal == "chamfer_unaligned" or not n_bad
+                        or self._gedi_healthy()):
+                    break                      # genuine result — cache it
+                print(f"[geometry] GeDi unreachable ({n_bad}/"
+                      f"{len(res.candidates)} fits failed for query {qid}) — "
+                      f"waiting for it to come back "
+                      f"(attempt {attempt}/{GEDI_RETRIES})", flush=True)
+                if not self._wait_for_gedi(GEDI_WAIT_S):
+                    raise SystemExit(
+                        f"[geometry] GeDi service still down after "
+                        f"{GEDI_WAIT_S}s — aborting rather than caching bogus "
+                        f"failures.\n"
+                        f"  Restart it:  docker compose up -d gedi\n"
+                        f"  Then re-run; completed pairs are already cached.")
+            else:
+                raise SystemExit(
+                    f"[geometry] GeDi kept failing across {GEDI_RETRIES} "
+                    f"attempts on query {qid} — aborting rather than caching "
+                    f"bogus failures.")
             dist_field = {"chamfer_unaligned": "d_unaligned",
                           "chamfer_ransac": "d_ransac",
                           "chamfer_icp": "d_icp"}.get(signal)
+
+            def _num(x):
+                return None if x is None or np.isinf(x) else float(x)
+
             for gc in res.candidates:
                 rec = dict(self.cache.get((qid, gc.object_id),
                                           {"qid": qid, "cad": gc.object_id}))
                 rec["failed"] = bool(gc.registration_failed)
                 if "fitness" in need_fields:
                     rec["fitness"] = float(gc.ransac_fitness)
-                if dist_field:
-                    rec[dist_field] = (None if np.isinf(gc.chamfer_score)
-                                       else float(gc.chamfer_score))
-                if signal == "chamfer_icp":
+                if all_aligned:
+                    # One registration, all three aligned readouts.
+                    rec["d_ransac"] = _num(gc.d_ransac)
+                    rec["d_icp"] = _num(gc.d_icp)
                     rec["icp_fitness"] = float(gc.icp_fitness)
                     rec["icp_rmse"] = float(gc.icp_inlier_rmse)
+                elif dist_field:
+                    rec[dist_field] = _num(gc.chamfer_score)
                 self.cache[(qid, gc.object_id)] = rec
                 self._append_cache(rec)
         return {c: self.cache.get((qid, c), {}) for c in cad_ids}
