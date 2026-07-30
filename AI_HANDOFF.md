@@ -1,6 +1,44 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-23
+> Last updated: 2026-07-30
+
+## Update 2026-07-30 (Stage-1 grid: 31 of 33 cells; geometry cells done)
+
+### Where the run stands
+- **31 of 33 cells complete** on all 2,101 official queries. Outputs in `object_retrieval/results_shrec18_stage1/`.
+- **Only `O1c_gedi_post_fusion` remains.** It shortlists on text+view (`E1b`) rather than the BASE fusion, so 6,055 of its 10,505 pairs (57.6%) were never registered — ~13 h compute, ~16 h on the duty cycle. `O1d_shape_plus_gedi` is an alias of `E2_fitness` and materialises for free at aggregation.
+- **Resume is free** (`--resume` + the per-pair cache): `docker compose up -d gedi && bash _geom_duty.sh` (battery) or `bash _run_stage1_geom.sh` (mains). Already-cached pairs are skipped instantly.
+- **`stage1_summary.csv` / `.tex` / `best_config.json` are stale** — they predate the geometry cells. A resume refreshes them at the end of the run; regenerate sooner by running the script with any already-complete ablation selected.
+
+### Results
+- **Best: `O5_xyz_only`** (nDCG 0.6106 / P 0.2850 / mAP 0.1740). Geometry did **not** displace it: the best geometry arm is `E2_chamfer_ransac` at 0.6028.
+- Geometry cells: `chamfer_ransac` 0.6028 · `chamfer_icp` 0.6027 · `fitness` 0.6010 · `none` 0.5879 (= BASE) · `chamfer_unaligned` 0.5850. Re-ranking is worth **+0.015 nDCG**; the unaligned control correctly lands *below* baseline, so the gain is attributable to the alignment. **ICP buys nothing** (Δ0.0001 for ~5.4 s/query) — ship RANSAC-only in the frozen config.
+- **The correctness check passed exactly**: `E2_none` is bit-identical to `E1c_full_fusion` on all seven metrics (nDCG `0.5878959504080713`). Trust the geometry numbers.
+- **Report nDCG only for the re-ranking arms.** P/R/F1/NNT1/NNT2 are identical (0.2686) across *all six* E2 cells — the official metrics cut at `f` ≈ 165 while geometry permutes only the top 5, so set-membership metrics are provably blind to B2. See DECISIONS 2026-07-30.
+- Other takeaways: **V16 is as good as V42** (0.5858 vs 0.5879, noise floor ~±0.005) so the view budget can be cut 2.6×; any shortlisting loses to full-database fusion; DINOv2 ≫ SigLIP; weighted-sum > RRF; Uni3D ≈ ULIP-2.
+- Write-up caveat: the O5 XYZ-vs-RGB arms use **different checkpoints** (512-d PointBERT vs 1280-d ViT-g), so colour and capacity are confounded — state it, don't claim colour alone.
+- Cross-checked against the tessa-PC results: every conclusion replicates, max Δ 0.0096 nDCG. One systematic gap — the text channel is weaker locally (P 0.1319 vs 0.1419) — traces to the query RGB crops. There is **no spec to appeal to**: SHREC'18 is a mesh-to-mesh track and the raw distribution contains no query-rendering instructions, so the crop viewpoint is an OSCAR design decision to document.
+- Reading the cache: `failed` counts from `_duty_watch.sh` are **raw records** and over-count. A failed pair stores `d_ransac: null`, so every window legitimately retries it and appends another record. Dedupe by `(qid, cad)` — the true state is 5 failed pairs on **1** query (`bf977dde…`, 3,501 pts, planarity 0.334), i.e. a genuinely hard scan, not a service fault.
+
+### Running the geometry cells (`--with-geometry`)
+- Needs the gedi service: `docker compose up -d gedi` → healthy in ~15 s (healthcheck now uses `python3 urllib`, **not** `curl`, which the image lacks).
+- Launch detached: `bash _run_stage1_geom.sh` (`docker compose run -d --name stage1_geom … --all --resume --with-geometry`). Detaching matters — a killed foreground client takes the log plumbing with it while the container keeps running.
+- Watch with `bash _geom_watch.sh`: reports progress **per signal** plus gedi's health and restart count. Do not trust an aggregate pair count — it conflates the cheap `chamfer_unaligned` control (~0.5 s/query, no GeDi) with the ~35 s/query aligned signals, and has twice produced a badly inflated reading. `bash _geom_stat.sh` gives the same breakdown on demand.
+- Cost: **~35 s/query** (measured over 83 min, 143 queries), essentially all of it GeDi + RANSAC. The three aligned signals (`fitness`, `chamfer_ransac`, `chamfer_icp`) now share **one** registration via `rerank(all_aligned=True)`, so the first aligned ablation pays it and the other two are cache hits — ~26 h for the six cells instead of ~60 h (DECISIONS 2026-07-28). E2_* reuse the BASE top-5; `O1c` has its own (text+view) shortlist and needs a second pass.
+- When the cells finish, **check `E2_none` == BASE (nDCG 0.5879) exactly** before trusting any geometry number. It shares the whole code path but applies no geometry, so a mismatch localises the bug immediately.
+- Per-query progress is not printed, and `docker logs` is buried in Open3D `Too few correspondences` / `Read geometry::Image failed …jpg` warnings (the latter are missing CAD textures — harmless for point-cloud geometry). Track `_cache/geometry_scores.jsonl` instead.
+
+### Hard-won operational notes
+- **WSL memory**: `C:\Users\tholo\.wslconfig` now sets `memory=20GB, swap=8GB`. The 15 GB default let the kernel OOM-kill GeDi mid-run. Changing it needs `wsl --shutdown`.
+- **A dead GeDi no longer corrupts the cache.** The run waits for it to come back (`GEDI_WAIT_S=300` per attempt × `GEDI_RETRIES=4`) and aborts only if it stays down (see DECISIONS 2026-07-28). If it does abort, restart gedi and re-run; completed pairs are kept.
+- **GeDi is flaky.** Two observed failure modes: OOM under memory pressure (fixed by `.wslconfig`), and a clean `exit=0` ~1 min after startup with no traceback (cause unknown — the Flask dev server logs nothing). `restart: unless-stopped` recovers both in ~90 s, which is *why* the retry loop exists. Check `docker inspect -f '{{.RestartCount}}' oscar-gedi-1` when results look odd.
+- If a run *did* predate that fix, purge with `bash _geom_purge_failed.sh [root]` (backs up first).
+- **Docker Desktop WSL integration** can vanish after a WSL service hiccup (`docker` gone from the distro while the engine is fine from Windows). `DockerCli.exe -SwitchLinuxEngine` does not fix it; a full Docker Desktop restart does.
+  - **Root cause identified 2026-07-29: Docker Desktop's Resource Saver.** It stops the WSL engine a few minutes after the last container exits, and tearing it down removes the `docker` CLI bind-mount from the Ubuntu distro. Symptom is `/usr/bin/docker` failing as **`Input/output error`** and then **`No such file or directory`**, while `docker version` from PowerShell answers normally (server 29.6.1) — the engine is fine, only the WSL integration is gone. `wsl -l -v` shows `docker-desktop` **Stopped**.
+  - Restarting Docker Desktop restores it, but that is a **workaround, not a fix** — it breaks again on the next idle period. Waking the engine (`docker.exe info`, which returns fine) does **not** rebuild the Ubuntu mount.
+  - **Durable fix: drive Docker from WSL via the Windows binary**, `/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe`. Fixed path, always present, works whether or not the integration is up. It emits CRLF — `tr -d '\r'` every captured value or comparisons silently fail.
+  - Do **not** use `docker compose` through that binary: the compose file's relative bind mounts would resolve against Windows paths instead of the WSL ones the containers use. Reuse already-created containers instead (`docker start`), whose mounts (`/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/…`) survive start/stop. `docker start` re-runs the container's original command, and the experiment is `--resume`, so a window picks up exactly where the last one stopped.
+- **Battery duty cycle**: `bash _geom_duty.sh` runs the geometry experiment 2 h on / 30 min off (`ON`/`OFF` env vars), stopping `stage1_geom` **and** `oscar-gedi-1` during idle — gedi holds the GeDi model on the GPU and draws power even idle. Uses `docker.exe` + `docker start` for the reason above. It waits for gedi to report `healthy` and **skips the window** if it does not, rather than running against a dead service; it polls the run container so a finished experiment ends the cycle instead of relaunching every 2.5 h; and it exits immediately if either container is missing rather than idling forever. Watch with `_duty_watch.sh` (the plain `_geom_watch.sh` exits at the first idle phase, since it treats a stopped container as "run over"). Stop with `pkill -f _geom_duty.sh` then `docker.exe stop stage1_geom oscar-gedi-1`.
 
 ## Update 2026-07-23 (Stage-1: official eval + two-PC precompute)
 

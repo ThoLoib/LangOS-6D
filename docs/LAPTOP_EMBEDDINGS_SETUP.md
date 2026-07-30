@@ -16,8 +16,10 @@ Place under the container's `/ulip/checkpoints/` and `/uni3d/modelzoo/uni3d-g/`:
 
 - `ulip2_pointbert_10k.pt`  (ULIP-2 colored 10k, xyzrgb, 1280-d) — you already have this.
 - `ulip2_pointbert_8k_xyz.pt`  ← ULIP-2 XYZ-only arm (O5). **New — you must mirror this.**
-  Source: HF `SFXX/ulip` → `ULIP-2/pretrained_models/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt`
-  (input_dim=3, 8192 pts, 512-d). Rename to `ulip2_pointbert_8k_xyz.pt`.
+  Source: HF **dataset** repo `SFXX/ulip` (NOT a model repo — the `/SFXX/ulip` *model*
+  endpoint 401s; use the `datasets/` path, which is public, no token needed):
+  `https://huggingface.co/datasets/SFXX/ulip/resolve/main/ULIP-2/pretrained_models/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt`
+  (865,786,489 bytes; input_dim=3, 8192 pts, 512-d). Rename to `ulip2_pointbert_8k_xyz.pt`.
 - `uni3d-g/model.pt`  ← Uni3D-g (E7). Source: HF `BAAI/Uni3D` → `modelzoo/uni3d-g/model.pt` (2.03 GB).
 
 ## 2. Uni3D repo + the two inference patches (the FPS portability crux)
