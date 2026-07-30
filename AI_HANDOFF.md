@@ -1,6 +1,45 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-23
+> Last updated: 2026-07-30
+
+## Update 2026-07-30 (HPR occlusion param + upsample jitter; SHREC'18 v2 slot; MI3DOR full-mesh ablation)
+
+### Partial point clouds: HPR was too permissive (occlusion leak)
+- `rendering/generate_partial_pointclouds.py` used a fixed Katz HPR radius exponent `param=3.2`
+  (`radius = r.max()·10^param`). Ground-truth (angular z-buffer) occlusion tests on SHREC'18
+  samples showed it **leaks occluded points** on every object class (~2–11%, worst on open/concave
+  shapes) — visible as points on hidden back surfaces. Lowering to **2.8** removes most of the leak
+  on solid/thin objects with minimal over-pruning; 2.4 is stricter but over-prunes thin panels.
+- The HPR param and an **upsample jitter** are now **configurable** (defaults reproduce the old
+  behaviour): `--hpr-param` (default `3.2`) and `--jitter-std` (default `0.0`). Jitter adds small
+  Gaussian noise (σ) to the duplicated points created when a sparse view is upsampled to 10k, so
+  PointBERT's FPS+kNN don't collapse on coincident duplicates — the same treatment step5 already
+  applies to sparse *query* clouds but which the gallery never received (its duplication happens at
+  generation, one stage before step5's jitter). Threaded through `sample_visible_surface` /
+  `process_object` and the CLI.
+- **Per-dataset wiring** in `rendering/onboard_dataset.sh`: default `HPR_PARAM=3.2 / JITTER_STD=0`;
+  the new `shrec18_v2` case sets `2.8 / 0.001`. MI3DOR and all existing datasets are unchanged.
+
+### `shrec18_v2` — fresh corrected SHREC'18 onboard slot
+- The existing `shrec18_fixed` renders on Drive predate the 2026-07-28 render fix (`ff1e0a55`,
+  weld+outward-normals/lighting/color) and its partials had the full-mesh bug, so a full re-onboard
+  is warranted. Rather than overwrite, `shrec18_v2` is a **new slot** (keeps `shrec18_fixed` for
+  comparison): same CAD source, renders via current `rendering.py` (textures + SHREC alpha/z-fight
+  fixups), partials at HPR 2.8 + jitter, fresh descriptions, full embedding pass set.
+- Orchestrated by `oscar_queue_ctl/run_shrec18_v2.sh` (onboard → embed all passes incl. `ulip_fullmesh`
+  → cache sync → verify; **keeps renders local** since the Stage-1/GeDi eval reads them). Armed to
+  auto-start after MI3DOR via the `shrec18v2-arm` user unit (`oscar_queue_ctl/arm_shrec18_v2.sh`).
+
+### MI3DOR full-mesh cross ablation (`ulip_fullmesh`)
+- MI3DOR gallery embeds `base,siglip` **plus `ulip_fullmesh`**: an ablation comparing cross-mode
+  RGB→3D retrieval with a **partial-view** gallery (`base`) vs a **full CAD-mesh** gallery
+  (`ulip_fullmesh`) — same ULIP-2 colored cross space, geometry coverage is the isolated variable.
+  MI3DOR meshes map cleanly to gallery ids (3848/3848). MI3DOR partials stay at param 3.2 (already
+  onboarded); only SHREC'18 adopts 2.8+jitter.
+- Fixed a latent bug in `oscar_queue_ctl/preprocess_galleries.sh`: `--mesh-glob ''` is rejected by
+  `precompute_embeddings.py` argparse; per-dataset real mesh glob (or a non-matching placeholder) is
+  now passed. Also added `**/.ulip_cache_*.pt` to the object_database cache sync so the full-mesh
+  cache actually reaches Drive.
 
 ## Update 2026-07-23 (Stage-1: official eval + two-PC precompute)
 

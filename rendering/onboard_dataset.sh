@@ -111,6 +111,11 @@ fi
 IS_BOP=0
 BOP_SOURCE=""
 MESH_GLOB=""
+# Partial point-cloud (HPR) knobs. Defaults reproduce the legacy behaviour
+# (param 3.2, no jitter) so already-onboarded datasets (e.g. MI3DOR) are
+# unaffected. Per-dataset cases below may override them.
+HPR_PARAM="3.2"
+JITTER_STD="0"
 
 case "$DATASET" in
     ycbv_gso)
@@ -154,6 +159,24 @@ case "$DATASET" in
         IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18_fixed"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18_fixed/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        ;;
+    shrec18_v2)
+        # Full re-onboard with the 2026-07-28 render fix (weld+outward normals,
+        # lighting, color) AND the corrected HPR partial point clouds. Same CAD
+        # source as shrec18 ("shrec18" in the path triggers the z-fight/alpha
+        # fixups in rendering.py); fresh output slot so the stale shrec18_fixed
+        # (renders predate the fix, partials had the full-mesh bug) stays intact
+        # for before/after comparison.
+        CAD_DIR="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad"
+        IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18_v2"
+        DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18_v2/descriptions_attributes.json"
+        MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        # Corrected partial-PC settings: stricter HPR (2.8) removes the occluded
+        # points that leaked at 3.2, plus generation-time Gaussian jitter (0.001)
+        # to break the coincident duplicates created when a sparse view is
+        # upsampled to 10k (so PointBERT's FPS+kNN don't collapse on them).
+        HPR_PARAM="2.8"
+        JITTER_STD="0.001"
         ;;
     tless)
         IS_BOP=1
@@ -305,7 +328,10 @@ step_partial() {
     local args=(
         --images_dir "$IMAGES_DIR"
         --num_points "$NUM_POINTS"
+        --hpr-param "$HPR_PARAM"
+        --jitter-std "$JITTER_STD"
     )
+    log "HPR param=$HPR_PARAM, upsample jitter std=$JITTER_STD"
 
     if [[ -n "$MESH_GLOB" ]]; then
         args+=(--mesh-glob "$MESH_GLOB")

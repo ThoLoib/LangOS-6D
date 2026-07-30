@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-07-30 HPR occlusion param, upsample jitter, and SHREC'18 re-onboard slot
+
+Decision
+- **HPR radius exponent and upsample jitter are configurable, not hard-coded.** `generate_partial_pointclouds.py` gains `--hpr-param` (default 3.2, legacy) and `--jitter-std` (default 0.0, legacy). SHREC'18 adopts **`param=2.8` + `jitter=0.001`**; all previously-onboarded datasets keep 3.2/0. Rationale: ground-truth occlusion tests showed 3.2 leaks occluded points (worst on open/concave shapes); 2.8 removes most of it without over-pruning thin panels (2.4 over-prunes). Jitter gives gallery partials the same coincident-duplicate protection step5 already applies to sparse queries.
+- **MI3DOR stays at param 3.2, not regenerated.** It is already fully onboarded and its objects are mostly non-open; the ~2–4% leak was judged acceptable vs the cost of interrupting the in-flight embed. Note in the thesis that MI3DOR uses 3.2 and SHREC'18 uses 2.8.
+- **Corrected SHREC'18 goes to a NEW slot `shrec18_v2`, not overwriting `shrec18_fixed`.** Keeps the stale (pre-2026-07-28-render-fix, buggy-partial) `shrec18_fixed` for before/after comparison. `shrec18_v2` keeps renders local (Stage-1/GeDi eval reads them) instead of the delete-after gallery-preprocess flow.
+- **MI3DOR gallery adds `ulip_fullmesh`** so the thesis can compare cross-mode RGB→3D retrieval with a partial-view vs a full-mesh gallery (geometry coverage isolated).
+
+Rationale
+- Isolates the fix to the datasets that need it, preserves reproducibility of already-shipped caches, and avoids destroying comparison baselines.
+
+Alternatives Considered
+- Global param change + regenerate MI3DOR (rejected: interrupts in-flight work, no clear benefit for MI3DOR's shapes).
+- Overwrite `shrec18_fixed` (rejected: loses the before/after comparison).
+
 ## 2026-07-24 Uni3D-g (E7) + XYZ ULIP-2 (O5): cross-PC embedding portability
 
 Decision

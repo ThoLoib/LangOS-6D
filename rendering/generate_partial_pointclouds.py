@@ -108,6 +108,7 @@ def load_camera_matrix(cam_matrix_path: str) -> np.ndarray:
 def sample_visible_surface(
     mesh, cam_pos: np.ndarray, num_points: int,
     oversample_factor: int = 4, with_colors: bool = True,
+    hpr_param: float = 3.2, jitter_std: float = 0.0,
 ) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
     """Sample the surface visible from a camera position (true single-view partial).
 
@@ -132,7 +133,8 @@ def sample_visible_surface(
     points, face_indices = _trimesh.sample.sample_surface(mesh, n_sample)
     points = np.asarray(points)
 
-    vis_idx = hpr_visible_indices(points, np.asarray(cam_pos, dtype=float))
+    vis_idx = hpr_visible_indices(points, np.asarray(cam_pos, dtype=float),
+                                  param=hpr_param)
 
     vis_points = points[vis_idx].astype(np.float32)
     vis_faces = face_indices[vis_idx]
@@ -154,11 +156,21 @@ def sample_visible_surface(
     rng = np.random.RandomState(content_hash)
     n = len(vis_points)
     if n >= num_points:
+        # Downsample: uniform subset, no duplicates → no jitter needed.
         indices = rng.choice(n, num_points, replace=False)
+        vis_points = vis_points[indices]
     else:
+        # Upsample: sample with replacement. The duplicates are coincident,
+        # which would collapse PointBERT's FPS + kNN groupings, so (when
+        # enabled) add small Gaussian jitter to break them up — same rationale
+        # and magnitude as step5's _normalize_and_resample_pc (Qi et al. 2017).
+        # Positions only; colors are indexed unchanged. jitter_std=0 (default)
+        # reproduces the previous no-jitter behaviour.
         indices = rng.choice(n, num_points, replace=True)
-
-    vis_points = vis_points[indices]
+        vis_points = vis_points[indices]
+        if jitter_std > 0:
+            vis_points = (vis_points + rng.normal(
+                0.0, jitter_std, size=vis_points.shape)).astype(np.float32)
     if colors is not None:
         colors = colors[indices]
 
@@ -183,7 +195,8 @@ def _discover_view_indices(obj_images_dir: str, obj_id: str) -> list:
 
 def process_object(obj_id: str, cad_dir: str, images_dir: str,
                    num_points: int, overwrite: bool = False,
-                   mesh_path: Optional[str] = None) -> int:
+                   mesh_path: Optional[str] = None,
+                   hpr_param: float = 3.2, jitter_std: float = 0.0) -> int:
     """Generate partial point clouds for all views of one object.
 
     Auto-discovers all available camera matrices (view0, view1, ..., viewN)
@@ -250,7 +263,8 @@ def process_object(obj_id: str, cad_dir: str, images_dir: str,
         t = RT[:3, 3]
         cam_pos = -R.T @ t  # Camera position in world coords
 
-        result = sample_visible_surface(mesh, cam_pos, num_points)
+        result = sample_visible_surface(mesh, cam_pos, num_points,
+                                        hpr_param=hpr_param, jitter_std=jitter_std)
         if result is None:
             logger.debug("Too few visible points for %s view %d, skipping", obj_id, view_idx)
             continue
@@ -333,6 +347,15 @@ def main():
                         help="Points per partial PC (default: 10000, matches ULIP-2)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing .npz files")
+    parser.add_argument("--hpr-param", type=float, default=3.2,
+                        help="Katz HPR radius exponent (radius = r.max()*10^param). "
+                             "Lower = stricter occlusion removal (fewer leaked "
+                             "occluded points). Default 3.2 (legacy). SHREC'18 uses 2.8.")
+    parser.add_argument("--jitter-std", type=float, default=0.0,
+                        help="Gaussian jitter std applied to duplicated points when "
+                             "a view is upsampled to num_points, to break coincident "
+                             "duplicates (matches step5). 0 = off (default/legacy). "
+                             "SHREC'18 uses 0.001.")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -382,6 +405,7 @@ def main():
             obj_id, args.cad_dir, args.images_dir,
             args.num_points, overwrite=args.overwrite,
             mesh_path=explicit_mesh,
+            hpr_param=args.hpr_param, jitter_std=args.jitter_std,
         )
         if views > 0:
             success_objects += 1
