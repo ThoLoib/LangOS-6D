@@ -32,6 +32,10 @@ What changes, in one line each:
 
 ### How to run it
 
+> Executing the full grid on the compute PC: **`docs/TESSA_PC_RUNBOOK.md`** —
+> ordered commands, expected values to verify against, failure modes, and the
+> deliverables to report back. The summary below is the short form.
+
 ```bash
 docker compose up -d gedi
 # 1. one-time, ~5.2 h, ~4.1 GB — makes K nearly free afterwards
