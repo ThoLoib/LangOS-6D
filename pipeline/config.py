@@ -196,6 +196,19 @@ class PipelineConfig:
     gedi_samples_per_patch_lrf: int = 4000   # Points for LRF computation
     gedi_samples_per_patch_out: int = 512    # Points sampled for PointNet++
     gedi_num_keypoints: int = 5000           # Number of keypoints to sample per cloud
+    # Directory for the on-disk descriptor cache. None = disabled (compute on
+    # every call, the historical behaviour). Descriptors are a per-CLOUD cost
+    # (~3.4 s) while the RANSAC fit that consumes them is ~0.43 s per PAIR, so
+    # enabling this is what makes a deep re-ranking shortlist affordable:
+    # O(clouds) instead of O(queries x K). Entries self-validate against a
+    # fingerprint of the input cloud, so a preprocessing change invalidates
+    # them rather than silently returning descriptors for a different cloud.
+    gedi_cache_dir: Optional[str] = None
+    # Skip point-to-plane ICP refinement in B2. ICP costs ~1.1 s of a ~2.9 s
+    # per-pair budget and was measured to move nDCG by 0.0001 at K=5, so a
+    # deep-shortlist run can skip it and cite the shallow measurement. The
+    # "chamfer_icp" signal ignores this flag — that arm is the measurement.
+    geometry_skip_icp: bool = False
 
     # Trimmed Chamfer settings (B2)
     chamfer_trim_ratio: float = 0.1          # Discard top 10% of distances

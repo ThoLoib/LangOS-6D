@@ -1,6 +1,99 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-30
+> Last updated: 2026-07-31
+
+## Update 2026-07-31 (Stage-1 evaluation redesign — agreed, partially implemented)
+
+The 2026-07-30 finding that the official metrics are blind to B2 has been turned
+into a design. **Full spec: `docs/STAGE1_EVALUATION_DESIGN.md`**; decision entry
+in `DECISIONS.md` (2026-07-31).
+
+What changes, in one line each:
+- **Table B** — depth-matched metrics (`NN_cat`, `NN_sub`, `hit@K`, `MRR@K`,
+  `mAP@K`, corrected `nDCG@K`) for every arm. `NN_sub` is the geometry headline;
+  it exists only because the official GT carries subcategory labels.
+- **K rises from 5** to a value picked from the base-fusion hit-rate@K curve
+  (smallest K within 2 points of hit-rate@100), exposed as `--geom-k`.
+- **`E2_both`** — fitness + `d_ransac` combined by mean rank (Borda, ties
+  averaged). **`O1e`** — the same plus the base-fusion rank. Both reuse cached
+  registrations.
+- **O2 at τ_text = 0.37** (threshold, per OSCAR §3.2), not top-20. Padded row in
+  Table A + a faithful variable-length paragraph.
+- ICP stays off by default; `E2_chamfer_icp` is kept as the arm that justifies
+  that (it buys Δ0.0001 for ~5.4 s/query — see 2026-07-30 below).
+
+- **Descriptor cache wired up** (this was the blocker on raising K). The
+  2026-07-30 grid ran at K = 5 and ~35 s/query because `step_b2` recomputed the
+  CAD descriptor **per pair**; at K = 20 that would be ~82 h. Descriptors are a
+  **per-cloud** cost (3.446 s) while RANSAC is only **0.430 s/pair**, so
+  `compute_and_cache` (previously present with zero callers) is now used for
+  both the query and the CAD side, gated on the new
+  `PipelineConfig.gedi_cache_dir` (default `None` = old behaviour).
+
+### How to run it
+
+```bash
+docker compose up -d gedi
+# 1. one-time, ~5.2 h, ~4.1 GB — makes K nearly free afterwards
+python experiments/experiment1_shrec18_stage1.py --precompute-gedi
+# 2. BASE first: it emits the hit-rate@K ceiling curve as a by-product
+python experiments/experiment1_shrec18_stage1.py --ablations E1c_full_fusion --overwrite
+python experiments/experiment1_shrec18_stage1.py --hit-rate-curve
+# 3. the grid at the K that curve implies (K is auto-derived if --geom-k is omitted)
+python experiments/experiment1_shrec18_stage1.py --all --resume --with-geometry --geom-k 20
+```
+
+**The existing 07-30 summaries have no `metrics_depth` key**, so
+`--hit-rate-curve` reports that rather than a curve until BASE is re-run. The
+expensive score passes are cached, so re-running BASE with `--overwrite` is
+cheap — it is a re-scoring, not a re-encoding.
+
+### Tested 2026-07-31 (all 2,101 queries, isolated `results_stage1_test/`)
+
+Verified in the container against real data. Full numbers and discussion in
+`docs/STAGE1_EVALUATION_DESIGN.md`; the four things that matter here:
+
+- **Non-regressive.** Every Table A value reproduces the 07-30 run exactly
+  (BASE nDCG 0.5879 / P 0.2686; `E2_fitness` 0.6010; `E2_chamfer_ransac` 0.6028).
+- **Table B resolves what Table A cannot.** Geometry is +0.015 nDCG but
+  **+0.064 NN_sub (+18 % relative)**. `E2_both` (Borda) is the best geometry arm
+  on both tables; **`O1e` loses to it**, so keeping the base rank hurts.
+- **τ = 0.37 does not transfer**: 96.9 % fallback rate — the threshold admits
+  nothing on SHREC'18 and the arm reproduces the top-20 cascade. Report as a
+  negative-transfer result, not as OSCAR's pruning.
+- **The hit-rate curve never flattens** below K = 100, so the "within 2 points"
+  rule just returns the deepest K. K is a stated **compute-budget** decision
+  instead; `--bench-rerank N` measures it on the target machine.
+- **`--no-icp` is the big lever: ICP is 68 % of the per-pair cost** (measured
+  3.29 → 0.93 s/pair). With it off, K = 20 → 11 h, K = 50 → 27 h, K = 100 →
+  54 h over all 2,101 queries. `E2_chamfer_icp` is auto-dropped in that mode
+  (it *is* the ICP measurement); cite the K = 5 result instead.
+- **A calibrated-τ arm was added.** τ = 0.37 clears on only 3.1 % of queries
+  (per-query max similarity: p05 0.2949, median 0.3289, max 0.4094).
+  `O2_clip_threshold_cal` at τ = 0.2949 gives 4.9 % fallback, median |𝒮′| = 176
+  (IQR 29–661) and **nDCG 0.5078** — beating every top-k arm (0.445) while
+  still losing to full-database fusion (0.5879).
+
+> **Reproducibility bug found and fixed.** `sample_points_uniformly()` uses
+> Open3D's global RNG and takes no `seed` argument (0.19), so every run sampled
+> a *different* cloud from the same CAD — geometry scores were not reproducible,
+> and CAD descriptors could never cache. Now seeded per object id (masked to
+> int32; Open3D rejects larger values). Cache measured at **1.94 s/cloud cold →
+> 0.04 s/cloud warm**.
+>
+> Consequence for the existing `geometry_scores.jsonl`: those pairs were
+> computed against randomly-sampled CAD clouds, so they are not reproducible
+> from the current code. They remain *valid* scores (the sampling was uniform
+> either way) but a re-run will not reproduce them exactly. If the thesis needs
+> bit-reproducible geometry numbers, purge the pair cache and recompute.
+
+Cache entries validate against a **SHA-1 of the input cloud**, not against
+recorded settings: a normalization or sampling change invalidates them instead
+of silently returning descriptors for a different cloud. That is the failure
+mode that already bites Uni3D/ULIP across the two machines
+(`docs/LAPTOP_EMBEDDINGS_SETUP.md`). Writes are atomic (`.tmp.npz` +
+`os.replace`) so a duty-cycle kill cannot leave a truncated entry, and empty
+results are never cached — an unreachable service must not poison the cache.
 
 ## Update 2026-07-30 (Stage-1 grid: 31 of 33 cells; geometry cells done)
 

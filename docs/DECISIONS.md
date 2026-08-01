@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-31 Add a depth-matched metric table so the geometry stage is measurable
+
+Decision
+- Keep the official scorer as **Table A** (unchanged, per the 2026-07-30 entry) and add **Table B**: `NN_cat`, `NN_sub`, `hit@K`, `MRR@K`, `mAP@K` and a *corrected* `nDCG@K`, computed at the geometry depth K for **every** arm. `NN_sub` is the headline for the geometry cells.
+- Raise the geometry shortlist from the hardcoded `GEOM_SHORTLIST = 5` to a `--geom-k` chosen from the base-fusion **hit-rate@K curve**: the smallest K whose hit-rate@K is within 2 points of hit-rate@100. No K sweep is reported.
+- Combine RANSAC fitness and `d_trim` in `E2_both` by **mean rank (Borda, ties averaged)** — fixed, not ablated. Add `O1e` as the same Borda plus the base-fusion rank.
+- Reproduce OSCAR's pruning at **τ_text = 0.37** (threshold, not top-k), reported as a padded row plus a faithful variable-length paragraph.
+- Evaluate on all **2,101 official queries** (`rgbd.csv`/`cad.csv`), not the 1,452 reconstructed train queries.
+
+Rationale
+- The 2026-07-30 entry established that P/R/F1/NNT1/NNT2 are invariant to the whole B2 stage and closed with "that requires **new** metrics (hit@k, MRR, per-category breakdown)". This is that follow-up. At `GEOM_SHORTLIST = 5` the re-rank was also competing for only 12.7 % of the official DCG weight mass; K = 20 doubles it to 25.9 %.
+- K is chosen from measured recall headroom rather than taste, because geometry re-ranks but never inserts — base hit-rate@K is a hard ceiling on every top-1 metric, and the curve is the justification the thesis needs for the constant.
+- `fitness + (−d_trim)` reproduces the fitness-only ranking on representative data (fitness spans ~0.23, `d_trim` ~0.09), so a raw sum is not a fusion. Borda is scale-free with no free parameter; RRF's `k = 60` is provably inert at K = 20 (weights span 1/61…1/80) and a z-normalized weight would have to be tuned on the evaluation queries.
+- Measured costs (`results_gedi_large_19x10`): descriptors 3.446 s/cloud but **per cloud**, RANSAC 0.430 s **per pair**. Precomputing descriptors (5,409 clouds, ~5.2 h, ~4.1 GB) makes K nearly free — K = 20 over 2,101 queries is ~5.0 h.
+- Official GT covers all 2,101 queries with real subcategory labels, so the train-split limitation the earlier plan declared no longer applies — and `NN_sub` only exists because of those labels.
+
+Alternatives considered
+- Report only the official metrics — rejected: the geometry ablations would remain unmeasurable, which is the entire point of running them.
+- Patch the official DCG everywhere — rejected again, for the 2026-07-30 reason (comparability); the corrected nDCG lives only in Table B and is never placed in the same column.
+- Sweep K as an ablation — rejected: affordable (~12.6 h at K = 50) but it makes depth the result instead of geometry.
+- Ablate the fitness/Chamfer fusion rule — rejected: three near-identical rules would pad the grid without answering a thesis question.
+- Full-database S_GeDi (the originally specified O1e) — infeasible: 2,101 × 3,308 ≈ 6.95 M registrations ≈ 830 h per cell. Reframed as a shortlist-level question instead.
+
+Detail: `docs/STAGE1_EVALUATION_DESIGN.md`.
+
 ## 2026-07-30 Select the Stage-1 config on nDCG, and do not patch the official metrics
 
 Decision
