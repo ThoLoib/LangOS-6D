@@ -58,6 +58,7 @@
 # =============================================================================
 
 import logging
+import hashlib
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
@@ -145,6 +146,11 @@ class GeometryCandidate:
     fused_score: float = 0.0
     gedi_score: float = 0.0
     chamfer_score: float = float("inf")
+    # Populated only under rerank(all_aligned=True): D_trim under the RANSAC
+    # transform and under the ICP-refined transform, both measured from the
+    # SAME registration.  See the `all_aligned` docstring for why.
+    d_ransac: float = float("inf")
+    d_icp: float = float("inf")
     geometry_score: float = 0.0
     ransac_transformation: Optional[np.ndarray] = None
     ransac_fitness: float = 0.0
@@ -210,6 +216,8 @@ class GeometryReRanker:
         fused_candidates: List[FusedCandidate],
         observed_pcd,
         signal: Optional[str] = None,
+        all_aligned: bool = False,
+        query_id: Optional[str] = None,
     ) -> GeometryReRankingResult:
         """Re-rank fused candidates using geometric signals.
 
@@ -217,6 +225,26 @@ class GeometryReRanker:
             fused_candidates: Shortlist from Step B1 fusion.
             observed_pcd: Open3D PointCloud of the observed partial object.
             signal: Override for config.geometry_reranking_signal.
+            query_id: Cache key for the query cloud's descriptors.  Only used
+                when `config.gedi_cache_dir` is set; without it the query
+                descriptors are recomputed on every call, which matters
+                because a batch evaluation re-enters `rerank` per signal.
+            all_aligned: Also populate `d_ransac` and `d_icp` on every
+                candidate, so that the three aligned signals (fitness,
+                chamfer_ransac, chamfer_icp) can be read off ONE registration.
+
+                GeDi + RANSAC costs ~35 s/query and dominates everything else
+                (the trimmed distance alone, measured as the chamfer_unaligned
+                ablation, is ~0.5 s/query; ICP is local refinement and far
+                cheaper than feature RANSAC).  Scoring the three signals in
+                separate passes therefore pays that 35 s three times to obtain
+                three cheap readouts of the same alignment — ~60 h instead of
+                ~26 h over the 2,101 SHREC'18 queries.
+
+                Note this makes fitness and d_ransac come from the SAME RANSAC
+                run rather than from independent stochastic ones.  That is a
+                deliberate change: they are then two readouts of one alignment,
+                which is what the E2 grid is meant to compare.
 
         Returns:
             GeometryReRankingResult with re-ranked candidates.
@@ -236,15 +264,17 @@ class GeometryReRanker:
         )
 
         voxel_size = self.config.voxel_size or 0.005
-        needs_registration = signal in _ALIGNED_SIGNALS or signal == "fitness"
-        needs_distance = signal in _DISTANCE_SIGNALS
+        needs_registration = (signal in _ALIGNED_SIGNALS or signal == "fitness"
+                              or all_aligned)
+        needs_distance = signal in _DISTANCE_SIGNALS or all_aligned
 
         # Compute GeDi descriptors for observed cloud (once)
         obs_gedi = None
         if needs_registration:
             gedi_mod = self._get_gedi()
             if gedi_mod.available:
-                obs_gedi = gedi_mod.compute(observed_pcd)
+                obs_gedi = self._cached_gedi(gedi_mod, observed_pcd,
+                                             "query", query_id)
                 logger.info("  GeDi: %d query keypoints computed.",
                             len(np.asarray(obs_gedi.keypoints.points)))
             else:
@@ -259,6 +289,8 @@ class GeometryReRanker:
                 signal = "chamfer_unaligned"
                 needs_registration = False
                 needs_distance = True
+                # No alignment means no aligned distances to harvest.
+                all_aligned = False
 
         # Downsample observed cloud for the surface distance (once)
         obs_down = None
@@ -289,7 +321,7 @@ class GeometryReRanker:
             # --- Rigid registration: GeDi correspondences -> RANSAC -------
             if needs_registration and obs_gedi is not None:
                 gedi_score, ransac_result = self._gedi_ransac(
-                    obs_gedi, cad_pcd, voxel_size,
+                    obs_gedi, cad_pcd, voxel_size, cad_id=fc.object_id,
                 )
                 gc.gedi_score = gedi_score
                 if ransac_result is not None and gedi_score > 0:
@@ -301,7 +333,21 @@ class GeometryReRanker:
 
                 # Optional ICP refinement (thesis: T_j = T_ICP if it
                 # succeeds, else T_RANSAC).
-                if signal == "chamfer_icp" and not gc.registration_failed:
+                #
+                # skip_icp exists because ICP is the single most expensive
+                # per-pair component after descriptors (~1.1 s/pair of a
+                # ~2.9 s/pair budget) and it was measured to contribute
+                # Delta 0.0001 nDCG at K=5.  At a deeper shortlist that is
+                # tens of hours to re-confirm a null, so the final-depth run
+                # may skip it and cite the shallow result instead.  The
+                # `signal == "chamfer_icp"` path deliberately ignores the
+                # flag: that arm IS the ICP measurement, so silently
+                # returning d_icp = d_ransac would fabricate its result.
+                skip_icp = (getattr(self.config, "geometry_skip_icp", False)
+                            and signal != "chamfer_icp")
+                if ((signal == "chamfer_icp" or all_aligned)
+                        and not skip_icp
+                        and not gc.registration_failed):
                     icp = self._icp_refine(
                         observed_pcd, cad_pcd, gc.ransac_transformation,
                     )
@@ -309,7 +355,12 @@ class GeometryReRanker:
                         gc.icp_transformation = np.array(icp.transformation)
                         gc.icp_fitness = float(icp.fitness)
                         gc.icp_inlier_rmse = float(icp.inlier_rmse)
-                        gc.transformation = gc.icp_transformation
+                        # T_j for the ICP signal only.  Under all_aligned with
+                        # a non-ICP requested signal, the reported transform
+                        # must stay T_RANSAC — harvesting d_icp on the side
+                        # must not change what `signal` means.
+                        if signal == "chamfer_icp":
+                            gc.transformation = gc.icp_transformation
 
             # --- Trimmed one-sided surface distance -----------------------
             if needs_distance and obs_down is not None:
@@ -318,19 +369,43 @@ class GeometryReRanker:
                     # registration — it would be silently incomparable.
                     gc.chamfer_score = float("inf")
                 else:
-                    src = obs_down
-                    if signal in _ALIGNED_SIGNALS and gc.transformation is not None:
-                        # Transform the OBSERVATION into the CAD frame; this
-                        # is the T_j of Eq. eq:methods_trimmed_surface_distance
-                        # and matches the one-sided obs->CAD direction below.
-                        src = o3d.geometry.PointCloud(obs_down)
-                        src.transform(gc.transformation)
                     cad_down = cad_pcd.voxel_down_sample(voxel_size)
-                    gc.chamfer_score = trimmed_chamfer_distance(
-                        np.asarray(src.points),
-                        np.asarray(cad_down.points),
-                        trim_ratio=self.config.chamfer_trim_ratio,
-                    )
+
+                    def _d_trim(transform) -> float:
+                        """D_trim with the OBSERVATION carried into the CAD
+                        frame by `transform` (None = unaligned diagnostic).
+                        This is the T_j of
+                        Eq. eq:methods_trimmed_surface_distance and matches
+                        the one-sided obs->CAD direction."""
+                        src = obs_down
+                        if transform is not None:
+                            src = o3d.geometry.PointCloud(obs_down)
+                            src.transform(transform)
+                        return trimmed_chamfer_distance(
+                            np.asarray(src.points),
+                            np.asarray(cad_down.points),
+                            trim_ratio=self.config.chamfer_trim_ratio,
+                        )
+
+                    if all_aligned:
+                        # Both aligned distances off the one registration.
+                        # ICP falling back to T_RANSAC mirrors the thesis rule
+                        # T_j = T_ICP if it succeeds, else T_RANSAC.
+                        gc.d_ransac = _d_trim(gc.ransac_transformation)
+                        gc.d_icp = (_d_trim(gc.icp_transformation)
+                                    if gc.icp_transformation is not None
+                                    else gc.d_ransac)
+
+                    if signal == "chamfer_ransac":
+                        gc.chamfer_score = (gc.d_ransac if all_aligned
+                                            else _d_trim(gc.ransac_transformation))
+                    elif signal == "chamfer_icp":
+                        gc.chamfer_score = (gc.d_icp if all_aligned
+                                            else _d_trim(gc.transformation))
+                    elif signal == "chamfer_unaligned":
+                        gc.chamfer_score = _d_trim(None)
+                    # signal == "fitness": no distance is part of that signal,
+                    # so chamfer_score stays inf even under all_aligned.
 
             # Combined geometry score
             gc.geometry_score = self._compute_geometry_score(gc, signal)
@@ -372,11 +447,28 @@ class GeometryReRanker:
             ),
         )
 
+    def _cached_gedi(self, gedi_mod, pcd, kind: str, key: Optional[str]):
+        """GeDi descriptors for one cloud, via the on-disk cache when enabled.
+
+        Falls back to the uncached path when ``config.gedi_cache_dir`` is unset
+        or no cache key is available, so existing callers are unaffected.
+        Validation is by input-cloud fingerprint (see
+        ``GeDiDescriptorModule.cloud_fingerprint``), not by stored settings.
+        """
+        cache_dir = getattr(self.config, "gedi_cache_dir", None)
+        if not cache_dir or not key:
+            return gedi_mod.compute(pcd)
+        path = os.path.join(cache_dir, kind, f"{key}.npz")
+        return gedi_mod.compute_and_cache(
+            pcd, path, provenance={"kind": kind, "key": key,
+                                   "voxel_size": self.config.voxel_size})
+
     def _gedi_ransac(
         self,
         obs_gedi,
         cad_pcd,
         voxel_size: float,
+        cad_id: Optional[str] = None,
     ):
         """Run GeDi descriptor matching + RANSAC on a CAD candidate.
 
@@ -397,7 +489,12 @@ class GeometryReRanker:
         import open3d as o3d
 
         gedi_mod = self._get_gedi()
-        cad_gedi = gedi_mod.compute(cad_pcd)
+        # Descriptor extraction is per CLOUD (~3.4 s) while this RANSAC fit is
+        # per PAIR (~0.43 s).  Recomputing the CAD descriptors on every pair
+        # therefore costs ~8x the fit itself and scales with the shortlist
+        # depth K, which is what made a deeper K unaffordable.  With a cache
+        # dir configured the same CAD is extracted once for the whole grid.
+        cad_gedi = self._cached_gedi(gedi_mod, cad_pcd, "cad", cad_id)
 
         if len(cad_gedi.descriptors_np) == 0:
             return 0.0, None
@@ -500,6 +597,17 @@ class GeometryReRanker:
             if mesh.is_empty():
                 return None
             mesh.compute_vertex_normals()
+            # Deterministic sampling: sample_points_uniformly() draws from
+            # Open3D's GLOBAL RNG and takes no seed argument (0.19), so
+            # without this the same CAD yields a different cloud on every
+            # call — irreproducible geometry scores, and a descriptor cache
+            # that can never hit.  Seed from the CAD path so the cloud is a
+            # pure function of the model, not of call order.
+            # Masked into the non-negative int32 range — Open3D's seed() is
+            # bound to a 32-bit signed int and rejects larger values.
+            o3d.utility.random.seed(
+                int(hashlib.sha1(os.path.basename(cad_path).encode()
+                                 ).hexdigest()[:8], 16) % (2 ** 31 - 1))
             pcd = mesh.sample_points_uniformly(number_of_points=n_points)
             pcd.estimate_normals(
                 o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)

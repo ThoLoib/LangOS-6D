@@ -131,6 +131,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import sys
@@ -170,12 +171,50 @@ E_MEASURE_K = 32       # E-measure cut-off, Princeton Shape Benchmark
 BASE_WEIGHTS = (0.3, 0.4, 0.3)
 CLIP_PRUNE_K = 20      # OSCAR cascade shortlist size (O2 / E1d)
                        # [pulliOSCAROpenSetCAD2025]
+# OSCAR's ACTUAL candidate filter (Pulli et al. 2025, Sec. 3.2): keep every
+# object with sim_text(s_i) >= tau_text, i.e. a VARIABLE-sized candidate set;
+# top-k is only the fallback when nothing clears the threshold.  Our
+# step3_clip_retrieval.py stores raw cosine similarities (line 306 normalises
+# both sides, line 345 stores sims[idx]), so 0.37 is directly applicable.
+#
+# Note the repo default is NOT this: pipeline/config.py:74 sets
+# clip_threshold = 0.25 with a stale "noch nicht implementiert" comment, and
+# retrieve()'s threshold defaults to None, so the shipped pipeline runs pure
+# top-k.  The paper value is used here deliberately.
+CLIP_TAU_TEXT = 0.37
+# Measured on SHREC'18 (2026-07-31): tau_text = 0.37 admits NOTHING on 96.9%
+# of queries, so the arm falls back to top-k and reproduces the cascade rather
+# than exercising the threshold at all.  That is a real result about transfer
+# — the constant was fitted to MI3DOR/YCB-V caption similarities — but it says
+# nothing about whether threshold pruning *works*.  So a second arm calibrates
+# tau to this dataset's own similarity distribution.
+#
+# Rule: tau = the percentile of the per-query MAXIMUM similarity that leaves
+# at most this fraction of queries with an empty candidate set.  Calibrating
+# on "the mechanism must actually run" rather than on a target set size keeps
+# it non-circular — it is not tuned to match top-k, and it is not tuned on the
+# retrieval metric it will later be judged by.
+CLIP_TAU_FALLBACK_TARGET = 0.05
+CLIP_TAU_CAL: Optional[float] = None   # set by calibrate_tau() at run time
 VIEW_BUDGETS = (8, 16, 32, 42)  # O4; thesis lists {8,16,32}, 42 added as
                        # the CNOS/repo default (full icosphere)
                        # [nguyenCNOSStrongBaseline2023]
-GEOM_SHORTLIST = 5     # geometry re-ranking shortlist (config default)
+GEOM_SHORTLIST = 5     # legacy default (pipeline/config.py); kept only as the
+                       # fallback for --geom-k.  The 2026-07-30 grid ran at 5,
+                       # which reaches just 12.7% of the official DCG weight
+                       # mass (25.9% at K=20) — see STAGE1_EVALUATION_DESIGN §1.
+GEOM_K = GEOM_SHORTLIST  # effective depth; set from --geom-k in main()
+# Depths at which the base-fusion hit-rate curve is reported.  That curve is
+# the ceiling on what re-ranking at depth K can reach, and choose_geom_k()
+# turns it into the K actually used.
+HITRATE_KS = (1, 5, 10, 20, 50, 100)
+HITRATE_TOL = 0.02     # "within 2 percentage points of the deepest K"
+# Set from --no-icp.  ICP is ~1.1 s of the ~2.9 s per-pair budget and moved
+# nDCG by 0.0001 at K=5, so the deep run may skip it and cite that shallow
+# measurement rather than spend tens of hours re-confirming a null.
+SKIP_ICP = False
 # Full-database S_GeDi would need |queries| x |gallery| RANSAC fits.
-GEDI_FULL_DB_PAIRS = 1452 * N_CADS
+GEDI_FULL_DB_PAIRS = N_QUERIES_TOTAL * N_CADS
 # Number of (FPS-ordered) partial views the shape channel AGGREGATES over at
 # retrieval time.  The reference cache still stores all encoded views (whole
 # dataset); this only trims the top-k_v pooling input.  16 is sufficient for
@@ -419,6 +458,166 @@ def score_official(ranking_cad_ids: Sequence[str], q_label: tuple,
         "NNT1":      float(MM.nnt1(x, f)),
         "NNT2":      float(MM.nnt2(x, f)),
     }
+
+
+def _graded_relevance(ranking_cad_ids: Sequence[str], q_label: tuple,
+                      cad_labels: Dict[str, tuple]) -> np.ndarray:
+    """SHREC'18 graded relevance over a ranking: 2 = subcategory, 1 = category.
+
+    Same rule as ``score_official`` / the official ``categories_to_rel``,
+    factored out so Table B can read the sub-category grade too.
+    """
+    qc, qs = q_label
+    out = np.zeros(len(ranking_cad_ids), dtype=np.float64)
+    for i, cid in enumerate(ranking_cad_ids):
+        lab = cad_labels.get(cid)
+        if lab is None or lab[0] != qc:
+            continue
+        out[i] = 2.0 if lab[1] == qs else 1.0
+    return out
+
+
+def score_depth_matched(ranking_cad_ids: Sequence[str], q_label: tuple,
+                        cad_labels: Dict[str, tuple], k: int
+                        ) -> Dict[str, float]:
+    """TABLE B — the metrics a top-K re-ranking can actually move.
+
+    The official scalar metrics (``score_official``) are cut at f = category
+    size (~165) and, except for nDCG and AP, are ``np.count_nonzero`` over
+    that prefix — so they are *algebraically* invariant to any permutation of
+    the first K < f entries, i.e. blind to the whole B2 geometry stage
+    (DECISIONS 2026-07-30, docs/STAGE1_EVALUATION_DESIGN.md §1).  Everything
+    here is therefore cut at the geometry depth K instead.
+
+    Two deliberate differences from Table A:
+
+    * ``NN_sub`` reads the **sub-category** grade.  Category assignment is
+      largely solved by the language channel; whether geometry picks the right
+      *variant* within the category is the open question, so NN_sub is the
+      headline for the geometry arms.
+    * ``nDCG@K`` uses a **corrected** DCG.  The official ``metrics.dcg`` has an
+      off-by-one (``total = x[0]`` and then the loop adds ``x[i]`` again at
+      ``i = 0``, double-counting rank 1 and dropping the last element).  It is
+      left unpatched in Table A for leaderboard comparability; here it is
+      correct.  The two nDCGs are different quantities and never share a
+      column.
+
+    ``hit_cat@N`` / ``hit_sub@N`` for N in :data:`HITRATE_KS` are emitted on
+    every call so that the BASE arm's run yields the hit-rate curve that
+    :func:`choose_geom_k` reads — geometry re-ranks but never inserts, so base
+    hit-rate@K is a hard ceiling on every top-1 metric at depth K.
+    """
+    rel = _graded_relevance(ranking_cad_ids, q_label, cad_labels)
+    cat = rel >= 1.0
+    sub = rel >= 2.0
+    n = len(rel)
+    kk = min(k, n)
+    if kk == 0:
+        return {}
+
+    def _mrr(mask: np.ndarray) -> float:
+        hit = np.flatnonzero(mask[:kk])
+        return 1.0 / (int(hit[0]) + 1) if hit.size else 0.0
+
+    # AP@K over category relevance, normalised by the reachable number of
+    # relevant items (min(K, R)) so a query with R < K is not capped below 1.
+    hits = np.flatnonzero(cat[:kk])
+    if hits.size:
+        precs = (np.arange(hits.size) + 1) / (hits + 1)
+        ap = float(precs.sum() / min(kk, int(cat.sum())))
+    else:
+        ap = 0.0
+
+    # Corrected DCG with graded gains; ideal = the same gains sorted desc.
+    disc = 1.0 / np.log2(np.arange(kk) + 2.0)
+    dcg = float((rel[:kk] * disc).sum())
+    idcg = float((np.sort(rel)[::-1][:kk] * disc).sum())
+
+    out = {
+        "NN_cat": float(cat[0]),
+        "NN_sub": float(sub[0]),
+        "MRR":     _mrr(cat),
+        "MRR_sub": _mrr(sub),
+        "mAP_K":  ap,
+        "nDCG_K": (dcg / idcg) if idcg > 0 else 0.0,
+    }
+    for n_k in HITRATE_KS:
+        m = min(n_k, n)
+        out[f"hit_cat@{n_k}"] = float(cat[:m].any())
+        out[f"hit_sub@{n_k}"] = float(sub[:m].any())
+    return out
+
+
+BASE_ABLATION = "E1c_full_fusion"   # the shortlist source for every geometry arm
+
+
+def load_hitrate_curve(results_root: str, grade: str = "sub"
+                       ) -> Dict[int, float]:
+    """Read the base-fusion hit-rate curve out of the BASE arm's summary.
+
+    No extra computation: :func:`score_depth_matched` emits ``hit_cat@N`` /
+    ``hit_sub@N`` for every arm, so running BASE already produced the curve.
+    """
+    p = os.path.join(results_root, BASE_ABLATION, "metrics_summary.json")
+    if not os.path.isfile(p):
+        return {}
+    with open(p) as f:
+        md = json.load(f).get("metrics_depth", {})
+    return {k: md[f"hit_{grade}@{k}"]
+            for k in HITRATE_KS if f"hit_{grade}@{k}" in md}
+
+
+def _no_curve_reason(results_root: str) -> str:
+    """Why the hit-rate curve is unavailable — the two cases differ.
+
+    A summary that merely *predates* Table B looks identical to a missing one
+    at the call site, but the fix is different (re-run vs run), so say which.
+    """
+    p = os.path.join(results_root, BASE_ABLATION, "metrics_summary.json")
+    if not os.path.isfile(p):
+        return (f"no {BASE_ABLATION} summary yet — run the BASE ablation "
+                f"first; the curve is a by-product of it")
+    return (f"{BASE_ABLATION} predates the depth-matched metrics (no "
+            f"'metrics_depth' key) — re-run it with --overwrite to emit the "
+            f"curve; the expensive score passes are cached, so this is cheap")
+
+
+def print_hitrate_curve(results_root: str) -> None:
+    """Report the ceiling curve and the K it implies."""
+    curves = {g: load_hitrate_curve(results_root, g) for g in ("cat", "sub")}
+    if not curves["sub"]:
+        print(f"[hit-rate] {_no_curve_reason(results_root)}.")
+        return
+    print(f"[hit-rate] base-fusion ceiling (from {BASE_ABLATION}):")
+    print(f"{'K':>6}  {'hit_cat@K':>10}  {'hit_sub@K':>10}")
+    for k in HITRATE_KS:
+        c, s = curves["cat"].get(k), curves["sub"].get(k)
+        print(f"{k:>6}  {c:>10.4f}  {s:>10.4f}"
+              if c is not None and s is not None else f"{k:>6}  {'-':>10}")
+    k = choose_geom_k(curves["sub"])
+    print(f"[hit-rate] --geom-k {k}  (smallest K within "
+          f"{HITRATE_TOL:.0%} of hit_sub@{max(curves['sub'])})")
+
+
+def choose_geom_k(hit_curve: Dict[int, float],
+                  tol: float = HITRATE_TOL) -> int:
+    """Smallest K whose hit-rate is within ``tol`` of the deepest measured K.
+
+    The geometry stage re-orders a shortlist; it can never pull a relevant CAD
+    into it.  So base-fusion hit-rate@K bounds every top-1 metric the
+    re-ranking can reach, and the point where that curve flattens is the
+    cheapest depth that does not throw away reachable headroom.  Fixing K by
+    this rule (rather than by taste) is what makes the constant defensible in
+    the write-up.
+    """
+    if not hit_curve:
+        return GEOM_SHORTLIST
+    deepest = max(hit_curve)
+    ceiling = hit_curve[deepest]
+    for k in sorted(hit_curve):
+        if hit_curve[k] >= ceiling - tol:
+            return k
+    return deepest
 
 
 # ===========================================================================
@@ -1238,7 +1437,8 @@ class AblationSpec:
     def needs_gedi(self) -> bool:
         # Every signal except the unaligned diagnostic needs GeDi, since
         # alignment is what GeDi correspondences are for.
-        return self.geometry in ("fitness", "chamfer_ransac", "chamfer_icp")
+        return self.geometry in ("fitness", "chamfer_ransac", "chamfer_icp",
+                                 "both_borda", "both_borda_base")
 
 
 # Stage-1 BASE.  S_shape is scored in **pc-mode**: SHREC'18 queries are real
@@ -1313,7 +1513,23 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("E2_chamfer_icp", "E2",
           "GeDi-RANSAC + ICP refinement, then trimmed surface distance",
           bib="caraffaFreeZeTrainingfreeZeroshot2025",
-          channels=dict(_BASE_CH), geometry="chamfer_icp"),
+          channels=dict(_BASE_CH), geometry="chamfer_icp",
+          notes=("ICP is OFF in the frozen config: it adds a refinement DOF "
+                 "that can partly launder a wrong retrieval into a plausible "
+                 "fit, which is the confusion to avoid in a *retrieval* "
+                 "evaluation. This arm is retained as the evidence for that "
+                 "default (measured 2026-07-30: +0.0001 nDCG for ~5.4 s per "
+                 "query), not as a competitor to it.")),
+    # Both geometry signals combined by mean rank (Borda, ties averaged)
+    # [Aslam & Montague, SIGIR 2001].  Reads the same cached registration as
+    # the three aligned arms above, so it costs no extra RANSAC.  See
+    # apply_geometry() for why a raw sum of fitness and D_trim is not a fusion.
+    _spec("E2_both", "E2",
+          "fitness + D_trim combined by mean rank (Borda)",
+          bib="aslamModelsMetasearch2001, "
+              "caraffaFreeZeTrainingfreeZeroshot2025, "
+              "diUREDUnsupervised3D2023",
+          channels=dict(_BASE_CH), geometry="both_borda"),
     # --- E2b: partial-view vs full-mesh shape reference ------------------
     _spec("E2b_partial", "E2b", "partial rendered views as S_shape "
           "reference (= BASE)", bib="linSAM6DSegmentAnything2024",
@@ -1364,11 +1580,29 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("O1d_shape_plus_gedi", "O1", "S_shape in fusion + S_GeDi rerank",
           channels=dict(_BASE_CH), geometry="fitness",
           alias_of="E2_fitness"),
-    # NOTE: "S_GeDi replaces S_shape inside the fusion score" (the former
-    # O1e) is intentionally absent.  It requires a GeDi score for EVERY
-    # gallery entry, i.e. |queries| x |gallery| = 1,452 x 3,308 ~ 4.8M RANSAC
-    # fits — see --bench-gedi for the measured per-fit cost.  S_GeDi is
-    # therefore only evaluable as a post-fusion re-ranker (O1c/O1d).
+    # "S_GeDi replaces S_shape inside the fusion score" is NOT implementable
+    # as originally specified: it needs a GeDi score for EVERY gallery entry,
+    # i.e. 2,101 x 3,308 ~ 6.95M RANSAC fits ~ 830 h per cell at the measured
+    # 0.430 s/fit (--bench-gedi).  The asymmetry is structural — CLIP/DINOv2/
+    # ULIP-2 score the full gallery with a matrix multiply, geometry cannot —
+    # and the thesis states it rather than working around it.
+    #
+    # What IS answerable at shortlist level, and is what O1e now means: once
+    # geometry is available, does the base fusion score still carry
+    # information?  E2_both discards it inside the shortlist and lets geometry
+    # rank alone; O1e keeps it as a third Borda voter.  Note this inverts the
+    # usual framing — E2_both is the *aggressive* arm (a CAD ranked first by
+    # all three channels gets no credit if RANSAC disagrees), O1e is the
+    # conventional cascade that retains the earlier-stage score.  Same cached
+    # registrations, so O1e is free.
+    _spec("O1e_gedi_with_base", "O1",
+          "geometry + base fusion rank, combined by mean rank (Borda)",
+          bib="aslamModelsMetasearch2001, pulliOSCAROpenSetCAD2025",
+          channels=dict(_BASE_CH), geometry="both_borda_base",
+          notes=("Renamed from the original 'S_GeDi inside the fusion score': "
+                 "full-database S_GeDi is infeasible (see comment above), so "
+                 "this evaluates the same question restricted to the top-K "
+                 "shortlist. Documented as an approximation.")),
     # --- O2: scope and ordering ------------------------------------------
     _spec("O2_full_database", "O2", "simultaneous full-database fusion "
           "(= BASE)", channels=dict(_BASE_CH),
@@ -1377,6 +1611,36 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           bib="pulliOSCAROpenSetCAD2025",
           channels=dict(_BASE_CH), scope="clip_topk",
           alias_of="E1d_clip_pruned"),
+    # The paper's ACTUAL filter.  O2_clip_cascade above reproduces OSCAR's
+    # *fallback* (top-k); this reproduces its mechanism (threshold), so the
+    # pair together is what the write-up compares.  Reported two ways: this
+    # padded row in Table A, plus a short faithful paragraph built from the
+    # shortlist_size / fallback_rate fields recorded per query.
+    _spec("O2_clip_threshold", "O2",
+          f"OSCAR threshold pruning: sim_text >= {CLIP_TAU_TEXT} "
+          f"(top-{CLIP_PRUNE_K} fallback)",
+          bib="pulliOSCAROpenSetCAD2025",
+          channels=dict(_BASE_CH), scope="clip_threshold",
+          notes=("tau_text = 0.37 is Pulli et al.'s value, calibrated on "
+                 "MI3DOR/YCB-V caption-similarity distributions. Whether it "
+                 "transfers to SHREC'18 is exactly what the |S'| statistics "
+                 "test: if it admits ~3 or ~3,000 CADs, this arm measures a "
+                 "mistuned constant rather than the method, and the write-up "
+                 "must say so.")),
+    # Same mechanism, tau fitted to THIS dataset's similarity distribution.
+    # Without it the grid can only report that OSCAR's constant fails to
+    # transfer; with it, the question "does threshold pruning work at all on
+    # SHREC'18?" is separable from "does 0.37 transfer?".
+    _spec("O2_clip_threshold_cal", "O2",
+          "threshold pruning with tau calibrated to SHREC'18",
+          bib="pulliOSCAROpenSetCAD2025",
+          channels=dict(_BASE_CH), scope="clip_threshold_cal",
+          notes=("tau is the 5th percentile of the per-query max CLIP "
+                 "similarity, i.e. the highest threshold that still leaves "
+                 "95% of queries with a non-empty candidate set. Calibrated "
+                 "on coverage rather than on set size or on a retrieval "
+                 "metric, so it is neither a restatement of top-k nor tuned "
+                 "on the evaluation.")),
     _spec("O2_visual_first", "O2", "visual-first: S_view prunes to top-20",
           bib="nguyenSHREC2025Retrieval2025",
           channels=dict(_BASE_CH), scope="dino_topk"),
@@ -1411,6 +1675,17 @@ def select_ablations(arg: Optional[str], run_all: bool,
             if not hits:
                 raise SystemExit(f"Unknown ablation '{tok}' (see --list).")
             picked.extend(h for h in hits if h not in picked)
+    if SKIP_ICP:
+        # E2_chamfer_icp IS the ICP measurement, so running it under --no-icp
+        # would either fabricate its result (d_icp = d_ransac) or quietly
+        # re-enable the very cost the flag exists to avoid.  Drop it and say
+        # so, rather than emitting a row that looks like an ICP result.
+        icp_cells = [s.name for s in picked if s.geometry == "chamfer_icp"]
+        picked = [s for s in picked if s.geometry != "chamfer_icp"]
+        if icp_cells:
+            print(f"[select] --no-icp: dropped {', '.join(icp_cells)} — that "
+                  f"arm measures ICP, so it cannot run with ICP disabled. "
+                  f"Cite the K=5 measurement (Delta 0.0001 nDCG) instead.")
     if not with_geometry:
         dropped = [s.name for s in picked if s.geometry]
         picked = [s for s in picked if not s.geometry]
@@ -1474,13 +1749,23 @@ def _synthetic_results(spec: AblationSpec, vecs: Dict[str, np.ndarray],
 
 
 def derive_ranking(spec: AblationSpec, qid: str, stores: Dict[str, dict],
-                   object_ids: List[str], fusion_mod, cad_dir: str
-                   ) -> List[int]:
+                   object_ids: List[str], fusion_mod, cad_dir: str,
+                   diag: Optional[dict] = None) -> List[int]:
     """Rank the gallery for one query under one ablation config.
 
     Returns gallery indices in rank order (full list — the tail beyond a
     pruned shortlist is ordered by the pruning channel, mirroring how a
     cascade would leave non-shortlisted items ranked by its first stage).
+
+    Always returning the FULL list is what makes the threshold scope
+    reportable: OSCAR's candidate set is variable-sized, and the official
+    ``precision(x)`` divides by the *submitted* list length, so submitting a
+    short list would inflate precision while recall collapsed.  The padded
+    form goes in Table A; ``diag`` carries the numbers needed to characterise
+    the faithful variable-length form alongside it.
+
+    ``diag``, when given, receives ``shortlist_size`` and ``fallback`` for the
+    threshold scope.
     """
     n = len(object_ids)
     vecs: Dict[str, np.ndarray] = {}
@@ -1498,7 +1783,7 @@ def derive_ranking(spec: AblationSpec, qid: str, stores: Dict[str, dict],
         vecs[ch] = v
 
     # --- scope: candidate pool + tail ordering (thesis O2) ---------------
-    if spec.scope == "clip_topk":
+    if spec.scope in ("clip_topk", "clip_threshold", "clip_threshold_cal"):
         prune = vecs["clip"]
     elif spec.scope == "dino_topk":
         prune = vecs["dino"]
@@ -1506,7 +1791,20 @@ def derive_ranking(spec: AblationSpec, qid: str, stores: Dict[str, dict],
         prune = None
     if prune is not None:
         order = np.argsort(-prune, kind="stable")
-        pool, tail = order[:CLIP_PRUNE_K], order[CLIP_PRUNE_K:]
+        tau = spec_tau(spec)
+        if tau is not None:
+            # OSCAR Sec. 3.2: keep everything above tau; top-k only when
+            # the set comes back empty.  |S'| varies per query by design.
+            n_keep = int((prune >= tau).sum())
+            fell_back = n_keep == 0
+            if fell_back:
+                n_keep = min(CLIP_PRUNE_K, n)
+            if diag is not None:
+                diag["shortlist_size"] = n_keep
+                diag["fallback"] = fell_back
+        else:
+            n_keep = CLIP_PRUNE_K
+        pool, tail = order[:n_keep], order[n_keep:]
     else:
         pool, tail = np.arange(n), np.array([], dtype=int)
 
@@ -1529,6 +1827,46 @@ def derive_ranking(spec: AblationSpec, qid: str, stores: Dict[str, dict],
     seen = set(ranked)
     ranked += [i for i in pool if i not in seen]     # fusion dropped none, but be safe
     return ranked + list(tail)
+
+
+def spec_tau(spec: AblationSpec) -> Optional[float]:
+    """The similarity threshold this spec prunes with, if any."""
+    if spec.scope == "clip_threshold":
+        return CLIP_TAU_TEXT
+    if spec.scope == "clip_threshold_cal":
+        return CLIP_TAU_CAL
+    return None
+
+
+def calibrate_tau(stores: Dict[str, dict], qids: Sequence[str]) -> float:
+    """Pick tau from this dataset's own CLIP similarity distribution.
+
+    Returns the ``CLIP_TAU_FALLBACK_TARGET`` percentile of the per-query
+    maximum similarity, i.e. the highest threshold at which all but that
+    fraction of queries still get a non-empty candidate set.
+
+    Deliberately calibrated on *coverage*, not on set size or on any
+    retrieval metric: matching a target |S'| would make the arm a restatement
+    of top-k, and tuning on nDCG/NN would be tuning on the evaluation.
+    """
+    sims = []
+    for qid in qids:
+        v = stores["base"]["queries"][qid]["clip"]
+        v = v[np.isfinite(v)]
+        if v.size:
+            sims.append(float(v.max()))
+    if not sims:
+        return CLIP_TAU_TEXT
+    tau = float(np.percentile(sims, 100.0 * CLIP_TAU_FALLBACK_TARGET))
+    arr = np.array(sims)
+    print(f"[calibrate] per-query max CLIP similarity: "
+          f"min={arr.min():.4f} p05={np.percentile(arr, 5):.4f} "
+          f"median={np.median(arr):.4f} max={arr.max():.4f}")
+    print(f"[calibrate] tau_cal = {tau:.4f} (target fallback "
+          f"{100 * CLIP_TAU_FALLBACK_TARGET:.0f}%); paper tau = "
+          f"{CLIP_TAU_TEXT} clears {100 * (arr >= CLIP_TAU_TEXT).mean():.1f}% "
+          f"of queries")
+    return tau
 
 
 def make_fusion_module(spec: AblationSpec):
@@ -1557,8 +1895,27 @@ def make_fusion_module(spec: AblationSpec):
 # caraffaFreeZeTrainingfreeZeroshot2025]; Chamfer = trimmed one-sided
 # distance (trim 10%, U-RED-style [diUREDUnsupervised3D2023]).
 
+def _cad_sample_seed(object_id: str) -> int:
+    """Stable per-CAD seed for Open3D's global sampling RNG.
+
+    Derived from the object id (not a counter) so the sampled cloud is a pure
+    function of which CAD it is — independent of run order, shortlist depth,
+    or how many other CADs were processed first.
+
+    Masked into the non-negative int32 range: Open3D's seed() is bound to a
+    32-bit signed int, and a full 8 hex digits overflows it for roughly half
+    of all ids (observed: 2 of 4 CADs rejected with "incompatible function
+    arguments" before the mask).
+    """
+    return int(hashlib.sha1(object_id.encode()).hexdigest()[:8], 16) % (2 ** 31 - 1)
+
+
 GEOM_VOXEL = 0.02   # unit-sphere-scale voxel size for B2 (repo default
                     # 0.002 assumes metric tabletop scenes)
+GEDI_RETRIES = 4    # retries when the GeDi service drops out mid-run
+GEDI_WAIT_S = 300   # how long to wait for it to come back before aborting
+QUERY_MAX_PTS = 500_000   # cap on query cloud size fed to GeDi/RANSAC
+                          # (larger clouds crash the service; see _query_cloud)
 
 
 class _GeometryEngine:
@@ -1567,6 +1924,11 @@ class _GeometryEngine:
 
     def __init__(self, paths: dict):
         self.paths = paths
+        # Per-cloud GeDi descriptors.  Separate from the per-pair score cache
+        # below because the two have different cardinalities: 5,409 clouds vs
+        # |queries| x K pairs.
+        self.descriptor_cache_dir = os.path.join(
+            paths["results_root"], "_cache", "gedi_descriptors")
         self.cache_path = os.path.join(paths["results_root"], "_cache",
                                        "geometry_scores.jsonl")
         self.cache: Dict[Tuple[str, str], dict] = {}
@@ -1615,6 +1977,16 @@ class _GeometryEngine:
                         os.path.join(cad_dir, oid + ".obj"))
                     if mesh.is_empty():
                         return None
+                    # sample_points_uniformly() draws from Open3D's GLOBAL RNG
+                    # and (as of 0.19) takes no seed argument, so two runs
+                    # sample different points from the same mesh.  That made
+                    # the geometry results irreproducible run-to-run and, once
+                    # descriptor caching was added, made every CAD entry miss:
+                    # a re-sampled cloud has a different fingerprint by
+                    # construction.  Seed per object id rather than once
+                    # globally, so a cloud is a pure function of its id and
+                    # does not depend on how many CADs were sampled before it.
+                    o3d.utility.random.seed(_cad_sample_seed(oid))
                     pcd = mesh.sample_points_uniformly(n_points)
                     pts = np.asarray(pcd.points)
                     pts -= pts.mean(axis=0)
@@ -1631,25 +2003,70 @@ class _GeometryEngine:
                     return pcd
 
             cfg = PipelineConfig(voxel_size=GEOM_VOXEL,
-                                 geometry_reranking_top_k=GEOM_SHORTLIST)
+                                 geometry_reranking_top_k=GEOM_K,
+                                 gedi_cache_dir=self.descriptor_cache_dir,
+                                 geometry_skip_icp=SKIP_ICP)
             self._reranker = UnitSphereReRanker(cfg)
         return self._reranker
 
+    def cad_cloud(self, cad_id: str):
+        """The unit-sphere CAD cloud exactly as the re-ranker builds it.
+
+        Shared with --precompute-gedi so the precomputed descriptors are
+        fingerprint-identical to what the evaluation later asks for; building
+        the cloud a second, subtly different way would make every entry miss.
+        """
+        return self._get_reranker()._load_cad_pointcloud(cad_id + ".obj")
+
     def gedi_available(self) -> bool:
         if self._gedi_available is None:
-            try:
-                from pipeline.gedi_descriptors import GeDiDescriptorModule
-                from pipeline.config import PipelineConfig
-                self._gedi_available = bool(
-                    GeDiDescriptorModule(PipelineConfig()).available)
-            except Exception as exc:
-                print(f"[geometry] GeDi probe failed: {exc}")
-                self._gedi_available = False
+            # A SINGLE 5s probe is not enough to decide whether to skip four
+            # ablations: on 2026-07-28 it timed out against a service that was
+            # healthy throughout (the GeDi Flask server is single-threaded, so
+            # /health blocks behind any in-flight descriptor call, and a
+            # cold container's first DNS lookup adds to that).  The cost of a
+            # false negative here is silently dropping E2_fitness /
+            # chamfer_ransac / chamfer_icp / O1c from the grid, so retry.
+            self._gedi_available = self._wait_for_gedi(GEDI_WAIT_S)
             if not self._gedi_available:
                 print("[geometry] GeDi service unreachable "
                       "(docker compose up -d gedi) — GeDi-signal "
                       "ablations will be skipped.")
         return self._gedi_available
+
+    def _gedi_healthy(self) -> bool:
+        """LIVE probe of the GeDi service (unlike the cached gedi_available).
+
+        Needed to tell a genuine registration failure apart from the service
+        having died mid-run.  The two are indistinguishable at the call site
+        — both surface as ``registration_failed`` — but only the first may be
+        written to the resumable cache.
+        """
+        try:
+            import requests
+            from pipeline.config import PipelineConfig
+            url = getattr(PipelineConfig(), "gedi_url", "http://gedi:5060")
+            # Generous timeout: the service is a single-threaded Flask dev
+            # server, so /health queues behind any in-flight descriptor
+            # computation (~5s each) rather than answering immediately.
+            return requests.get(f"{url}/health", timeout=30).status_code == 200
+        except Exception:
+            return False
+
+    def _wait_for_gedi(self, timeout_s: int) -> bool:
+        """Block until the GeDi service answers again, or give up.
+
+        Covers the compose auto-restart window (model reload ~60-90s).
+        """
+        import time
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self._gedi_healthy():
+                print("[geometry] GeDi is back — resuming.", flush=True)
+                time.sleep(5)          # let the model finish warming up
+                return True
+            time.sleep(10)
+        return False
 
     def _query_cloud(self, npz_path: str):
         import open3d as o3d
@@ -1659,6 +2076,22 @@ class _GeometryEngine:
         r = np.linalg.norm(pts, axis=1).max()
         if r > 0:
             pts /= r
+        # Cap only the pathological clouds.  SHREC'18 scans run from 540 to
+        # 5.7M points (median 27.5k); 145 of the 2,101 exceed 1M, and handing
+        # one of those to GeDi kills the service outright (silent `exit=0`,
+        # observed 5x on query 0d2ff0fffe... / 4.45M points).
+        #
+        # Deliberately NOT voxel_down_sample(GEOM_VOXEL): that was tried on
+        # 2026-07-28 and, while it did stop the crashes, it decimated every
+        # query to 0.5-14k points and RANSAC then ran to its iteration limit
+        # on the sparse correspondences — 40 min/query vs 26 s (~58 days for
+        # the grid).  Dense queries are what makes registration converge fast.
+        # 999k points is the largest cloud observed to work; 500k keeps a 2x
+        # margin under that and 9x under the smallest crash.
+        if len(pts) > QUERY_MAX_PTS:
+            sel = np.random.default_rng(0).choice(      # deterministic
+                len(pts), QUERY_MAX_PTS, replace=False)
+            pts = pts[np.sort(sel)]
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
         pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(
             radius=GEOM_VOXEL * 4, max_nn=30))
@@ -1681,12 +2114,23 @@ class _GeometryEngine:
         """
         # Field names are signal-scoped; "fitness" is shared by every signal
         # that performs a registration (it is the same RANSAC either way).
+        #
+        # The three ALIGNED signals all require the same GeDi + RANSAC step,
+        # which at ~35 s/query dominates everything else (the trimmed distance
+        # on its own — the chamfer_unaligned ablation — is ~0.5 s/query, and
+        # ICP is local refinement).  So they are computed together in one pass
+        # (rerank(all_aligned=True)) and cached together: whichever aligned
+        # ablation runs first pays the registration, the other two are free
+        # cache hits.  Scoring them separately cost ~60 h instead of ~26 h
+        # over the 2,101 official queries.
+        _ALIGNED_FIELDS = ("fitness", "d_ransac", "d_icp")
         need_fields = {
-            "fitness": ("fitness",),
+            "fitness": _ALIGNED_FIELDS,
             "chamfer_unaligned": ("d_unaligned",),
-            "chamfer_ransac": ("fitness", "d_ransac"),
-            "chamfer_icp": ("fitness", "d_icp"),
+            "chamfer_ransac": _ALIGNED_FIELDS,
+            "chamfer_icp": _ALIGNED_FIELDS,
         }[signal]
+        all_aligned = need_fields is _ALIGNED_FIELDS
         missing = [c for c in cad_ids
                    if any(self.cache.get((qid, c), {}).get(f) is None
                           for f in need_fields)]
@@ -1697,22 +2141,60 @@ class _GeometryEngine:
             cands = [FusedCandidate(object_id=c, fused_score=0.0,
                                     cad_model_path=c) for c in missing]
             rr.config.geometry_reranking_top_k = len(cands)
-            res = rr.rerank(cands, obs, signal=signal)
+            # A dead GeDi service fails every fit, and those failures must NOT
+            # be cached as if they were real (the B2 policy then ranks the
+            # candidate last, permanently).  On 2026-07-27 this poisoned 2,845
+            # pairs across 10h before anyone noticed.
+            #
+            # The service also restarts on its own (compose `restart:
+            # unless-stopped`) and needs ~60-90s to reload the model, so a
+            # blanket abort would end a 15h run over a 90s blip.  Wait for it
+            # to come back and retry; abort only if it stays down.
+            for attempt in range(1, GEDI_RETRIES + 1):
+                res = rr.rerank(cands, obs, signal=signal,
+                                all_aligned=all_aligned, query_id=qid)
+                n_bad = sum(1 for gc in res.candidates
+                            if gc.registration_failed)
+                if (signal == "chamfer_unaligned" or not n_bad
+                        or self._gedi_healthy()):
+                    break                      # genuine result — cache it
+                print(f"[geometry] GeDi unreachable ({n_bad}/"
+                      f"{len(res.candidates)} fits failed for query {qid}) — "
+                      f"waiting for it to come back "
+                      f"(attempt {attempt}/{GEDI_RETRIES})", flush=True)
+                if not self._wait_for_gedi(GEDI_WAIT_S):
+                    raise SystemExit(
+                        f"[geometry] GeDi service still down after "
+                        f"{GEDI_WAIT_S}s — aborting rather than caching bogus "
+                        f"failures.\n"
+                        f"  Restart it:  docker compose up -d gedi\n"
+                        f"  Then re-run; completed pairs are already cached.")
+            else:
+                raise SystemExit(
+                    f"[geometry] GeDi kept failing across {GEDI_RETRIES} "
+                    f"attempts on query {qid} — aborting rather than caching "
+                    f"bogus failures.")
             dist_field = {"chamfer_unaligned": "d_unaligned",
                           "chamfer_ransac": "d_ransac",
                           "chamfer_icp": "d_icp"}.get(signal)
+
+            def _num(x):
+                return None if x is None or np.isinf(x) else float(x)
+
             for gc in res.candidates:
                 rec = dict(self.cache.get((qid, gc.object_id),
                                           {"qid": qid, "cad": gc.object_id}))
                 rec["failed"] = bool(gc.registration_failed)
                 if "fitness" in need_fields:
                     rec["fitness"] = float(gc.ransac_fitness)
-                if dist_field:
-                    rec[dist_field] = (None if np.isinf(gc.chamfer_score)
-                                       else float(gc.chamfer_score))
-                if signal == "chamfer_icp":
+                if all_aligned:
+                    # One registration, all three aligned readouts.
+                    rec["d_ransac"] = _num(gc.d_ransac)
+                    rec["d_icp"] = _num(gc.d_icp)
                     rec["icp_fitness"] = float(gc.icp_fitness)
                     rec["icp_rmse"] = float(gc.icp_inlier_rmse)
+                elif dist_field:
+                    rec[dist_field] = _num(gc.chamfer_score)
                 self.cache[(qid, gc.object_id)] = rec
                 self._append_cache(rec)
         return {c: self.cache.get((qid, c), {}) for c in cad_ids}
@@ -1772,6 +2254,183 @@ class _GeometryEngine:
         return cad_ids
 
 
+def precompute_gedi(paths: dict, index: List[dict], object_ids: List[str],
+                    limit: Optional[int] = None) -> None:
+    """Extract and cache GeDi descriptors for every gallery CAD and query.
+
+    This is the change that makes the re-ranking depth a nearly free knob.
+    Descriptors are a **per-cloud** cost (3.446 s measured) while the RANSAC
+    fit that consumes them is **0.430 s per pair**, so without a cache the
+    descriptor bill scales with |queries| x K and dominates everything:
+    K = 20 over 2,101 queries is ~82 h uncached versus ~5 h on top of a
+    ~5.2 h one-time pass here.
+
+    Resumable and idempotent: entries validate against a fingerprint of the
+    input cloud, so an interrupted run is simply restarted, and a
+    preprocessing change invalidates the affected entries instead of silently
+    serving descriptors computed for a different cloud.
+    """
+    import time
+
+    geom = _GeometryEngine(paths)
+    if not geom.gedi_available():
+        raise SystemExit("[precompute-gedi] GeDi service unavailable — start "
+                         "it with `docker compose up -d gedi` and retry.")
+    gedi_mod = geom._get_reranker()._get_gedi()
+    cache_dir = geom.descriptor_cache_dir
+
+    cads = object_ids[:limit] if limit else object_ids
+    queries = index[:limit] if limit else index
+    total = len(cads) + len(queries)
+    print(f"[precompute-gedi] {len(cads)} CADs + {len(queries)} queries "
+          f"= {total} clouds -> {cache_dir}")
+
+    done = failed = 0
+    t0 = time.perf_counter()
+    for kind, items in (("cad", cads), ("query", queries)):
+        for n, item in enumerate(items, 1):
+            key = item if kind == "cad" else item["id"]
+            path = os.path.join(cache_dir, kind, f"{key}.npz")
+            try:
+                pcd = (geom.cad_cloud(key) if kind == "cad"
+                       else geom._query_cloud(item["npz"]))
+                if pcd is None:
+                    failed += 1
+                    continue
+                res = gedi_mod.compute_and_cache(
+                    pcd, path, provenance={"kind": kind, "key": key,
+                                           "voxel_size": GEOM_VOXEL,
+                                           "normalization": "unit_sphere"})
+                if res.descriptors_np.size == 0:
+                    failed += 1
+                else:
+                    done += 1
+            except Exception as exc:      # noqa: BLE001 — report and continue
+                print(f"[precompute-gedi] {kind}/{key}: {exc}")
+                failed += 1
+            if n % 100 == 0:
+                el = time.perf_counter() - t0
+                print(f"[precompute-gedi] {kind} {n}/{len(items)}  "
+                      f"({el / 60:.1f} min elapsed, "
+                      f"{el / max(done, 1):.2f} s/cloud)", flush=True)
+
+    el = time.perf_counter() - t0
+    print(f"[precompute-gedi] {done} cached, {failed} failed, "
+          f"{el / 3600:.2f} h total ({el / max(done, 1):.2f} s/cloud).")
+    if failed:
+        print(f"[precompute-gedi] {failed} clouds have no descriptors; the "
+              f"evaluation will fall back to computing those on the fly. "
+              f"Re-run to retry them — cached clouds are skipped.")
+
+
+def bench_rerank(paths: dict, index: List[dict], object_ids: List[str],
+                 n_pairs: int) -> None:
+    """Measure real re-ranking throughput and turn K into a budget decision.
+
+    ``--bench-gedi`` answers a different question (is full-database S_GeDi
+    feasible? no).  This one answers the question that actually has to be
+    decided: at the production settings, on THIS machine, how long does the
+    grid take at each shortlist depth?
+
+    Modelling this from component timings has been wrong twice — the RANSAC
+    fit is only ~0.43 s but the surrounding work (descriptor cache load,
+    voxel downsampling, two trimmed-distance evaluations, optional ICP)
+    dominates it.  So measure the whole per-pair path exactly as the grid
+    runs it, with the descriptor cache warm, and extrapolate from that.
+    """
+    import time
+
+    geom = _GeometryEngine(paths)
+    if not geom.gedi_available():
+        raise SystemExit("[bench] GeDi service unavailable — start it with "
+                         "`docker compose up -d gedi` and retry.")
+
+    # Spread the sample over SEVERAL queries.  Per-pair cost is driven by the
+    # query cloud (the trimmed distance and RANSAC both scale with it), and
+    # SHREC'18 scans run from 540 to 5.7M points — timing a single query would
+    # extrapolate that one scan's size to the whole grid.
+    rng = np.random.RandomState(42)
+    n_q = int(min(4, max(1, n_pairs // 3), len(index)))
+    per_q = max(1, n_pairs // n_q)
+    queries = [index[i] for i in rng.choice(len(index), n_q, replace=False)]
+    cads = [object_ids[i] for i in rng.choice(
+        len(object_ids), min(n_q * per_q, len(object_ids)), replace=False)]
+
+    # Warm the descriptor cache first so the measurement reflects steady
+    # state, not the one-time extraction that --precompute-gedi covers.
+    print(f"[bench] warming descriptor cache: {len(cads)} CADs + {n_q} "
+          f"queries (this is the --precompute-gedi cost, not per-pair cost)")
+    gedi_mod = geom._get_reranker()._get_gedi()
+    for cad in cads:
+        pcd = geom.cad_cloud(cad)
+        if pcd is not None:
+            gedi_mod.compute_and_cache(
+                pcd, os.path.join(geom.descriptor_cache_dir, "cad",
+                                  f"{cad}.npz"))
+    for q in queries:
+        gedi_mod.compute_and_cache(
+            geom._query_cloud(q["npz"]),
+            os.path.join(geom.descriptor_cache_dir, "query", f"{q['id']}.npz"))
+
+    print(f"[bench] timing {n_q} x {per_q} registrations "
+          f"(ICP {'OFF' if SKIP_ICP else 'ON'}) ...")
+    per_query_rates, n_done = [], 0
+    t0 = time.perf_counter()
+    for qi, q in enumerate(queries):
+        chunk = cads[qi * per_q:(qi + 1) * per_q]
+        if not chunk:
+            continue
+        tq = time.perf_counter()
+        for cad in chunk:
+            geom.cache.pop((q["id"], cad), None)   # bypass pair-score cache
+            geom.pair_scores(q["id"], q["npz"], [cad], "chamfer_ransac")
+        dt = (time.perf_counter() - tq) / len(chunk)
+        n_pts = len(np.load(q["npz"])["points"])
+        per_query_rates.append((q["id"], n_pts, dt))
+        n_done += len(chunk)
+    elapsed = time.perf_counter() - t0
+
+    per_pair = elapsed / max(n_done, 1)
+    print(f"\n[bench] per-query breakdown (cost tracks cloud size):")
+    print(f"{'query':<14} {'points':>9}  {'s/pair':>7}")
+    for qid, n_pts, dt in sorted(per_query_rates, key=lambda r: r[1]):
+        print(f"{qid[:12]:<14} {n_pts:>9,}  {dt:>7.2f}")
+    if len(per_query_rates) > 1:
+        rates = [r[2] for r in per_query_rates]
+        print(f"[bench] spread across queries: {min(rates):.2f}-"
+              f"{max(rates):.2f} s/pair — the projection below uses the mean, "
+              f"so treat it as +/-{100 * (max(rates) - min(rates)) / (2 * per_pair):.0f}%.")
+    cads = cads[:n_done]
+    nq = len(index)
+    print(f"\n[bench] {n_done} pairs in {elapsed:.1f}s -> "
+          f"{per_pair:.2f} s/pair  (ICP {'OFF' if SKIP_ICP else 'ON'})")
+    print(f"[bench] projected wall-clock over {nq:,} queries:\n")
+    print(f"{'K':>6}  {'registrations':>14}  {'hours':>8}  {'days':>6}")
+    for k in HITRATE_KS:
+        pairs = nq * k
+        h = pairs * per_pair / 3600.0
+        print(f"{k:>6}  {pairs:>14,}  {h:>8.1f}  {h / 24:>6.1f}")
+    curve = load_hitrate_curve(paths["results_root"], "sub")
+    if curve:
+        print(f"\n{'K':>6}  {'hit_sub@K':>10}  {'hours':>8}  "
+              f"{'pts/hour':>9}   (marginal return)")
+        prev_k = prev_v = prev_h = None
+        for k in sorted(curve):
+            h = nq * k * per_pair / 3600.0
+            marg = ("" if prev_k is None or h <= prev_h
+                    else f"{100 * (curve[k] - prev_v) / (h - prev_h):9.2f}")
+            print(f"{k:>6}  {curve[k]:>10.4f}  {h:>8.1f}  {marg:>9}")
+            prev_k, prev_v, prev_h = k, curve[k], h
+        print("\n[bench] pick K where pts/hour stops justifying the wall "
+              "clock; the ceiling column is what re-ranking can reach at all.")
+    else:
+        print(f"\n[bench] run {BASE_ABLATION} first to get the hit_sub@K "
+              f"ceiling alongside these costs.")
+    if not SKIP_ICP:
+        print("[bench] re-run with --no-icp to see the cost without ICP "
+              "(~38% cheaper at K=5; ICP moved nDCG by 0.0001 there).")
+
+
 def bench_gedi(paths: dict, index: List[dict], object_ids: List[str],
                n_pairs: int) -> None:
     """Measure the per-pair GeDi+RANSAC cost and extrapolate to full-database.
@@ -1809,31 +2468,87 @@ def bench_gedi(paths: dict, index: List[dict], object_ids: List[str],
     total_s = per_fit * GEDI_FULL_DB_PAIRS
     print(f"\n[bench] {len(cads)} fits in {elapsed:.1f}s "
           f"-> {per_fit * 1000:.0f} ms per fit")
-    print(f"[bench] full-database S_GeDi = 1,452 queries x {N_CADS} CADs "
-          f"= {GEDI_FULL_DB_PAIRS:,} fits")
+    print(f"[bench] full-database S_GeDi = {N_QUERIES_TOTAL:,} queries x "
+          f"{N_CADS} CADs = {GEDI_FULL_DB_PAIRS:,} fits")
     print(f"[bench] extrapolated: {total_s / 3600:.0f} h "
           f"({total_s / 86400:.1f} days) of RANSAC alone, per ablation cell.")
     print("[bench] -> S_GeDi is reported as a post-fusion re-ranker only "
           "(thesis O1c/O1d).")
 
 
+def _average_ranks(scores: Sequence[float]) -> np.ndarray:
+    """Ranks with 1 = best; tied scores share their mean rank.
+
+    Averaging ties matters here because ``-inf`` is the failure sentinel: a
+    query whose whole shortlist failed to register would otherwise get an
+    arbitrary stable-sort order presented as a ranking.
+    """
+    s = np.asarray(scores, dtype=float)
+    order = np.argsort(-s, kind="stable")
+    ranks = np.empty(len(s), dtype=float)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and s[order[j + 1]] == s[order[i]]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return ranks
+
+
+# Combined geometry signals -> the registration signal they read from.  Both
+# use the aligned pass, so they are pure cache hits once any of E2_fitness /
+# E2_chamfer_ransac / E2_chamfer_icp has run on the same shortlist.
+COMBINED_SIGNALS = {"both_borda": "chamfer_ransac",
+                    "both_borda_base": "chamfer_ransac"}
+
+
 def apply_geometry(spec: AblationSpec, qid: str, npz_path: str,
                    ranking: List[int], object_ids: List[str],
                    geom: _GeometryEngine) -> List[int]:
-    """Apply the spec's geometry stage to a derived base ranking."""
+    """Apply the spec's geometry stage to a derived base ranking.
+
+    Only the first :data:`GEOM_K` entries are touched; the tail keeps its
+    base-fusion order and the full ranking is always returned.  Truncating to
+    K here would make the official ``precision(x)`` divide by K and report a
+    meaningless inflated number (STAGE1_EVALUATION_DESIGN §3).
+    """
     idx = {oid: i for i, oid in enumerate(object_ids)}
 
     if spec.geometry == "scale_gate":
-        top = [object_ids[i] for i in ranking[:GEOM_SHORTLIST]]
+        top = [object_ids[i] for i in ranking[:GEOM_K]]
         new = geom.scale_gate(npz_path, top)
-        return [idx[o] for o in new] + ranking[GEOM_SHORTLIST:]
+        return [idx[o] for o in new] + ranking[GEOM_K:]
 
     # Sub-step B2: re-order the fusion top-k shortlist.
-    top = [object_ids[i] for i in ranking[:GEOM_SHORTLIST]]
-    recs = geom.pair_scores(qid, npz_path, top, spec.geometry)
-    scored = sorted(top, key=lambda o: geom.geometry_score(
-        recs[o], spec.geometry), reverse=True)
-    return [idx[o] for o in scored] + ranking[GEOM_SHORTLIST:]
+    top = [object_ids[i] for i in ranking[:GEOM_K]]
+    signal = COMBINED_SIGNALS.get(spec.geometry, spec.geometry)
+    recs = geom.pair_scores(qid, npz_path, top, signal)
+
+    if spec.geometry in COMBINED_SIGNALS:
+        # Mean rank (Borda count) over the two geometry signals — and, for
+        # O1e, over the base fusion rank as a third voter.
+        #
+        # A raw sum is NOT an option: RANSAC fitness spans ~0.23 while D_trim
+        # spans ~0.09, so fitness + (-D_trim) reproduces the fitness-only
+        # ranking exactly and the "fusion" fuses nothing.  Borda is scale-free
+        # and parameter-free [Aslam & Montague, SIGIR 2001].  RRF was rejected
+        # for this: its k=60 was calibrated on TREC lists of thousands, and at
+        # K=20 its weights span only 1/61..1/80 (1.3x), so it degenerates into
+        # exactly this mean rank while implying a tuned constant.
+        fit = [geom.geometry_score(recs[o], "fitness")[0] for o in top]
+        dist = [geom.geometry_score(recs[o], "chamfer_ransac")[0] for o in top]
+        votes = [_average_ranks(fit), _average_ranks(dist)]
+        if spec.geometry == "both_borda_base":
+            # Candidates arrive in base-fusion order, so position IS the base
+            # rank; negate so that higher = better like the other two.
+            votes.append(_average_ranks([-i for i in range(len(top))]))
+        mean_rank = np.mean(votes, axis=0)
+        scored = [top[i] for i in np.argsort(mean_rank, kind="stable")]
+    else:
+        scored = sorted(top, key=lambda o: geom.geometry_score(
+            recs[o], spec.geometry), reverse=True)
+    return [idx[o] for o in scored] + ranking[GEOM_K:]
 
 
 # ===========================================================================
@@ -1856,7 +2571,10 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
                          for o in object_ids], dtype=object)
 
     qlist = index[:limit] if limit else index
-    sums = defaultdict(float)
+    sums = defaultdict(float)          # Table A — official scorer
+    sums_b = defaultdict(float)        # Table B — depth-matched
+    shortlist_sizes: List[int] = []    # |S'| for the threshold scope
+    n_fallback = 0
     per_query = []
     for q in qlist:
         qid = q["id"]
@@ -1864,8 +2582,9 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
         qc = q_label[0]
         if freqs.get(qc, 0) == 0:
             continue        # query category unknown to the official GT
+        diag: dict = {}
         ranking = derive_ranking(spec, qid, stores, object_ids,
-                                 fusion_mod, cad_dir)
+                                 fusion_mod, cad_dir, diag)
         if spec.geometry:
             ranking = apply_geometry(spec, qid, q["npz"], ranking,
                                      object_ids, geom)
@@ -1875,43 +2594,99 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
             continue
         for k, v in m.items():
             sums[k] += v
+        # Table B: cut at the geometry depth, where re-ranking is visible.
+        mb = score_depth_matched(ranked_ids, q_label, cad_labels, GEOM_K)
+        for k, v in mb.items():
+            sums_b[k] += v
+        if "shortlist_size" in diag:
+            shortlist_sizes.append(diag["shortlist_size"])
+            n_fallback += int(diag["fallback"])
         rels_cat = obj_cats[np.asarray(ranking)] == qc
         first_rel = int(np.argmax(rels_cat)) + 1 if rels_cat.any() else -1
-        per_query.append({
+        rec = {
             "id": qid, "category": list(q_label),
             "top10": [[object_ids[i],
                        list(cad_labels.get(object_ids[i], (None, None)))]
                       for i in ranking[:10]],
             "first_relevant_rank": first_rel,
             "AP": round(m["AP"], 4), "nDCG": round(m["nDCG"], 4),
-        })
+            # Kept per query so the paired statistics (deltas vs BASE,
+            # N_changed, bootstrap CI) can be computed post hoc without
+            # re-running anything — geometry arms differ from BASE only by a
+            # K-element permutation, so unpaired means would be swamped by the
+            # unchanged majority.
+            "NN_cat": mb.get("NN_cat"), "NN_sub": mb.get("NN_sub"),
+            "MRR": round(mb.get("MRR", 0.0), 4),
+            "nDCG_K": round(mb.get("nDCG_K", 0.0), 4),
+        }
+        if diag:
+            rec["shortlist_size"] = diag.get("shortlist_size")
+            rec["fallback"] = diag.get("fallback")
+        per_query.append(rec)
 
     nq = len(per_query)
     metrics = {k: (sums[k] / nq if nq else float("nan"))
                for k in ("nDCG", "precision", "recall", "F1", "AP",
                          "NNT1", "NNT2")}
+    # Table B. Reported for EVERY arm, not just the geometry ones: it is
+    # post-hoc arithmetic over the same ranking, so it costs nothing, and it
+    # lets a geometry arm be compared against any baseline on equal footing.
+    metrics_depth = {k: (sums_b[k] / nq if nq else float("nan"))
+                     for k in sorted(sums_b)}
     summary = {
         "ablation": spec.name, "group": spec.group,
         "question": spec.question, "thesis_ref": spec.thesis_ref,
         "bib": spec.bib, "notes": spec.notes,
         "num_queries": nq, "gallery_size": len(object_ids),
         "metrics": metrics,
+        "metrics_depth": metrics_depth,
         "config": {
             "channels": {c: list(v) for c, v in spec.channels.items()},
             "weights": list(spec.weights),
             "fusion_method": spec.fusion_method,
             "scope": spec.scope, "geometry": spec.geometry,
             "clip_prune_k": CLIP_PRUNE_K,
-            "geometry_shortlist": GEOM_SHORTLIST,
+            "clip_tau": spec_tau(spec),
+            "geometry_k": GEOM_K,
+            "skip_icp": SKIP_ICP,
+            "geom_voxel": GEOM_VOXEL,
+            # Derived, not chosen: step_b2 uses 1.5 x voxel_size (Open3D
+            # convention) and the clouds are unit-sphere, so diameter = 2.
+            "inlier_threshold_pct_diameter": 100.0 * GEOM_VOXEL * 1.5 / 2.0,
         },
         "limit_queries": limit,
     }
+    if shortlist_sizes:
+        # The faithful (variable-length) reading of the OSCAR threshold arm.
+        # These are NOT a table row — precision() divides by the submitted
+        # list length, so a short list is not the same quantity as the padded
+        # rows. They are reported as a characterising paragraph instead.
+        s = np.array(shortlist_sizes, dtype=float)
+        summary["shortlist_stats"] = {
+            "tau_text": spec_tau(spec),
+            "median": float(np.median(s)),
+            "q1": float(np.percentile(s, 25)),
+            "q3": float(np.percentile(s, 75)),
+            "min": int(s.min()), "max": int(s.max()),
+            "fallback_rate": n_fallback / len(s),
+        }
     with open(os.path.join(out_dir, "metrics_summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     with open(os.path.join(out_dir, "results_per_query.json"), "w") as f:
         json.dump(per_query, f)
     print(f"[run:{spec.name}] n={nq}  nDCG={metrics['nDCG']:.4f}  "
           f"P={metrics['precision']:.4f}  mAP={metrics['AP']:.4f}")
+    print(f"[run:{spec.name}] K={GEOM_K}  "
+          f"NN_sub={metrics_depth.get('NN_sub', float('nan')):.4f}  "
+          f"NN_cat={metrics_depth.get('NN_cat', float('nan')):.4f}  "
+          f"MRR={metrics_depth.get('MRR', float('nan')):.4f}  "
+          f"nDCG@K={metrics_depth.get('nDCG_K', float('nan')):.4f}")
+    if "shortlist_stats" in summary:
+        st = summary["shortlist_stats"]
+        print(f"[run:{spec.name}] |S'| median={st['median']:.0f} "
+              f"IQR=[{st['q1']:.0f},{st['q3']:.0f}] "
+              f"range=[{st['min']},{st['max']}] "
+              f"fallback={100 * st['fallback_rate']:.1f}%")
     return summary
 
 
@@ -1955,7 +2730,14 @@ def write_alias(spec: AblationSpec, paths: dict) -> Optional[dict]:
 
 # Official SHREC'18 metric set (metrics.py, all at top-f).  nDCG is the
 # graded model-selection metric; AP averaged over queries is the mAP.
+# TABLE A — official SHREC'18 scorer, cut at f = category size.
 METRIC_COLS = ("nDCG", "precision", "recall", "F1", "AP", "NNT1", "NNT2")
+# TABLE B — depth-matched, cut at GEOM_K.  Reported separately and never in
+# the same table as METRIC_COLS: precision/recall/F1/NNT1/NNT2 above are
+# invariant to any re-ranking at K < f, and the two nDCGs are different
+# quantities (Table A's is the official off-by-one one over the f-prefix,
+# Table B's is corrected and cut at K).  See STAGE1_EVALUATION_DESIGN §2.
+DEPTH_COLS = ("NN_cat", "NN_sub", "MRR", "MRR_sub", "mAP_K", "nDCG_K")
 
 
 def aggregate(paths: dict) -> None:
@@ -2044,6 +2826,98 @@ def aggregate(paths: dict) -> None:
     with open(tex_path, "w") as f:
         f.write("\n".join(lines))
     print(f"[aggregate] LaTeX table -> {tex_path}")
+
+    # --- TABLE B: depth-matched metrics -----------------------------------
+    # A separate file on purpose.  Merging the two would put the official
+    # (buggy, f-prefix) nDCG next to the corrected nDCG@K and invite the
+    # reader to compare them, and would imply the invariant Table A columns
+    # discriminate between geometry arms when they provably cannot.
+    depth_rows = [(spec, s) for spec, s in rows if s.get("metrics_depth")]
+    if depth_rows:
+        k_used = {s["config"].get("geometry_k") for _, s in depth_rows}
+        csv_b = os.path.join(paths["results_root"],
+                             "stage1_summary_depth.csv")
+        with open(csv_b, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["ablation", "group", "alias_of", "num_queries", "K",
+                        *DEPTH_COLS,
+                        *[f"hit_sub@{k}" for k in HITRATE_KS]])
+            for spec, s in depth_rows:
+                md = s["metrics_depth"]
+                w.writerow([
+                    spec.name, spec.group, s.get("alias_of", ""),
+                    s["num_queries"], s["config"].get("geometry_k", ""),
+                    *[f"{md.get(m, float('nan')):.4f}" for m in DEPTH_COLS],
+                    *[f"{md.get(f'hit_sub@{k}', float('nan')):.4f}"
+                      for k in HITRATE_KS]])
+        print(f"[aggregate] {len(depth_rows)} configs (Table B) -> {csv_b}")
+        if len(k_used) > 1:
+            print(f"[aggregate] WARNING: Table B mixes geometry depths "
+                  f"{sorted(x for x in k_used if x is not None)} — the "
+                  f"@K columns are not comparable across those rows. "
+                  f"Re-run with a single --geom-k.")
+
+        blines = [
+            "% Auto-generated by experiments/experiment1_shrec18_stage1.py",
+            "% Stage 1, TABLE B: depth-matched metrics at the geometry depth K.",
+            "% The official scalar metrics (stage1_summary.tex) are cut at",
+            "% f = category size and are order-insensitive within that prefix,",
+            "% so they cannot resolve a top-K re-ranking; these can.",
+            "% NN_sub (sub-category grade) is the headline for the geometry arms.",
+            r"\begin{tabular}{ll" + "r" * len(DEPTH_COLS) + "}",
+            r"\toprule",
+            "Config & Ablation & " + " & ".join(
+                c.replace("_", r"\_") for c in DEPTH_COLS) + r" \\",
+            r"\midrule",
+        ]
+        last_group = None
+        for spec, s in depth_rows:
+            if last_group is not None and spec.group != last_group:
+                blines.append(r"\addlinespace")
+            last_group = spec.group
+            md = s["metrics_depth"]
+            vals = " & ".join(f"{md.get(m, float('nan')):.3f}"
+                              for m in DEPTH_COLS)
+            blines.append(f"{tex(spec.name)} & {tex(spec.group)} & {vals} \\\\")
+        blines += [r"\bottomrule", r"\end{tabular}", ""]
+        tex_b = os.path.join(paths["results_root"],
+                             "stage1_summary_depth.tex")
+        with open(tex_b, "w") as f:
+            f.write("\n".join(blines))
+        print(f"[aggregate] LaTeX Table B -> {tex_b}")
+
+    # --- OSCAR threshold arm: the faithful (variable-length) reading -------
+    # Deliberately NOT a table row: precision() divides by the submitted list
+    # length, so a short list is not the same quantity as a padded one.
+    for spec, s in rows:
+        st = s.get("shortlist_stats")
+        if not st:
+            continue
+        print(f"[aggregate] {spec.name}: tau_text={st['tau_text']}  "
+              f"|S'| median={st['median']:.0f} "
+              f"IQR=[{st['q1']:.0f},{st['q3']:.0f}] "
+              f"range=[{st['min']},{st['max']}]  "
+              f"fallback={100 * st['fallback_rate']:.1f}%")
+        # The fallback rate, NOT the median, is the degeneracy test.  When the
+        # threshold admits nothing the arm falls back to top-k, so |S'| reads
+        # back as exactly k and the median looks perfectly healthy while the
+        # threshold mechanism is in fact never running.  Measured on SHREC'18:
+        # tau=0.37 falls back on 96.9% of queries, and the arm then reproduces
+        # the top-k cascade to within 0.0015 nDCG.
+        if st["fallback_rate"] > 0.25:
+            print(f"[aggregate] WARNING: tau_text={st['tau_text']} admits "
+                  f"nothing on {100 * st['fallback_rate']:.1f}% of queries — "
+                  f"those fall back to top-{CLIP_PRUNE_K}, so this arm is "
+                  f"mostly reproducing the top-k cascade, not the threshold "
+                  f"mechanism. Report it as a *negative transfer* result "
+                  f"(tau was calibrated on MI3DOR/YCB-V) rather than as "
+                  f"OSCAR's pruning.")
+        elif st["median"] < 5 or st["median"] > 0.5 * N_CADS:
+            print(f"[aggregate] WARNING: tau_text={st['tau_text']} is "
+                  f"degenerate on this dataset (median |S'| = "
+                  f"{st['median']:.0f} of {N_CADS}). The arm measures a "
+                  f"mistuned constant, not OSCAR's method — say so in the "
+                  f"write-up or report a recalibrated tau alongside it.")
 
 
 # ===========================================================================
@@ -2147,6 +3021,27 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                     help="gallery PC: build all reference embedding caches "
                          "(no queries/ablations) + a provenance manifest to "
                          "ship to the eval PC")
+    ap.add_argument("--geom-k", type=int, default=None, metavar="K",
+                    help="geometry re-ranking depth. Default: derived from the "
+                         "base-fusion hit-rate curve (smallest K within 2 pts "
+                         "of the deepest measured K); falls back to "
+                         f"{GEOM_SHORTLIST} if BASE has not been run yet")
+    ap.add_argument("--hit-rate-curve", action="store_true",
+                    help="print the base-fusion hit-rate@K ceiling and the K "
+                         "it implies, then exit")
+    ap.add_argument("--no-icp", action="store_true",
+                    help="skip ICP refinement in B2 (~38%% of the per-pair "
+                         "cost for a measured 0.0001 nDCG effect at K=5); "
+                         "E2_chamfer_icp is dropped from the selection since "
+                         "that arm IS the ICP measurement")
+    ap.add_argument("--bench-rerank", type=int, default=0, metavar="N",
+                    help="time N real registrations at the production "
+                         "settings (warm descriptor cache) and print the "
+                         "K -> wall-clock table, then exit")
+    ap.add_argument("--precompute-gedi", action="store_true",
+                    help="extract and cache GeDi descriptors for all gallery "
+                         "CADs and queries, then exit (~5.2 h, ~4.1 GB; makes "
+                         "the geometry depth K nearly free afterwards)")
     ap.add_argument("--bench-gedi", type=int, default=0, metavar="N",
                     help="time N GeDi+RANSAC fits and extrapolate the cost of "
                          "full-database S_GeDi, then exit (see thesis O1)")
@@ -2172,6 +3067,33 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
              "stage1_root": DEFAULTS["stage1_root"]}
     os.makedirs(os.path.join(paths["results_root"], "_cache"), exist_ok=True)
 
+    if args.hit_rate_curve:
+        print_hitrate_curve(paths["results_root"])
+        return
+
+    global SKIP_ICP
+    SKIP_ICP = args.no_icp
+
+    # ---- geometry depth K ------------------------------------------------
+    # Geometry re-ranks a shortlist but can never pull a relevant CAD into it,
+    # so base hit-rate@K bounds every top-1 metric the stage can reach.  K is
+    # therefore read off that curve rather than chosen, which is what makes the
+    # constant defensible in the write-up (STAGE1_EVALUATION_DESIGN §3).
+    global GEOM_K
+    if args.geom_k is not None:
+        GEOM_K = args.geom_k
+        print(f"[config] geometry depth K = {GEOM_K} (explicit --geom-k)")
+    else:
+        curve = load_hitrate_curve(paths["results_root"], "sub")
+        if curve:
+            GEOM_K = choose_geom_k(curve)
+            print(f"[config] geometry depth K = {GEOM_K} (from the "
+                  f"{BASE_ABLATION} hit_sub@K curve, tol {HITRATE_TOL:.0%})")
+        else:
+            GEOM_K = GEOM_SHORTLIST
+            print(f"[config] geometry depth K = {GEOM_K} (fallback: "
+                  f"{_no_curve_reason(paths['results_root'])})")
+
     # Make repo modules importable regardless of CWD.
     for p in (ROOT, os.path.join(ROOT, "object_retrieval")):
         if p not in sys.path:
@@ -2187,6 +3109,22 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         object_ids = validate_inputs(paths, args.allow_partial_gallery)
         precompute_gallery(paths, object_ids,
                            resume=args.resume and not args.overwrite)
+        return
+
+    # ---- one-time per-cloud descriptor extraction and exit ---------------
+    if args.precompute_gedi:
+        object_ids = validate_inputs(paths, args.allow_partial_gallery)
+        gt = load_official_gt(paths["data_root"], paths["stage1_root"])
+        index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
+        precompute_gedi(paths, index, object_ids, args.limit_queries)
+        return
+
+    # ---- re-ranking throughput: turns K into a measured budget decision ---
+    if args.bench_rerank:
+        object_ids = validate_inputs(paths, args.allow_partial_gallery)
+        gt = load_official_gt(paths["data_root"], paths["stage1_root"])
+        index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
+        bench_rerank(paths, index, object_ids, args.bench_rerank)
         return
 
     # ---- GeDi cost benchmark (thesis O1 feasibility claim) and exit ------
@@ -2237,6 +3175,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         except Exception as exc:
             print(f"[pass:{pkey}] FAILED ({exc}) — dependent ablations "
                   f"will be skipped.")
+
+    # ---- calibrate tau, if any selected arm needs it ----------------------
+    if any(s.scope == "clip_threshold_cal" for s in todo) and "base" in stores:
+        global CLIP_TAU_CAL
+        CLIP_TAU_CAL = calibrate_tau(
+            stores, [q["id"] for q in (index[:args.limit_queries]
+                                       if args.limit_queries else index)])
 
     # ---- tier 2: ablations ----------------------------------------------
     geom = _GeometryEngine(paths) if any(s.geometry for s in todo) else None

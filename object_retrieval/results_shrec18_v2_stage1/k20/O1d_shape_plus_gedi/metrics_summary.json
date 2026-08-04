@@ -1,0 +1,71 @@
+{
+  "ablation": "O1d_shape_plus_gedi",
+  "group": "O1",
+  "question": "S_shape in fusion + S_GeDi rerank",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "caraffaFreeZeTrainingfreeZeroshot2025",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6243008110594456,
+    "precision": 0.2862772470865444,
+    "recall": 0.2862772470865444,
+    "F1": 0.2862772470865444,
+    "AP": 0.17578114701390377,
+    "NNT1": 0.2862772470865444,
+    "NNT2": 0.2862772470865444
+  },
+  "metrics_depth": {
+    "MRR": 0.6107029684743677,
+    "MRR_sub": 0.5274340603064733,
+    "NN_cat": 0.5287958115183246,
+    "NN_sub": 0.4497858162779629,
+    "hit_cat@1": 0.5287958115183246,
+    "hit_cat@10": 0.7834364588291289,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8538791051880057,
+    "hit_cat@5": 0.7072822465492623,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.4497858162779629,
+    "hit_sub@10": 0.6891956211327939,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7501189909566873,
+    "hit_sub@5": 0.6258924321751547,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.32316093406541563,
+    "nDCG_K": 0.3826675230000549
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "fitness",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null,
+  "alias_of": "E2_fitness"
+}

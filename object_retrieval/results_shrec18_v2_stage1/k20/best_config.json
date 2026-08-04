@@ -1,0 +1,48 @@
+{
+  "selection_rule": "highest (graded) nDCG on SHREC'18 ObjectNN+ under the official evaluation, mAP as tie-breaker (thesis subsec:eval_stage1_retrieval)",
+  "name": "E2_both",
+  "metrics": {
+    "nDCG": 0.629172290349021,
+    "precision": 0.2862772470865444,
+    "recall": 0.2862772470865444,
+    "F1": 0.2862772470865444,
+    "AP": 0.17659135886120741,
+    "NNT1": 0.2862772470865444,
+    "NNT2": 0.2862772470865444
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "both_borda",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "frozen_for": [
+    "Stage 2 (MI3DOR)",
+    "Stage 3a/3b (BOP pose)",
+    "Stage 5 (efficiency)"
+  ]
+}

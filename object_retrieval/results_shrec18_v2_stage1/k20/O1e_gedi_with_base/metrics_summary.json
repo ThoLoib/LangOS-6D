@@ -1,0 +1,70 @@
+{
+  "ablation": "O1e_gedi_with_base",
+  "group": "O1",
+  "question": "geometry + base fusion rank, combined by mean rank (Borda)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "aslamModelsMetasearch2001, pulliOSCAROpenSetCAD2025",
+  "notes": "Renamed from the original 'S_GeDi inside the fusion score': full-database S_GeDi is infeasible (see comment above), so this evaluates the same question restricted to the top-K shortlist. Documented as an approximation.",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6232418305147619,
+    "precision": 0.2862772470865444,
+    "recall": 0.2862772470865444,
+    "F1": 0.2862772470865444,
+    "AP": 0.1768580392896203,
+    "NNT1": 0.2862772470865444,
+    "NNT2": 0.2862772470865444
+  },
+  "metrics_depth": {
+    "MRR": 0.6025082605888142,
+    "MRR_sub": 0.524035814600219,
+    "NN_cat": 0.5126130414088529,
+    "NN_sub": 0.4402665397429795,
+    "hit_cat@1": 0.5126130414088529,
+    "hit_cat@10": 0.7881960970966206,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8538791051880057,
+    "hit_cat@5": 0.7120418848167539,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.4402665397429795,
+    "hit_sub@10": 0.6906235126130414,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7501189909566873,
+    "hit_sub@5": 0.6235126130414088,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.32226211186441206,
+    "nDCG_K": 0.3825056026541376
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "both_borda_base",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

@@ -1,0 +1,66 @@
+{
+  "ablation": "O1c_gedi_post_fusion",
+  "group": "O1",
+  "question": "S_GeDi as post-fusion re-ranker (no S_shape)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6067500333175601,
+    "precision": 0.253532290091608,
+    "recall": 0.253532290091608,
+    "F1": 0.253532290091608,
+    "AP": 0.14536345897136907,
+    "NNT1": 0.253532290091608,
+    "NNT2": 0.253532290091608
+  },
+  "metrics_depth": {
+    "MRR": 0.6055655262944628,
+    "MRR_sub": 0.5164795898098049,
+    "NN_cat": 0.5135649690623513,
+    "NN_sub": 0.42836744407425037,
+    "hit_cat@1": 0.5135649690623513,
+    "hit_cat@10": 0.789148024750119,
+    "hit_cat@100": 0.9695383150880533,
+    "hit_cat@20": 0.8667301285102332,
+    "hit_cat@5": 0.7110899571632556,
+    "hit_cat@50": 0.9267015706806283,
+    "hit_sub@1": 0.42836744407425037,
+    "hit_sub@10": 0.6987148976677773,
+    "hit_sub@100": 0.9190861494526416,
+    "hit_sub@20": 0.7801047120418848,
+    "hit_sub@5": 0.6149452641599239,
+    "hit_sub@50": 0.8567348881485007,
+    "mAP_K": 0.24946081634489736,
+    "nDCG_K": 0.33217091689545797
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ]
+    },
+    "weights": [
+      0.43,
+      0.57,
+      0.0
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "fitness",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

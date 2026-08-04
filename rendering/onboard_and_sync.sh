@@ -105,6 +105,7 @@ case "$DATASET" in
     housecat6d) IMAGES_SUBDIR="object_images/housecat6d" ;;
     shrec18)   IMAGES_SUBDIR="object_images/shrec18" ;;
     shrec18_fixed) IMAGES_SUBDIR="object_images/shrec18_fixed" ;;
+    shrec18_v2) IMAGES_SUBDIR="object_images/shrec18_v2" ;;
     tless)     IMAGES_SUBDIR="object_images/tless" ;;
     lmo)       IMAGES_SUBDIR="object_images/lmo" ;;
     itodd)     IMAGES_SUBDIR="object_images/itodd" ;;

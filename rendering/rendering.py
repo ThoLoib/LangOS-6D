@@ -24,6 +24,14 @@ allowed_exts = ['.glb', '.obj', '.ply']  # PLY added for BOP datasets (T-LESS, L
 overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
 render_only = os.environ.get('RENDER_ONLY', '').strip()
 num_views = int(os.environ.get('NUM_VIEWS', '42'))  # Ablation O4; default 42 (full icosphere)
+# Parallel sharding (opt-in). When SHARD_TOTAL > 1, this process renders only
+# the models whose position in the sorted model list satisfies
+#   index % SHARD_TOTAL == SHARD_INDEX
+# so N processes with SHARD_INDEX=0..N-1 split the dataset into N disjoint,
+# balanced parts and can run concurrently (see rendering/parallel_render.sh).
+# Default SHARD_TOTAL=1 => renders everything: behaviour is unchanged.
+shard_index = int(os.environ.get('SHARD_INDEX', '0'))
+shard_total = int(os.environ.get('SHARD_TOTAL', '1'))
 
 def rclone_checkpoint(obj_idx):
     """Hook for periodic rclone sync.  Currently a no-op inside Docker;
@@ -247,7 +255,9 @@ for dirpath, _, files in os.walk(object_folder):
 model_files = sorted((mid, fp) for mid, (_, fp) in model_choice.items())
 
 pending_models = []
-for model_id, filename in model_files:
+for _shard_idx, (model_id, filename) in enumerate(model_files):
+    if shard_total > 1 and _shard_idx % shard_total != shard_index:
+        continue
     if render_only and model_id != render_only:
         continue
     folder_path = os.path.join(object_images, model_id)

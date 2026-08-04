@@ -1,0 +1,70 @@
+{
+  "ablation": "E6_rrf",
+  "group": "E6",
+  "question": "reciprocal rank fusion (RRF, k=60)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "cormackReciprocalRankFusion2009",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5792462068274793,
+    "precision": 0.2611198848907667,
+    "recall": 0.2611198848907667,
+    "F1": 0.2611198848907667,
+    "AP": 0.14003902597302584,
+    "NNT1": 0.2611198848907667,
+    "NNT2": 0.2611198848907667
+  },
+  "metrics_depth": {
+    "MRR": 0.5025927480948911,
+    "MRR_sub": 0.427155995991768,
+    "NN_cat": 0.37743931461208946,
+    "NN_sub": 0.3227034745359353,
+    "hit_cat@1": 0.37743931461208946,
+    "hit_cat@10": 0.7667777248929082,
+    "hit_cat@100": 0.9814374107567825,
+    "hit_cat@20": 0.8562589243217515,
+    "hit_cat@5": 0.6515944788196097,
+    "hit_cat@50": 0.9462160875773441,
+    "hit_sub@1": 0.3227034745359353,
+    "hit_sub@10": 0.6492146596858639,
+    "hit_sub@100": 0.9466920514040933,
+    "hit_sub@20": 0.752022846263684,
+    "hit_sub@5": 0.5449785816277963,
+    "hit_sub@50": 0.8819609709662065,
+    "mAP_K": 0.2735351428163866,
+    "nDCG_K": 0.3433051298217264
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "rank_fusion",
+    "scope": "full",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

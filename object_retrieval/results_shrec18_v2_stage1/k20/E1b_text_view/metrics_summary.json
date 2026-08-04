@@ -1,0 +1,66 @@
+{
+  "ablation": "E1b_text_view",
+  "group": "E1",
+  "question": "(S_text, S_view) \u2014 OSCAR's channel set, full-database fusion",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "pulliOSCAROpenSetCAD2025",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5621505040433292,
+    "precision": 0.25459450517972565,
+    "recall": 0.25459450517972565,
+    "F1": 0.25459450517972565,
+    "AP": 0.14615102245550124,
+    "NNT1": 0.25459450517972565,
+    "NNT2": 0.25459450517972565
+  },
+  "metrics_depth": {
+    "MRR": 0.4894792201800118,
+    "MRR_sub": 0.41431959416902936,
+    "NN_cat": 0.38457877201332696,
+    "NN_sub": 0.3265111851499286,
+    "hit_cat@1": 0.38457877201332696,
+    "hit_cat@10": 0.7187053783912423,
+    "hit_cat@100": 0.9695383150880533,
+    "hit_cat@20": 0.8224654926225606,
+    "hit_cat@5": 0.6192289386006663,
+    "hit_cat@50": 0.9267015706806283,
+    "hit_sub@1": 0.3265111851499286,
+    "hit_sub@10": 0.6092336982389338,
+    "hit_sub@100": 0.9190861494526416,
+    "hit_sub@20": 0.7153736316039981,
+    "hit_sub@5": 0.518324607329843,
+    "hit_sub@50": 0.8567348881485007,
+    "mAP_K": 0.26153653489165024,
+    "nDCG_K": 0.32250949584752864
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ]
+    },
+    "weights": [
+      0.43,
+      0.57,
+      0.0
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

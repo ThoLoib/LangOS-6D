@@ -1,0 +1,70 @@
+{
+  "ablation": "E1d_clip_pruned",
+  "group": "E1",
+  "question": "S_view/S_shape scored only on the CLIP top-20 shortlist",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "pulliOSCAROpenSetCAD2025",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.45798233268462524,
+    "precision": 0.14243654781399345,
+    "recall": 0.14243654781399345,
+    "F1": 0.14243654781399345,
+    "AP": 0.050271223012071126,
+    "NNT1": 0.14243654781399345,
+    "NNT2": 0.14243654781399345
+  },
+  "metrics_depth": {
+    "MRR": 0.4209800593295881,
+    "MRR_sub": 0.3270706498110965,
+    "NN_cat": 0.29938124702522606,
+    "NN_sub": 0.23036649214659685,
+    "hit_cat@1": 0.29938124702522606,
+    "hit_cat@10": 0.6601618277010948,
+    "hit_cat@100": 0.9409804854831033,
+    "hit_cat@20": 0.7263207996192289,
+    "hit_cat@5": 0.5597334602570204,
+    "hit_cat@50": 0.8791051880057116,
+    "hit_sub@1": 0.23036649214659685,
+    "hit_sub@10": 0.5168967158495954,
+    "hit_sub@100": 0.8643503093764874,
+    "hit_sub@20": 0.586863398381723,
+    "hit_sub@5": 0.42836744407425037,
+    "hit_sub@50": 0.7853403141361257,
+    "mAP_K": 0.08022128562235986,
+    "nDCG_K": 0.15360055780148507
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "clip_topk",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

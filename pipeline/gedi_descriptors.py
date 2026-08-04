@@ -32,6 +32,8 @@
 # =============================================================================
 
 import base64
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -180,53 +182,110 @@ class GeDiDescriptorModule:
             descriptors_np=descriptors,
         )
 
+    @staticmethod
+    def cloud_fingerprint(point_cloud) -> str:
+        """SHA-1 of the exact point array a descriptor was computed from.
+
+        This is the cache's correctness guarantee, and it is deliberately a
+        hash of the *input* rather than a record of the settings that produced
+        it.  Descriptors depend on normalization, sampling mode, point count
+        and cloud construction; enumerating those in metadata means every new
+        knob is a silent-staleness bug waiting to happen.  Hashing the cloud
+        covers all of them at once and is exact.
+
+        This matters across machines specifically: descriptors are precomputed
+        on the gallery PC and consumed elsewhere, and the analogous
+        Uni3D/ULIP caches already mismatch silently when `pointnet2_ops` is
+        installed on only one of the two (docs/LAPTOP_EMBEDDINGS_SETUP.md).
+        A differing cloud must invalidate the entry, not be trusted.
+        """
+        pts = np.asarray(point_cloud.points, dtype=np.float32)
+        return hashlib.sha1(np.ascontiguousarray(pts).tobytes()).hexdigest()
+
     def compute_and_cache(
         self,
         point_cloud,
         cache_path: str,
         num_keypoints: Optional[int] = None,
         force: bool = False,
+        provenance: Optional[dict] = None,
     ) -> GeDiResult:
-        """Compute descriptors with disk caching.
+        """Compute descriptors with self-validating disk caching.
+
+        Descriptor extraction is a **per-cloud** cost (~3.4 s) while the RANSAC
+        fit that consumes it is only ~0.43 s **per pair**, so caching here is
+        what makes a deeper re-ranking shortlist affordable at all: it turns
+        an O(queries x K) descriptor bill into O(clouds).
+
+        A cache entry is reused only when both the input-cloud fingerprint and
+        the keypoint budget match; otherwise it is recomputed and overwritten.
 
         Args:
             point_cloud: Open3D PointCloud.
             cache_path: Path to save/load cached descriptors (.npz).
             num_keypoints: Number of keypoints.
-            force: Recompute even if cache exists.
+            force: Recompute even if a valid cache exists.
+            provenance: Free-form dict stored alongside for human inspection
+                (e.g. normalization, source id).  NOT used for validation —
+                the fingerprint is.
 
         Returns:
             GeDiResult.
         """
         import open3d as o3d
 
+        n_kp = num_keypoints or self.config.gedi_num_keypoints
+        fp = self.cloud_fingerprint(point_cloud)
+
         if not force and os.path.isfile(cache_path):
             try:
-                data = np.load(cache_path)
-                kp_pcd = o3d.geometry.PointCloud()
-                kp_pcd.points = o3d.utility.Vector3dVector(data["keypoints"])
-                features = o3d.pipelines.registration.Feature()
-                features.data = data["descriptors"].T
-                logger.debug("GeDi cache hit: %s", cache_path)
-                return GeDiResult(
-                    keypoints=kp_pcd,
-                    features=features,
-                    descriptors_np=data["descriptors"],
-                )
+                data = np.load(cache_path, allow_pickle=False)
+                cached_fp = str(data["fingerprint"]) if "fingerprint" in data else None
+                cached_kp = int(data["num_keypoints"]) if "num_keypoints" in data else None
+                if cached_fp != fp or cached_kp != n_kp:
+                    # Stale rather than corrupt: say which, because on the
+                    # eval PC this is the symptom of a preprocessing drift
+                    # between machines, not of a damaged file.
+                    logger.warning(
+                        "GeDi cache STALE (%s): fingerprint %s != %s or "
+                        "num_keypoints %s != %s — recomputing.",
+                        cache_path, cached_fp, fp, cached_kp, n_kp,
+                    )
+                else:
+                    kp_pcd = o3d.geometry.PointCloud()
+                    kp_pcd.points = o3d.utility.Vector3dVector(data["keypoints"])
+                    features = o3d.pipelines.registration.Feature()
+                    features.data = data["descriptors"].T
+                    logger.debug("GeDi cache hit: %s", cache_path)
+                    return GeDiResult(
+                        keypoints=kp_pcd,
+                        features=features,
+                        descriptors_np=data["descriptors"],
+                    )
             except Exception as exc:
                 logger.warning("GeDi cache load failed (%s): %s", cache_path, exc)
 
         result = self.compute(point_cloud, num_keypoints)
 
-        # Save to cache
+        # Save to cache.  An empty result is NOT cached: it means the service
+        # was unreachable or the cloud was degenerate, and persisting that
+        # would poison every later run for this cloud.
         if result.descriptors_np.size > 0:
             try:
                 os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+                # Explicit .npz so savez_compressed does not append one.
+                tmp = cache_path + ".tmp.npz"
                 np.savez_compressed(
-                    cache_path,
+                    tmp,
                     keypoints=np.asarray(result.keypoints.points),
                     descriptors=result.descriptors_np,
+                    fingerprint=np.array(fp),
+                    num_keypoints=np.array(n_kp),
+                    provenance=np.array(json.dumps(provenance or {})),
                 )
+                # Atomic publish: a run killed mid-write (duty cycling, OOM)
+                # must not leave a truncated .npz that later reads as corrupt.
+                os.replace(tmp, cache_path)
                 logger.debug("GeDi cache saved: %s", cache_path)
             except Exception as exc:
                 logger.warning("GeDi cache save failed: %s", exc)

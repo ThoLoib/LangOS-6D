@@ -30,8 +30,15 @@ services:
       dockerfile: Dockerfile.gedi
     ports:
       - "5060:5060"
+    # The service was OOM-killed mid-run once (2026-07-27); every subsequent
+    # RANSAC fit failed silently for 10h.  Come back up automatically.
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5060/health"]
+      # NOT curl: it is not installed in this image, so the old curl-based
+      # check could never pass and the container sat permanently "unhealthy"
+      # while serving requests fine.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5060/health', timeout=5)"]
       interval: 10s
       timeout: 5s
       retries: 30
