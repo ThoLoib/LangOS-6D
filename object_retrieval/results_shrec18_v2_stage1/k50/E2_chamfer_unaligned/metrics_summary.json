@@ -1,0 +1,70 @@
+{
+  "ablation": "E2_chamfer_unaligned",
+  "group": "E2",
+  "question": "unaligned trimmed distance \u2014 diagnostic control, not a method",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "diUREDUnsupervised3D2023",
+  "notes": "Expected to underperform E2_chamfer_ransac; it exists to verify that the gain comes from evaluating the distance AFTER alignment (thesis subsec:eval_baselines).",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5734278297995347,
+    "precision": 0.27605141156448365,
+    "recall": 0.27605141156448365,
+    "F1": 0.27605141156448365,
+    "AP": 0.1581794303971181,
+    "NNT1": 0.27605141156448365,
+    "NNT2": 0.27605141156448365
+  },
+  "metrics_depth": {
+    "MRR": 0.47342352576848684,
+    "MRR_sub": 0.4067413704633652,
+    "NN_cat": 0.36030461684911946,
+    "NN_sub": 0.30747263207996195,
+    "hit_cat@1": 0.36030461684911946,
+    "hit_cat@10": 0.7063303188957639,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8315088053307949,
+    "hit_cat@5": 0.5901951451689672,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.30747263207996195,
+    "hit_sub@10": 0.6025702046644456,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7253688719657306,
+    "hit_sub@5": 0.4988100904331271,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.257520846796033,
+    "nDCG_K": 0.3444841453842102
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "chamfer_unaligned",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

@@ -64,6 +64,22 @@ cfg = EvalConfig(
     fusion_top_k=1,
     TOP_F=20,
     ulip_query_cache_path=ulip_query_cache_path,
+    # Best settings from the shrec18 experiment: the O4 view-count sweep peaked
+    # at V=42 (nDCG 0.597; V8 0.580 < V16 0.593 < V42 0.597), with topk_softmax
+    # over the top-5 views (the pipeline default used there). Pinned explicitly.
+    pipeline_overrides={
+        "num_views": 42,
+        "dino_view_aggregation": "topk_softmax",
+        "dino_view_topk": 5,
+        "dino_view_temperature": 0.5,
+        # Partial-view shape mode: the per-view ULIP clouds are soft-k-max
+        # combined (topk_softmax, top-8, tau=0.5) — same as shrec18's partial
+        # shape channel (experiment1:1386). Full-mesh mode has one embedding,
+        # so aggregation is moot there.
+        "ulip_view_aggregation": "topk_softmax",
+        "ulip_view_topk": 8,
+        "ulip_view_temperature": 0.5,
+    },
 )
 
 
@@ -144,7 +160,36 @@ def _make_query_factory(categories):
 # Main
 # ============================================================================
 
+def _quarantine_foreign_views(ref_root: str) -> int:
+    """Some gallery instances contain 2 FOREIGN reference images that are NOT
+    our produced renders (3-digit zero-padded names like ``_002.png``). Our 42
+    real views are ``_0.png``..``_41.png`` (1-2 digits, no leading zero). The
+    DINO view-index parser reads ``_002.png`` as index 2, colliding with
+    ``_2.png`` and displacing ``_41.png`` from the top-42 — so a foreign image
+    would silently replace a real view. Rename any 3-digit-named png to
+    ``.foreign`` so the loader (which matches ``*.png``) skips it. Idempotent;
+    non-destructive (rename, not delete). Returns how many were quarantined."""
+    import re
+    pat = re.compile(r"_[0-9]{3,}\.png$")
+    n = 0
+    if not os.path.isdir(ref_root):
+        return 0
+    for inst in os.listdir(ref_root):
+        d = os.path.join(ref_root, inst)
+        if not os.path.isdir(d):
+            continue
+        for fn in os.listdir(d):
+            if fn.endswith(".png") and not fn.endswith("_bg.png") and pat.search(fn):
+                os.rename(os.path.join(d, fn), os.path.join(d, fn + ".foreign"))
+                n += 1
+    if n:
+        print(f"[mi3dor] quarantined {n} FOREIGN reference views (3-digit names) "
+              f"-> *.foreign; keeping only the 42 produced views per instance.")
+    return n
+
+
 def main():
+    _quarantine_foreign_views(ref_dir)
     categories = _get_categories()
     if not categories:
         raise RuntimeError(f"No categories found under {bop_root}")
@@ -155,21 +200,34 @@ def main():
     )
 
     cad_mesh_items = _collect_filtered_cad_mesh_items(categories)
-    components = build_pipeline(cfg, cad_mesh_items=cad_mesh_items)
-    _, _, _, _, shape_m = components
 
+    # Shape-source ablation: full CAD mesh vs partial rendered views (mirrors
+    # shrec18 E2b_fullmesh vs E2b_partial; there full-mesh 0.5985 > partial
+    # 0.5970). Only the ULIP shape channel differs — the query-IMAGE ULIP
+    # embeddings are identical across modes, so encode them once and reuse.
+    # Results land in <result_folder>/{fullmesh,partial}/ so one sync of the
+    # parent captures both. The `partial` mode needs the per-view *_partial.npz
+    # in ref_dir; if they are absent build_pipeline warns and falls back to
+    # full-mesh (which would make the two tables identical — check the log).
+    base_result_folder = cfg.result_folder
     ulip_cache = None
-    if shape_m is not None:
-        ulip_cache = load_ulip_query_cache(cfg.ulip_query_cache_path)
-        if ulip_cache is None:
-            print("[mi3dor] No pre-computed ULIP cache — encoding on the fly. "
-                  "Run precompute_ulip_query_embeddings.py for faster eval.")
-            all_paths = _collect_query_paths(categories)
-            ulip_cache = pre_encode_ulip_queries(all_paths, shape_m)
-
-    run_evaluation(cfg, to_category_label,
-                   _make_query_factory(categories),
-                   components, ulip_cache)
+    for mode_name, use_partial in (("fullmesh", False), ("partial", True)):
+        cfg.ulip2_use_partial_views = use_partial
+        cfg.result_folder = os.path.join(base_result_folder, mode_name)
+        print(f"\n===== MI3DOR shape-source ablation: {mode_name} "
+              f"(ulip2_use_partial_views={use_partial}) =====")
+        components = build_pipeline(cfg, cad_mesh_items=cad_mesh_items)
+        _, _, _, _, shape_m = components
+        if shape_m is not None and ulip_cache is None:
+            ulip_cache = load_ulip_query_cache(cfg.ulip_query_cache_path)
+            if ulip_cache is None:
+                print("[mi3dor] No pre-computed ULIP cache — encoding query "
+                      "images on the fly (shared across both shape modes).")
+                ulip_cache = pre_encode_ulip_queries(
+                    _collect_query_paths(categories), shape_m)
+        run_evaluation(cfg, to_category_label,
+                       _make_query_factory(categories),
+                       components, ulip_cache)
 
 
 if __name__ == "__main__":

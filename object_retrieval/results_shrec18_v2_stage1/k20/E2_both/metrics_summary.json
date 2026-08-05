@@ -1,0 +1,70 @@
+{
+  "ablation": "E2_both",
+  "group": "E2",
+  "question": "fitness + D_trim combined by mean rank (Borda)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "aslamModelsMetasearch2001, caraffaFreeZeTrainingfreeZeroshot2025, diUREDUnsupervised3D2023",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.629172290349021,
+    "precision": 0.2862772470865444,
+    "recall": 0.2862772470865444,
+    "F1": 0.2862772470865444,
+    "AP": 0.17659135886120741,
+    "NNT1": 0.2862772470865444,
+    "NNT2": 0.2862772470865444
+  },
+  "metrics_depth": {
+    "MRR": 0.6211938101369894,
+    "MRR_sub": 0.5404912493693377,
+    "NN_cat": 0.5406949071870538,
+    "NN_sub": 0.4640647310804379,
+    "hit_cat@1": 0.5406949071870538,
+    "hit_cat@10": 0.7867682056163732,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8538791051880057,
+    "hit_cat@5": 0.7153736316039981,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.4640647310804379,
+    "hit_sub@10": 0.6896715849595431,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7501189909566873,
+    "hit_sub@5": 0.6311280342693956,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.3244398457878896,
+    "nDCG_K": 0.3851788421796657
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "both_borda",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

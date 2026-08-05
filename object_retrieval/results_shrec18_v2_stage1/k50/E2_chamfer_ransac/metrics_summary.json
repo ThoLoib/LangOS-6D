@@ -1,0 +1,70 @@
+{
+  "ablation": "E2_chamfer_ransac",
+  "group": "E2",
+  "question": "GeDi-RANSAC alignment, then trimmed surface distance",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "caraffaFreeZeTrainingfreeZeroshot2025, diUREDUnsupervised3D2023",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6374599761452274,
+    "precision": 0.28606079595248485,
+    "recall": 0.28606079595248485,
+    "F1": 0.28606079595248485,
+    "AP": 0.1763706319452632,
+    "NNT1": 0.28606079595248485,
+    "NNT2": 0.28606079595248485
+  },
+  "metrics_depth": {
+    "MRR": 0.6285430127990269,
+    "MRR_sub": 0.5503746613028807,
+    "NN_cat": 0.5354593050928129,
+    "NN_sub": 0.4612089481199429,
+    "hit_cat@1": 0.5354593050928129,
+    "hit_cat@10": 0.8134221799143265,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8657782008567348,
+    "hit_cat@5": 0.7396477867682056,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.4612089481199429,
+    "hit_sub@10": 0.7353641123274631,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7900999524036173,
+    "hit_sub@5": 0.6520704426463588,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.2932268799835927,
+    "nDCG_K": 0.37673418764510325
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "chamfer_ransac",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

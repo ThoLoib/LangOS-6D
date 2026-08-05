@@ -1,0 +1,70 @@
+{
+  "ablation": "O4_V32",
+  "group": "O4",
+  "question": "V = 32 FPS-ordered reference views",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "nguyenCNOSStrongBaseline2023",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5894747113005439,
+    "precision": 0.28114232490630897,
+    "recall": 0.28114232490630897,
+    "F1": 0.28114232490630897,
+    "AP": 0.16760524433939994,
+    "NNT1": 0.28114232490630897,
+    "NNT2": 0.28114232490630897
+  },
+  "metrics_depth": {
+    "MRR": 0.5058454549622885,
+    "MRR_sub": 0.4354078346844405,
+    "NN_cat": 0.393146120894812,
+    "NN_sub": 0.33745835316515943,
+    "hit_cat@1": 0.393146120894812,
+    "hit_cat@10": 0.752022846263684,
+    "hit_cat@100": 0.97144217039505,
+    "hit_cat@20": 0.8472156116135173,
+    "hit_cat@5": 0.6449309852451214,
+    "hit_cat@50": 0.9386006663493575,
+    "hit_sub@1": 0.33745835316515943,
+    "hit_sub@10": 0.646834840552118,
+    "hit_sub@100": 0.9267015706806283,
+    "hit_sub@20": 0.7453593526891956,
+    "hit_sub@5": 0.5511661113755355,
+    "hit_sub@50": 0.8672060923369824,
+    "mAP_K": 0.29392770535322416,
+    "nDCG_K": 0.3554226845776052
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        32
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

@@ -1,0 +1,70 @@
+{
+  "ablation": "E7_uni3d",
+  "group": "E7",
+  "question": "Uni3D shape encoder (pc-mode)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "zhouUni3DExploringUnified2023, vandenherrewegenFinetuning3DFoundation2024",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6005091298373165,
+    "precision": 0.2935071935522061,
+    "recall": 0.2935071935522061,
+    "F1": 0.2935071935522061,
+    "AP": 0.17947877792773514,
+    "NNT1": 0.2935071935522061,
+    "NNT2": 0.2935071935522061
+  },
+  "metrics_depth": {
+    "MRR": 0.524413244654437,
+    "MRR_sub": 0.4509140892006021,
+    "NN_cat": 0.41408852927177536,
+    "NN_sub": 0.35364112327463115,
+    "hit_cat@1": 0.41408852927177536,
+    "hit_cat@10": 0.7563065207044265,
+    "hit_cat@100": 0.9776297001427892,
+    "hit_cat@20": 0.8472156116135173,
+    "hit_cat@5": 0.6530223702998572,
+    "hit_cat@50": 0.9409804854831033,
+    "hit_sub@1": 0.35364112327463115,
+    "hit_sub@10": 0.6558781532603523,
+    "hit_sub@100": 0.9357448833888624,
+    "hit_sub@20": 0.7453593526891956,
+    "hit_sub@5": 0.5554497858162779,
+    "hit_sub@50": 0.8600666349357449,
+    "mAP_K": 0.27779712868590456,
+    "nDCG_K": 0.3617783918639264
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "uni3d",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

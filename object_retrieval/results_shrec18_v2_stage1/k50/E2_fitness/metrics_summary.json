@@ -1,0 +1,70 @@
+{
+  "ablation": "E2_fitness",
+  "group": "E2",
+  "question": "RANSAC fitness only (no surface distance)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "caraffaFreeZeTrainingfreeZeroshot2025",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.6358190819367123,
+    "precision": 0.28639606461511663,
+    "recall": 0.28639606461511663,
+    "F1": 0.28639606461511663,
+    "AP": 0.1750807830448222,
+    "NNT1": 0.28639606461511663,
+    "NNT2": 0.28639606461511663
+  },
+  "metrics_depth": {
+    "MRR": 0.6350071247457607,
+    "MRR_sub": 0.5478680003471644,
+    "NN_cat": 0.5535459305092812,
+    "NN_sub": 0.46739647786768207,
+    "hit_cat@1": 0.5535459305092812,
+    "hit_cat@10": 0.8010471204188482,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8700618752974774,
+    "hit_cat@5": 0.7301285102332222,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.46739647786768207,
+    "hit_sub@10": 0.7210851975249881,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7905759162303665,
+    "hit_sub@5": 0.6358876725368872,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.2938627339602829,
+    "nDCG_K": 0.3753963421216299
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "fitness",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

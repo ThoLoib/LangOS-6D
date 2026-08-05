@@ -1,0 +1,79 @@
+{
+  "ablation": "O2_clip_threshold_cal",
+  "group": "O2",
+  "question": "threshold pruning with tau calibrated to SHREC'18",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "pulliOSCAROpenSetCAD2025",
+  "notes": "tau is the 5th percentile of the per-query max CLIP similarity, i.e. the highest threshold that still leaves 95% of queries with a non-empty candidate set. Calibrated on coverage rather than on set size or on a retrieval metric, so it is neither a restatement of top-k nor tuned on the evaluation.",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5253682568945751,
+    "precision": 0.1842035084665745,
+    "recall": 0.1842035084665745,
+    "F1": 0.1842035084665745,
+    "AP": 0.09113245797587982,
+    "NNT1": 0.1842035084665745,
+    "NNT2": 0.1842035084665745
+  },
+  "metrics_depth": {
+    "MRR": 0.47897571006005946,
+    "MRR_sub": 0.39146871155249546,
+    "NN_cat": 0.35649690623512614,
+    "NN_sub": 0.2865302237029986,
+    "hit_cat@1": 0.35649690623512614,
+    "hit_cat@10": 0.7325083293669681,
+    "hit_cat@100": 0.9543074726320799,
+    "hit_cat@20": 0.8124702522608281,
+    "hit_cat@5": 0.6230366492146597,
+    "hit_cat@50": 0.9152784388386482,
+    "hit_sub@1": 0.2865302237029986,
+    "hit_sub@10": 0.6149452641599239,
+    "hit_sub@100": 0.8881485007139457,
+    "hit_sub@20": 0.7029985721085198,
+    "hit_sub@5": 0.5088053307948596,
+    "hit_sub@50": 0.8357924797715374,
+    "mAP_K": 0.17371340809251865,
+    "nDCG_K": 0.25440535004315035
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "clip_threshold_cal",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": 0.291748046875,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null,
+  "shortlist_stats": {
+    "tau_text": 0.291748046875,
+    "median": 289.0,
+    "q1": 36.0,
+    "q3": 879.0,
+    "min": 1,
+    "max": 3126,
+    "fallback_rate": 0.049976201808662545
+  }
+}

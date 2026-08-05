@@ -1,0 +1,70 @@
+{
+  "ablation": "O1e_gedi_with_base",
+  "group": "O1",
+  "question": "geometry + base fusion rank, combined by mean rank (Borda)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "aslamModelsMetasearch2001, pulliOSCAROpenSetCAD2025",
+  "notes": "Renamed from the original 'S_GeDi inside the fusion score': full-database S_GeDi is infeasible (see comment above), so this evaluates the same question restricted to the top-K shortlist. Documented as an approximation.",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.635161693592817,
+    "precision": 0.28919083941870943,
+    "recall": 0.28919083941870943,
+    "F1": 0.28919083941870943,
+    "AP": 0.18043772153741608,
+    "NNT1": 0.28919083941870943,
+    "NNT2": 0.28919083941870943
+  },
+  "metrics_depth": {
+    "MRR": 0.6192358526950043,
+    "MRR_sub": 0.5435049889681609,
+    "NN_cat": 0.5273679200380771,
+    "NN_sub": 0.4564493098524512,
+    "hit_cat@1": 0.5273679200380771,
+    "hit_cat@10": 0.806282722513089,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8691099476439791,
+    "hit_cat@5": 0.729176582579724,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.4564493098524512,
+    "hit_sub@10": 0.7163255592574964,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7915278438838649,
+    "hit_sub@5": 0.6411232746311281,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.29668464932121175,
+    "nDCG_K": 0.37764957292914003
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": "both_borda_base",
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 50,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null
+}

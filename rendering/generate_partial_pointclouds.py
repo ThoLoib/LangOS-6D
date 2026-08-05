@@ -3,13 +3,17 @@
 # rendering/generate_partial_pointclouds.py
 # =============================================================================
 #
-# Offline preprocessing: generates partial point clouds from CAD meshes
-# using front-face culling from the same 8 viewpoints used in rendering.py.
+# Offline preprocessing: generates true single-view partial point clouds from
+# CAD meshes, from the same per-view camera positions used in rendering.py.
+#
+# Visibility uses Hidden Point Removal (Katz et al.) — occlusion-aware and
+# normal-free — after rotating the mesh into the camera-matrix frame (Blender's
+# importer applies an axis conversion the raw trimesh load does not).
 #
 # Each view produces one .npz file with keys "points" (N,3) and "colors" (N,3),
 # stored alongside existing rendered PNGs and camera matrices.
 #
-# No Blender needed — uses trimesh for surface sampling + visibility filtering.
+# No Blender needed — uses trimesh for surface sampling + scipy for HPR.
 #
 # Usage:
 #   python rendering/generate_partial_pointclouds.py \
@@ -28,6 +32,54 @@ from typing import Optional, Tuple
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# Blender's importers put meshes into Blender's Z-up world before the camera
+# matrices are recorded, so a mesh loaded raw by trimesh must be rotated into
+# the same frame or the saved cameras point the wrong way (which silently turned
+# every "partial" into a full 360° sampling). The rotation depends on the
+# importer used in rendering.py: import_scene.obj / import_scene.gltf convert
+# Y-up -> Z-up ((x, y, z) -> (x, -z, y)); import_mesh.ply imports as-is.
+_YUP_TO_ZUP = np.array([[1.0, 0.0, 0.0],
+                        [0.0, 0.0, -1.0],
+                        [0.0, 1.0, 0.0]])
+
+
+def axis_transform_for_ext(ext: str):
+    """Return the 3x3 rotation Blender's importer applies for this format, or None."""
+    ext = ext.lower()
+    if ext in (".obj", ".glb", ".gltf"):
+        return _YUP_TO_ZUP
+    return None  # .ply and others import without axis conversion
+
+
+def hpr_visible_indices(points: np.ndarray, cam_pos: np.ndarray,
+                        param: float = 3.2) -> np.ndarray:
+    """Indices of points visible from cam_pos via Katz et al. Hidden Point Removal.
+
+    Occlusion-aware and normal-free (needs only the viewpoint), so it is robust
+    to the broken/inconsistent normals of unwelded CAD meshes. Spherical-flip the
+    points about the camera, take the convex hull; hull points (excluding the
+    camera itself) are the visible ones.
+    """
+    from scipy.spatial import ConvexHull
+    try:
+        from scipy.spatial import QhullError
+    except ImportError:  # older scipy
+        from scipy.spatial.qhull import QhullError
+    p = points - cam_pos
+    r = np.linalg.norm(p, axis=1, keepdims=True)
+    r = np.maximum(r, 1e-9)
+    radius = r.max() * (10.0 ** param)
+    flipped = p + 2.0 * (radius - r) * (p / r)
+    try:
+        hull = ConvexHull(np.vstack([flipped, np.zeros((1, 3))]))
+    except QhullError:
+        # Degenerate (e.g. coplanar) point set — treat everything as visible
+        # rather than crash the whole object's processing.
+        return np.arange(len(points))
+    vis = hull.vertices
+    return vis[vis != len(flipped)]  # drop the appended camera origin
 
 
 def normalize_mesh(mesh) -> None:
@@ -55,18 +107,19 @@ def load_camera_matrix(cam_matrix_path: str) -> np.ndarray:
 
 def sample_visible_surface(
     mesh, cam_pos: np.ndarray, num_points: int,
-    oversample_factor: int = 5, with_colors: bool = True,
+    oversample_factor: int = 4, with_colors: bool = True,
+    hpr_param: float = 3.2, jitter_std: float = 0.0,
 ) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
-    """Sample points visible from a camera position using front-face culling.
+    """Sample the surface visible from a camera position (true single-view partial).
 
-    Samples points uniformly on the mesh surface, then keeps only those whose
-    face normal points towards the camera (dot(normal, view_dir) > 0). This is
-    a fast approximation of visibility that handles most cases well for convex
-    and mildly concave objects.
+    Samples points uniformly on the mesh surface, then keeps only those visible
+    from the camera via Hidden Point Removal (occlusion-aware, normal-free). The
+    mesh must already be in the camera-matrix frame (see axis_transform_for_ext),
+    and cam_pos is the per-view camera used for that render.
 
     Args:
-        mesh: trimesh.Trimesh object (normalized).
-        cam_pos: (3,) camera position in world coordinates.
+        mesh: trimesh.Trimesh object (normalized, in Blender/camera frame).
+        cam_pos: (3,) camera position in the same frame as the mesh.
         num_points: desired number of output points.
         oversample_factor: sample this many more points than needed, then filter.
         with_colors: extract face colors if available.
@@ -78,16 +131,13 @@ def sample_visible_surface(
 
     n_sample = num_points * oversample_factor
     points, face_indices = _trimesh.sample.sample_surface(mesh, n_sample)
+    points = np.asarray(points)
 
-    # Front-face visibility: keep points whose face normal points toward camera
-    normals = mesh.face_normals[face_indices]
-    view_dirs = cam_pos - points
-    view_dirs /= np.linalg.norm(view_dirs, axis=1, keepdims=True) + 1e-8
-    dots = np.sum(normals * view_dirs, axis=1)
-    visible = dots > 0
+    vis_idx = hpr_visible_indices(points, np.asarray(cam_pos, dtype=float),
+                                  param=hpr_param)
 
-    vis_points = points[visible].astype(np.float32)
-    vis_faces = face_indices[visible]
+    vis_points = points[vis_idx].astype(np.float32)
+    vis_faces = face_indices[vis_idx]
 
     if len(vis_points) < 100:
         return None
@@ -106,11 +156,21 @@ def sample_visible_surface(
     rng = np.random.RandomState(content_hash)
     n = len(vis_points)
     if n >= num_points:
+        # Downsample: uniform subset, no duplicates → no jitter needed.
         indices = rng.choice(n, num_points, replace=False)
+        vis_points = vis_points[indices]
     else:
+        # Upsample: sample with replacement. The duplicates are coincident,
+        # which would collapse PointBERT's FPS + kNN groupings, so (when
+        # enabled) add small Gaussian jitter to break them up — same rationale
+        # and magnitude as step5's _normalize_and_resample_pc (Qi et al. 2017).
+        # Positions only; colors are indexed unchanged. jitter_std=0 (default)
+        # reproduces the previous no-jitter behaviour.
         indices = rng.choice(n, num_points, replace=True)
-
-    vis_points = vis_points[indices]
+        vis_points = vis_points[indices]
+        if jitter_std > 0:
+            vis_points = (vis_points + rng.normal(
+                0.0, jitter_std, size=vis_points.shape)).astype(np.float32)
     if colors is not None:
         colors = colors[indices]
 
@@ -135,7 +195,8 @@ def _discover_view_indices(obj_images_dir: str, obj_id: str) -> list:
 
 def process_object(obj_id: str, cad_dir: str, images_dir: str,
                    num_points: int, overwrite: bool = False,
-                   mesh_path: Optional[str] = None) -> int:
+                   mesh_path: Optional[str] = None,
+                   hpr_param: float = 3.2, jitter_std: float = 0.0) -> int:
     """Generate partial point clouds for all views of one object.
 
     Auto-discovers all available camera matrices (view0, view1, ..., viewN)
@@ -176,6 +237,13 @@ def process_object(obj_id: str, cad_dir: str, images_dir: str,
             pass
     normalize_mesh(mesh)
 
+    # Rotate into the same frame as the saved camera matrices (Blender applies an
+    # importer-specific axis conversion; see axis_transform_for_ext). Without this
+    # the cameras point the wrong way and HPR returns the whole surface.
+    Rax = axis_transform_for_ext(os.path.splitext(mesh_path)[1])
+    if Rax is not None:
+        mesh.vertices = mesh.vertices @ Rax.T
+
     # Auto-discover all available views from camera matrices
     view_indices = _discover_view_indices(obj_images_dir, obj_id)
     if not view_indices:
@@ -195,7 +263,8 @@ def process_object(obj_id: str, cad_dir: str, images_dir: str,
         t = RT[:3, 3]
         cam_pos = -R.T @ t  # Camera position in world coords
 
-        result = sample_visible_surface(mesh, cam_pos, num_points)
+        result = sample_visible_surface(mesh, cam_pos, num_points,
+                                        hpr_param=hpr_param, jitter_std=jitter_std)
         if result is None:
             logger.debug("Too few visible points for %s view %d, skipping", obj_id, view_idx)
             continue
@@ -278,6 +347,15 @@ def main():
                         help="Points per partial PC (default: 10000, matches ULIP-2)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing .npz files")
+    parser.add_argument("--hpr-param", type=float, default=3.2,
+                        help="Katz HPR radius exponent (radius = r.max()*10^param). "
+                             "Lower = stricter occlusion removal (fewer leaked "
+                             "occluded points). Default 3.2 (legacy). SHREC'18 uses 2.8.")
+    parser.add_argument("--jitter-std", type=float, default=0.0,
+                        help="Gaussian jitter std applied to duplicated points when "
+                             "a view is upsampled to num_points, to break coincident "
+                             "duplicates (matches step5). 0 = off (default/legacy). "
+                             "SHREC'18 uses 0.001.")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -327,6 +405,7 @@ def main():
             obj_id, args.cad_dir, args.images_dir,
             args.num_points, overwrite=args.overwrite,
             mesh_path=explicit_mesh,
+            hpr_param=args.hpr_param, jitter_std=args.jitter_std,
         )
         if views > 0:
             success_objects += 1

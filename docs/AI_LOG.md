@@ -122,6 +122,18 @@ Status
 - Geometry run relaunched 07:30 with the retry logic; watchdog reports the good/failed split plus gedi's state.
 - Real rate is ~26 s/query (the pre-crash figure) → ~15 h per distinct shortlist. E2_* share the BASE top-5; `O1c` fuses text+view only, so it needs a second full pass. `best_config.json` may change if a geometry variant clears 0.6106.
 
+## 2026-07-30 HPR occlusion param + upsample jitter; shrec18_v2; MI3DOR full-mesh ablation
+
+Goal
+- Fix the partial point-cloud occlusion leak, prepare a corrected SHREC'18 onboard, and add a partial-vs-full-mesh cross ablation for MI3DOR — without disturbing the already-onboarded MI3DOR data.
+
+Changes
+- **HPR leak found & fixed (configurable).** Ground-truth occlusion tests (angular z-buffer vs the mesh) on SHREC'18 samples showed the fixed Katz HPR `param=3.2` leaks ~2–11% occluded points (worst on open/concave shapes). Added `--hpr-param` (default 3.2) and `--jitter-std` (default 0.0) to `generate_partial_pointclouds.py`, threaded through `sample_visible_surface`/`process_object`. Jitter perturbs duplicated points on upsampling (sparse views → 10k) to avoid coincident-duplicate collapse in PointBERT FPS+kNN — parity with step5's query-side jitter, which the gallery never got.
+- **SHREC'18 → 2.8 + jitter 0.001; everything else unchanged.** `rendering/onboard_dataset.sh` defaults `HPR_PARAM=3.2/JITTER_STD=0`; new `shrec18_v2` case sets `2.8/0.001`. Verified on samples: heavily-upsampled view went 703→10000 unique after jitter; dense views unchanged.
+- **`shrec18_v2` full-onboard pipeline.** `oscar_queue_ctl/run_shrec18_v2.sh` (render+partials@2.8/jitter+descriptions → full embed set incl. `ulip_fullmesh` → sync → verify; keeps renders local for eval). Armed to auto-start after MI3DOR via `arm_shrec18_v2.sh` (`shrec18v2-arm` user unit). Existing `shrec18_fixed` renders predate the 2026-07-28 render fix, so a fresh slot is justified.
+- **MI3DOR `ulip_fullmesh` ablation** added to its embed passes (partial-view vs full-mesh gallery, same ULIP-2 cross space; 3848/3848 mesh↔id match). Fixed `preprocess_galleries.sh`: `--mesh-glob ''` argparse rejection (per-dataset real/placeholder glob) and missing `**/.ulip_cache_*.pt` in the object_database cache sync.
+- MI3DOR partials/embeddings left at param 3.2 (already onboarded; user decision).
+
 ## 2026-07-24 Merge tessa-pc: Uni3D-g (E7) + XYZ ULIP-2 (O5), cross-PC FPS portability
 
 Goal

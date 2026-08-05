@@ -1,0 +1,71 @@
+{
+  "ablation": "E7_ulip2_pc",
+  "group": "E7",
+  "question": "ULIP-2 shape encoder (pc-mode) (= BASE)",
+  "thesis_ref": "subsec:eval_baselines",
+  "bib": "pulliOSCAROpenSetCAD2025, zhouCrossModal3DRepresentation",
+  "notes": "",
+  "num_queries": 2101,
+  "gallery_size": 3308,
+  "metrics": {
+    "nDCG": 0.5969882847838637,
+    "precision": 0.2862772470865444,
+    "recall": 0.2862772470865444,
+    "F1": 0.2862772470865444,
+    "AP": 0.1731134912061803,
+    "NNT1": 0.2862772470865444,
+    "NNT2": 0.2862772470865444
+  },
+  "metrics_depth": {
+    "MRR": 0.5171882376742267,
+    "MRR_sub": 0.4471814830618255,
+    "NN_cat": 0.40647310804378867,
+    "NN_sub": 0.35221323179438363,
+    "hit_cat@1": 0.40647310804378867,
+    "hit_cat@10": 0.7615421227986673,
+    "hit_cat@100": 0.97715373631604,
+    "hit_cat@20": 0.8538791051880057,
+    "hit_cat@5": 0.6563541170871013,
+    "hit_cat@50": 0.9419324131366016,
+    "hit_sub@1": 0.35221323179438363,
+    "hit_sub@10": 0.6573060447405997,
+    "hit_sub@100": 0.9319371727748691,
+    "hit_sub@20": 0.7501189909566873,
+    "hit_sub@5": 0.558305568776773,
+    "hit_sub@50": 0.8738695859114707,
+    "mAP_K": 0.3008988030061475,
+    "nDCG_K": 0.36241947187983925
+  },
+  "config": {
+    "channels": {
+      "clip": [
+        "base",
+        null
+      ],
+      "dino": [
+        "base",
+        42
+      ],
+      "shape": [
+        "ulip_pc_rgb",
+        null
+      ]
+    },
+    "weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "fusion_method": "weighted_sum",
+    "scope": "full",
+    "geometry": null,
+    "clip_prune_k": 20,
+    "clip_tau": null,
+    "geometry_k": 20,
+    "skip_icp": true,
+    "geom_voxel": 0.02,
+    "inlier_threshold_pct_diameter": 1.5
+  },
+  "limit_queries": null,
+  "alias_of": "E1c_full_fusion"
+}

@@ -24,6 +24,14 @@ allowed_exts = ['.glb', '.obj', '.ply']  # PLY added for BOP datasets (T-LESS, L
 overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
 render_only = os.environ.get('RENDER_ONLY', '').strip()
 num_views = int(os.environ.get('NUM_VIEWS', '42'))  # Ablation O4; default 42 (full icosphere)
+# Parallel sharding (opt-in). When SHARD_TOTAL > 1, this process renders only
+# the models whose position in the sorted model list satisfies
+#   index % SHARD_TOTAL == SHARD_INDEX
+# so N processes with SHARD_INDEX=0..N-1 split the dataset into N disjoint,
+# balanced parts and can run concurrently (see rendering/parallel_render.sh).
+# Default SHARD_TOTAL=1 => renders everything: behaviour is unchanged.
+shard_index = int(os.environ.get('SHARD_INDEX', '0'))
+shard_total = int(os.environ.get('SHARD_TOTAL', '1'))
 
 def rclone_checkpoint(obj_idx):
     """Hook for periodic rclone sync.  Currently a no-op inside Docker;
@@ -247,7 +255,9 @@ for dirpath, _, files in os.walk(object_folder):
 model_files = sorted((mid, fp) for mid, (_, fp) in model_choice.items())
 
 pending_models = []
-for model_id, filename in model_files:
+for _shard_idx, (model_id, filename) in enumerate(model_files):
+    if shard_total > 1 and _shard_idx % shard_total != shard_index:
+        continue
     if render_only and model_id != render_only:
         continue
     folder_path = os.path.join(object_images, model_id)
@@ -276,6 +286,12 @@ bpy.context.scene.render.engine = 'CYCLES'
 # small samples for fast rendering
 bpy.context.scene.cycles.samples = 16
 # bpy.context.scene.cycles.samples = 128
+# Color management: use Standard, not Blender's default Filmic. Filmic compresses
+# the white world background to grey (~206) and crushes the shading of untextured
+# CAD models into a narrow mid-grey band, producing the washed-out white-on-white
+# look. Standard maps the white world to 255 and preserves lamp shading, matching
+# the dataset-provided reference renders (white bg, shaded grey object).
+bpy.context.scene.view_settings.view_transform = 'Standard'
 bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA'
 bpy.context.scene.cycles.device = 'GPU'
 for scene in bpy.data.scenes:
@@ -485,6 +501,55 @@ def get_3x4_RT_matrix_from_blender(cam):
                 ))
             return RT
 
+def setup_camera_lighting(cam, key=1.8, fill=0.5):
+    """Camera-relative sun rig, parented to the camera so it orbits with it.
+
+    OSCAR's fixed world-space three-point rig, combined with the orbiting
+    camera, lit each of the 42 icosphere views differently (front views bright,
+    back views crushed to black). Parenting SUN lamps to the camera keeps a
+    constant key/fill direction relative to the viewer, so every view is shaded
+    the same even grey as the dataset-provided renders. Suns (no distance
+    falloff) plus the grey world ambient floor keep shadows off pure black.
+    Directions/energies tuned to match the reference (obj mean ~190, min ~100).
+    """
+    def sun(name, energy, rot_deg):
+        bpy.ops.object.light_add(type='SUN')
+        o = bpy.context.active_object
+        o.name = name
+        o.data.energy = energy
+        o.parent = cam
+        o.matrix_parent_inverse = cam.matrix_world.inverted()
+        o.rotation_euler = Euler([math.radians(a) for a in rot_deg], 'XYZ')
+        return o
+    sun("KeySun",  key,  (-35,  30, 0))   # upper-left of the viewer
+    sun("FillSun", fill, ( 30, -25, 0))   # lower-right fill
+
+
+def setup_render_world():
+    """White background to the camera, zero ambient for object lighting.
+
+    The camera sees a pure-white world (background -> 255 under Standard color
+    management), while shading/indirect rays see black, so the object is lit
+    ONLY by the three-point lamp rig. This reproduces the dataset-provided
+    renders (white bg + shaded grey object) instead of letting the white world
+    flood the untextured surface into a flat mid-grey wash. Uses a Light Path
+    "Is Camera Ray" mask, so it stays a single opaque RGB pass (no compositing).
+    """
+    world = bpy.context.scene.world
+    world.use_nodes = True
+    nt = world.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new('ShaderNodeOutputWorld')
+    bg = nt.nodes.new('ShaderNodeBackground')
+    lp = nt.nodes.new('ShaderNodeLightPath')
+    mix = nt.nodes.new('ShaderNodeMixRGB')
+    mix.inputs['Color1'].default_value = (0.3, 0.3, 0.3, 1.0)  # non-camera: grey ambient floor
+    mix.inputs['Color2'].default_value = (1.0, 1.0, 1.0, 1.0)      # camera rays: white background
+    nt.links.new(lp.outputs['Is Camera Ray'], mix.inputs['Fac'])
+    nt.links.new(mix.outputs['Color'], bg.inputs['Color'])
+    nt.links.new(bg.outputs['Background'], out.inputs['Surface'])
+
+
 def clear_scene():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False)
@@ -520,6 +585,30 @@ def _material_has_texture(mat):
     if mat is None or not mat.use_nodes:
         return False
     return any(node.type == 'TEX_IMAGE' for node in mat.node_tree.nodes)
+
+def recalculate_normals_outward(obj):
+    """Weld the mesh, then make face normals consistent and outward-pointing.
+
+    Many MI3DOR .obj meshes are unwelded "triangle soup" (coincident duplicate
+    vertices, no `vn` lines) with inconsistent face winding, so Blender derives
+    inward-pointing normals for whole panels (e.g. the flat bed headboard). Any
+    normal-dependent shading (diffuse, AO) then leaves those faces pure black.
+    Recalculating alone can't help because "outside" is undefined on a non-
+    manifold soup — so first merge vertices by distance to make the surface
+    manifold, THEN recompute outward normals. Skipped for meshes with authored
+    split normals (textured datasets like GSO/YCB-V) to preserve their shading.
+    """
+    me = obj.data
+    if getattr(me, "has_custom_normals", False):
+        return
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
 
 def resolve_coincident_faces(obj):
     me = obj.data
@@ -563,6 +652,13 @@ def resolve_coincident_faces(obj):
 
 # Create new folder structure
 os.makedirs(object_images, exist_ok=True)
+
+# Set up the camera-relative light rig ONCE, parented to the scene camera so it
+# orbits with every icosphere view. Every model is normalized to a unit bbox at
+# the origin, so one rig lights all of them the same. Deselect afterwards so the
+# loop's object.delete() cannot remove a light.
+setup_camera_lighting(bpy.data.objects['Camera'])
+bpy.ops.object.select_all(action='DESELECT')
 
 for _obj_idx, (model_id, filename) in enumerate(pending_models):
     rclone_checkpoint(_obj_idx)
@@ -617,6 +713,12 @@ for _obj_idx, (model_id, filename) in enumerate(pending_models):
     # Assuming objects are mesh objects
     mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
     print(mesh_objects)
+
+    # Fix inward/inconsistent normals (untextured CAD with no `vn`) so surfaces
+    # like the bed headboard don't render as solid black. No-op for meshes with
+    # authored normals.
+    for obj in mesh_objects:
+        recalculate_normals_outward(obj)
 
     # SHREC'18 (SketchUp/3D-Warehouse export) writes the MTL "d" field with the
     # inverse of its official meaning: it uses d as TRANSPARENCY (0 = opaque,
@@ -699,8 +801,8 @@ for _obj_idx, (model_id, filename) in enumerate(pending_models):
         if len(flag_list) == 0:
             break
 
-    # --- Switch to white background for final renders ---
-    bpy.context.scene.world.node_tree.nodes["Background"].inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
+    # --- White background to the camera, lamp-only lighting for the object ---
+    setup_render_world()
     bpy.context.scene.render.film_transparent = False
 
     # --- Render all views ---
