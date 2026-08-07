@@ -10,18 +10,9 @@ Claude's role is not to act as a generic assistant. Its job is to inspect the re
 
 The project extends OSCAR for a master's thesis at TU Wien. The broad goal is to improve object retrieval and pose estimation in cluttered scenes by combining language, image, and 3D shape signals.
 
-Recent work introduced a structured 8-step pipeline:
-
-1. Object localization
-2. Point cloud extraction
-3. CLIP retrieval
-4. DINOv2 re-ranking
-5. ULIP-2 shape matching
-6. Multi-signal fusion
-7. Scale estimation
-8. Pose estimation
-
-The current system already supports end-to-end debugging and visualization and has been used for experiments on YCBV_GSO and MI3DOR.
+The system is organized as a structured 8-step pipeline (see `pipeline/step*.py`), plus an
+out-of-band geometry re-ranking sub-step B2. It supports end-to-end debugging and visualization
+and has been used for experiments on YCBV_GSO, MI3DOR and SHREC'18.
 
 ## Primary Repositories and Runtime Context
 
@@ -71,13 +62,8 @@ Step 5 now supports partial-view point clouds (`--ulip-partial-views`) as an alt
 
 ### FoundationPose
 
-FoundationPose integration uses a **two-container HTTP architecture**:
-
-- `pipeline/step8_pose_estimation.py` — calls FoundationPose via HTTP, falls back to ICP
-- `pipeline/foundationpose_bridge.py` — HTTP client (httpx) that calls the FP service
-- `pipeline/config.py` — `foundationpose_url` points to `http://foundationpose:5050`
-- `FoundationPose/foundationpose_server.py` — Flask server inside the FP container
-- `docker-compose.yml` — defines both `oscar` and `foundationpose` services
+FoundationPose integration uses a **two-container HTTP architecture**: Step 8 calls the FP
+service over HTTP via `pipeline/foundationpose_bridge.py` and falls back to ICP.
 
 Operational pattern:
 - `docker compose up -d foundationpose` starts the FP service
@@ -91,25 +77,17 @@ Previous approaches that were tried and abandoned:
 
 ## Current Problem Claude Should Focus On
 
-The pipeline is functional end-to-end. The thesis methodology specifies components that are not yet implemented in the codebase. The next steps are:
-
-1. Align the codebase with the thesis methodology (see `docs/THESIS_ALIGNMENT_PLAN.md` when created)
-2. Implement Sub-step B2: GeDi-based geometry re-ranking
-3. Implement mask post-processing (largest connected component + dilation)
-4. Add SHREC'18 ObjectNN+ evaluation (Stage 1 tuning)
-5. Add majority voting fusion strategy
-6. Add SigLIP and Uni3D encoder alternatives for ablations
-7. Set up BOP-core evaluation (YCB-V, T-LESS, LM-O)
+The methodology components are implemented (see `docs/THESIS_ALIGNMENT_PLAN.md`) and the Stage-1
+ablation grid has been run on SHREC'18. For the live state of the evaluation — which cells are
+done, what is still queued, and how to resume — read `AI_HANDOFF.md`, which is kept current.
 
 ## Expected Approach
 
 When working on this project, Claude should:
 
-1. Read the source documents listed above before making changes.
-2. Inspect Docker-related files (`docker-compose.yml`, Dockerfiles, startup scripts) to understand the runtime context.
-3. Preserve the two-container separation between OSCAR and FoundationPose.
-4. Keep the ICP fallback intact.
-5. Document every meaningful design change in:
+1. Preserve the two-container separation between OSCAR and FoundationPose.
+2. Keep the ICP fallback intact.
+3. Document every meaningful design change in:
    - `AI_HANDOFF.md`
    - `docs/DECISIONS.md`
    - `docs/AI_LOG.md`
@@ -124,23 +102,21 @@ Claude should optimize for reproducibility and low fragility.
 - Preserve fallback paths that keep the rest of the pipeline usable.
 - Favor incremental changes that can be tested quickly.
 
-## Immediate Goal
+### Git
 
-1. Implement the thesis methodology components not yet in the codebase (GeDi, mask refinement, full-database fusion).
-2. Set up SHREC'18 ObjectNN+ evaluation for Stage 1 configuration tuning.
-3. Run the full ablation grid (E1–E7, O1–O5) as defined in the thesis evaluation chapter.
-4. Set up BOP-core pose evaluation (Stages 3a/3b).
+- Push only to `feat/stage1-official-eval-precompute` or `thesis-approach`. **Never push to
+  `tessa-pc` or `main`** — `tessa-pc` is the other machine's branch and pushing to it will
+  collide with work done there.
+- Commit only when asked.
 
-## Definition of Success
+### Experiment scripts
 
-This work is successful when:
-
-- The codebase implements all components described in the thesis methodology chapter
-- The ablation grid (E1–E7, O1–O5) can be run on SHREC'18, MI3DOR, and BOP-core datasets
-- OSCAR can trigger FoundationPose reliably
-- ICP fallback still works when FoundationPose is unavailable or fails
-- The solution is understandable from the repo docs
-- The rest of the OSCAR pipeline remains stable
+- Experiment scripts are **flat and flag-based**: no subcommands, and no dataset downloading or
+  management. The user provides the data; the script validates that it is present and reports
+  what is missing. Do not add download or fetch logic.
+- Do not `pip install pointnet2_ops` on one machine only. Both PCs must run the same pure-torch
+  FPS path, or Uni3D/ULIP embeddings silently mismatch across machines — see
+  `docs/LAPTOP_EMBEDDINGS_SETUP.md`.
 
 ## Documentation Discipline
 
