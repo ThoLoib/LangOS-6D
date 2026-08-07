@@ -1,5 +1,127 @@
 # AI Log
 
+## 2026-07-30 Geometry cells landed; re-ranking is invisible to five of the seven metrics
+
+Goal
+- Finish the geometry ablations on the duty cycle and check them against the built-in correctness test.
+
+The correctness check passed exactly
+- `E2_none` reproduces `E1c_full_fusion` **bit-identically** on all seven official metrics (nDCG `0.5878959504080713`, P `0.26864481953094016`, AP `0.16009754131143725`). It shares the entire geometry code path but applies no geometry, so this pins the re-ranking plumbing as side-effect-free and makes the other geometry numbers trustworthy.
+
+Results (all on 2,101 official queries)
+
+| cell | nDCG | P | AP |
+|---|---|---|---|
+| `O5_xyz_only` (grid best) | **0.6106** | 0.2850 | 0.1740 |
+| `E2_chamfer_ransac` | 0.6028 | 0.2686 | 0.1611 |
+| `E2_chamfer_icp` | 0.6027 | 0.2686 | 0.1612 |
+| `E2_fitness` | 0.6010 | 0.2686 | 0.1610 |
+| `E2_none` = BASE | 0.5879 | 0.2686 | 0.1601 |
+| `E2_chamfer_unaligned` | 0.5850 | 0.2686 | 0.1597 |
+
+- Geometry re-ranking buys **+0.015 nDCG** over BASE. The unaligned control lands *below* BASE, which is the expected sign: comparing clouds without registering them is worse than not re-ranking at all, so the gain really is attributable to the alignment and not to the shortlist being reshuffled.
+- **ICP buys nothing** (0.6027 vs 0.6028, i.e. inside the ±0.005 noise floor) despite costing ~5.4 s/query on top of RANSAC. `d_icp < d_ransac` on individual pairs — the refinement is real — but the *ranking* of five candidates does not change. This is the argument for shipping RANSAC-only in the frozen config.
+- The one-pass restructure paid off exactly as projected: once `E2_fitness` had run, `E2_chamfer_ransac` completed in **96 s** (pure cache reads) instead of a second ~23 h registration pass.
+
+The finding that matters for the write-up: five metrics cannot see this at all
+- P, R, F1, NNT1, NNT2 are **identical to four decimal places across all six E2 cells**, including the control that is worse than baseline. This is not a bug — it is forced by the official protocol. Every metric is cut at `f` = category size (~165 average), and geometry re-ranks only `GEOM_SHORTLIST = 5` items. Reordering 5 items inside a 165-item prefix cannot change *which* items are in that prefix, so any set-membership metric is provably blind to it.
+- Reading `eval/shrec18_official/metrics.py` confirms the structure: P, R, F1, NNT1, NNT2 are all identical **by construction** at `k = f`; **NNT2 is inoperative** (`k2 = min(len(x), 2k)` collapses back to `f`); and only `dcg` reads the graded relevance (`total += x[i] * w`, subcat=2 / cat=1) — precision and AP binarise it.
+- Consequence: **nDCG is the only metric in the official set that can rank the geometry arms**, which is what makes it the selection criterion rather than a stylistic preference.
+- The official `dcg` has an off-by-one (`enumerate(x[1:])` while indexing `x[i]` — double-counts `x[0]`, drops the last element). **Left unpatched deliberately**: `dcg` and `idcg` share it, so the ratio stays well-defined, and patching would break comparability with every published SHREC'18 number.
+
+Cross-machine replication
+- Compared against the tessa-PC results on Drive: **every conclusion replicates**, max Δ 0.0096 nDCG. One systematic difference — the text channel is consistently weaker locally (P 0.1319 vs 0.1419 across all four CLIP-shortlisted cells), which traces to the query RGB crops, not to the shape path.
+- That gap cannot be resolved by appealing to a specification: SHREC'18 is a **mesh-to-mesh** track and the raw distribution (uploaded to `gdrive:Masterthesis/OSCAR/raw_datasets/shrec18_full`, 33,156 objects / 25,110,058,881 bytes, verified identical) contains **no instruction for rendering query images**. The query RGB crop is entirely an OSCAR-side construct, so its viewpoint heuristic is a design decision to document, not a spec to comply with.
+
+Duty cycle in production
+- Nine cycles carried the run 329 → 2,101 aligned queries at ~180–215 queries/cycle, surviving eight consecutive idle transitions without a single skipped window after the `docker.exe` fix. The Resource Saver problem is closed.
+- The watchdog's `failed=30` alarm was a **watchdog bug, not data corruption**: it counted raw records, and a failed pair stores `d_ransac: null`, which the `missing` check correctly treats as "not computed", so every new window legitimately retries it and appends another failed record. Deduplicated by `(qid, cad)` — the same rule the engine's cache uses — the true state is **5 failed pairs on 1 query** (`bf977dde…`, 3,501 points, 9.9th size percentile, planarity 0.334), with gedi healthy throughout. Fixed the *watchdog*, deliberately **not** the engine's retry: that retry is exactly what lets a transient outage self-heal.
+
+Status at the stop
+- 31 of 33 cells done. Cache: 22,358 records / 10,553 deduplicated pairs, last line complete valid JSON after `SIGKILL`.
+- **Remaining: `O1c_gedi_post_fusion`** — it shortlists on text+view (`E1b`) instead of the BASE fusion, so 6,055 of its 10,505 pairs (57.6%) were never registered; 2,070 of 2,101 queries need ≥1 new fit ⇒ ~13 h compute. `O1d_shape_plus_gedi` is an alias of `E2_fitness` and materialises for free at aggregation.
+- Resume is free (`--resume` + per-pair cache): `docker compose up -d gedi && bash _geom_duty.sh`.
+
+## 2026-07-29 Battery duty cycle, and the Resource Saver trap it walked into
+
+Goal
+- Run the geometry experiment on a 2 h on / 30 min off cycle so it does not sit on the battery.
+
+What broke
+- The first two windows produced **zero work**. Both failed at `docker compose up -d gedi` with the Linux CLI missing — first `/usr/bin/docker: Input/output error` (23:21), then `No such file or directory` (23:55).
+- Diagnosis needed both sides: PowerShell reported the engine healthy (`server=29.6.1`) while WSL had no `docker` at all, and `wsl -l -v` showed the **`docker-desktop` distro Stopped**. Cause: **Docker Desktop Resource Saver** stops the WSL engine a few minutes after the last container exits and tears the CLI bind-mount out of the Ubuntu distro. The duty cycle's idle phase creates that condition by design — the design meant to save power was disabling the tooling that starts the next window.
+- A Docker Desktop restart fixed it at 23:23 and it broke again by 23:55, which is what proved restart is a workaround rather than a fix. Waking the engine (`docker.exe info` → 29.6.1) does **not** restore the Ubuntu mount, so engine health is the wrong thing to probe.
+
+Fix
+- Both scripts now call `/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe` (fixed path, works regardless of the integration; emits CRLF, so `tr -d '\r'` on every captured value) and operate on already-created containers via `docker start`/`stop` rather than `docker compose run` — see DECISIONS 2026-07-29 for why compose cannot be used through that binary.
+- Verified end to end: gedi healthy 10 s after `docker start`, `stage1_geom` restarted with `/app` intact, logged `[resume] 16 ablations already computed`, reconnected to GeDi, and the pair count resumed climbing.
+
+What went right
+- The `!! gedi not healthy — skipping this window` guard, added speculatively hours earlier, was exercised for real twice within its first hour and behaved correctly: no run launched against a dead service, no `failed` records written, cache untouched at 329/2101 with `failed=0`. Without it these two windows would have repeated the 2026-07-27 cache poisoning instead of merely wasting time.
+- Stopping mid-run cost nothing: the append-per-record cache and the tolerant loader meant the last line was complete valid JSON even after a SIGKILL (`exit 137`).
+
+Cost
+- ~1 h 45 min of wall clock across two dead windows. The ~24 h estimate assumes no further losses; each future skipped window costs a full 2.5 h cycle, and `_duty_watch.sh` now emits an explicit `window SKIPPED` line so it shows up in the tick history rather than as silent flatlining.
+
+## 2026-07-28 (evening) Geometry run stabilised, then made 3× cheaper
+
+Goal
+- Establish whether the relaunched geometry run was actually stable, and get a defensible completion estimate.
+
+Stability: the fixes hold, but the evidence is young
+- `stage1_geom` ran ~1.5 h with `failed=0`, `RestartCount=0`, no OOM; gedi healthy throughout and self-recovered twice (`[geometry] GeDi is back — resuming.`) without losing work — the retry loop behaving as designed.
+- Honest caveat recorded at the time: the previous run also looked healthy at this age and died 10 h in. What is different is *structural* (WSL 20 GB, restart policy, working healthcheck, 500k query cap, abort-on-unreachable), not observational.
+- The `exit=0` GeDi dropout cause is still unknown. It is now survivable, not solved.
+
+Instrumentation: fixed the watchdog, twice
+- Two stale `_geom_watch.sh` monitors were still reporting the old aggregate `good=N (~N/5 queries)`. That number conflates the cheap `chamfer_unaligned` control (~0.5 s/query, no GeDi) with the expensive aligned signals, and it produced a bogus "427 queries done" reading. Stopped them; only the per-signal watchdog now runs.
+- Per-signal truth at the time: `fitness=225  d_unaligned=350  d_ransac=0  d_icp=0`. Record count reconciled exactly: 375 restored + 350×5 unaligned + 45×5 new fitness.
+
+Measured rate, three independent windows
+- 40.2 s/query (10 min, 15 queries) · 34.6 s/query (30-min tick, 52 queries) · **34.8 s/query (83 min, 143 queries)**. Consistent, so the 500k point cap did fix the 40×-slowdown from the voxel-downsample attempt.
+
+Root cause of the remaining cost, and the fix
+- `pair_scores` keyed the cache per signal: `chamfer_ransac` needed `("fitness", "d_ransac")`, so a pair that already had `fitness` was still "missing" and **redid the whole 35 s GeDi + RANSAC** for a distance that costs ~0.5 s once the transform exists. Three aligned signals ⇒ three full registrations ⇒ ~60 h.
+- Added `rerank(all_aligned=True)` (`pipeline/step_b2_geometry_reranking.py`) + a shared field set in `pair_scores`, so one registration yields `fitness`, `d_ransac`, `d_icp` together. See DECISIONS 2026-07-28 for the semantic consequence (fitness and d_ransac now share one RANSAC run).
+- Smoke-tested before relaunching: all three fields written in 14.3 s for 2 pairs; second aligned signal read back in 0.00 s; `d_icp < d_ransac` in both pairs, confirming ICP is real and the fields are not aliases.
+- Projection: **~26 h** for the six cells instead of ~60 h. The 225 fitness-only queries already cached are recomputed once (~2 h) because they lack `d_ransac`/`d_icp`.
+- Post-switch measurement confirms it: **40.2 s/query** for all three aligned signals (10-min window), vs 34.8 s/q for `fitness` alone ⇒ ~23 h. A 30-min tick immediately after relaunch had suggested ~95 s/q, but that window included container startup (score-cache load + gedi warm-up); the conclusion drawn from it was wrong. Rate readings taken across a restart boundary are not comparable to steady-state ones.
+
+Still to verify when the cells land
+- `E2_none` must reproduce BASE exactly (nDCG 0.5879). That is the built-in correctness check on the whole geometry path; treat every geometry number as unverified until it passes.
+
+## 2026-07-28 Stage-1 grid completed (27 cells); GeDi OOM poisoned the geometry run
+
+Goal
+- Run the full Stage-1 ablation grid on all 2,101 official queries, then fill the six geometry cells with `--with-geometry`.
+
+Result: main grid (27 cells, ~6h40m)
+- All six channel-score passes cached from the Drive-transferred gallery (DINO/SigLIP/ULIP-partial/ULIP-fullmesh caches all hit — `[init] ULIP CAD cache loaded (3308 models)`, no re-encoding). The content-stable fingerprints did their job across machines.
+- **Best config: `O5_xyz_only`** — nDCG 0.6106, P 0.2850, mAP 0.1740; wins on every metric. BASE (`E1c_full_fusion`) 0.5879. Full table in `object_retrieval/results_shrec18_stage1/stage1_summary.csv`.
+- Headline findings: dropping query colour helps (+0.023 nDCG over XYZ+RGB); the view budget saturates at **V16** (0.5858 vs V42 0.5879, and V32 0.5829 — non-monotonic, so the noise floor is ~±0.005); full-database fusion beats every shortlisted variant (cascade 0.4464, CLIP-pruned 0.4452, visual-first 0.5461), with all CLIP-shortlisted arms pinned at P=0.1319 = text-only, i.e. the shortlist itself is the ceiling; DINOv2 ≫ SigLIP (0.5879 vs 0.5093); weighted-sum > RRF (0.5879 vs 0.5668); ULIP-2 ≈ Uni3D (0.5879 vs 0.5843, inside noise).
+- Caveat to carry into the thesis: `O5_xyz_only` also swaps the checkpoint (PointBERT/SLIP ViT-B, 512-d, 8192 pts) vs the colored arm's ViT-g/1280-d, so colour and encoder capacity change together — the "colour is a domain gap" reading is plausible but **not isolated** by this experiment.
+
+Incident: GeDi OOM-killed, 10h of cached garbage
+- `oscar-gedi-1` was **OOMKilled** (`exit=137`, `OOMKilled=true`) 50 min into the geometry run. WSL had only 15 GB (default 50% of the 31.6 GB host) shared between the oscar container (score tensors + 400-cloud LRU) and GeDi (model + 5,000×32 descriptors/cloud on GPU).
+- Every subsequent RANSAC fit failed, and `_GeometryEngine._append_cache` wrote each failure as `{"failed": true}` — a **permanent** poison, since the B2 failure policy ranks failed candidates last. Final state: 3,280 records, 2,845 failed, only 87 queries usable.
+- It ran unnoticed for 10h because the watchdog counted rows in `geometry_scores.jsonl` and checked `stage1_geom`'s status — both looked healthy. The apparent "speed-up" (26 s → 19 s/query) was the failure fast-path, not cache warming. Failure signals must be part of the filter, not just progress signals.
+
+Repair (all applied 2026-07-28)
+- `C:\Users\tholo\.wslconfig` (new): `memory=20GB`, `swap=8GB` (leaves ~11 GB for Windows + Docker Desktop). Verified 19 GB visible in WSL after `wsl --shutdown`.
+- `docker-compose.yml` gedi: `restart: unless-stopped`; healthcheck switched from `curl` (**not installed in that image** — the check could never pass, so the container sat permanently "unhealthy" while serving fine) to a `python3 urllib` probe. Now reports `healthy` in ~15 s.
+- `experiments/experiment1_shrec18_stage1.py`: new `_GeometryEngine._gedi_healthy()` (live probe, distinct from the cached `gedi_available`); `pair_scores` now **aborts with `SystemExit`** when fits fail *and* the service is unreachable, instead of caching bogus failures. Completed pairs stay cached and resumable.
+- `_geom_purge_failed.sh` (new): drops `failed:true` records, backing the file up first. Kept 435 good pairs / 87 queries.
+- `_geom_watch.sh` rewritten to report the good/failed split **and** gedi's container+health state, and to shout when either goes wrong.
+
+Follow-up: the guard worked, and exposed a second fault
+- The relaunched run aborted after ~90 s — correctly. `oscar-gedi-1` had exited **cleanly (`exit=0`, `OOMKilled=false`, no traceback)** ~1 min after startup, right after serving two `/health` probes and before any `compute_descriptors`. `restart: unless-stopped` revived it (`RestartCount=1`) and it was healthy again 60 s later, so by the time the watchdog looked, everything was green — the abort message was the only evidence.
+- So GeDi has (at least) two failure modes: OOM under memory pressure, and this clean-exit-on-startup one, cause still unknown (the Flask dev server leaves no trace). Worth investigating separately; a production WSGI server would probably also log more.
+- **Blanket abort was the wrong response** to a service that self-heals in ~90 s: it would end a 15 h run over a blip. `pair_scores` now retries — `_wait_for_gedi()` polls up to `GEDI_WAIT_S=300`s per attempt, `GEDI_RETRIES=4` — and aborts only if the service stays down. Failures are still never cached.
+
+Status
+- Geometry run relaunched 07:30 with the retry logic; watchdog reports the good/failed split plus gedi's state.
+- Real rate is ~26 s/query (the pre-crash figure) → ~15 h per distinct shortlist. E2_* share the BASE top-5; `O1c` fuses text+view only, so it needs a second full pass. `best_config.json` may change if a geometry variant clears 0.6106.
+
 ## 2026-07-30 HPR occlusion param + upsample jitter; shrec18_v2; MI3DOR full-mesh ablation
 
 Goal

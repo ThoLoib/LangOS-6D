@@ -39,3 +39,7 @@ blender-*/
 
 # Official SHREC18 eval kit (clone of hkust-vgd/shrec18)
 /eval/shrec18_official/
+
+# Duty-cycle / long-run logs
+/logs/
+/.onboard_done_*.txt

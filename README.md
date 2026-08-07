@@ -268,6 +268,190 @@ All caches are content-fingerprinted (model config + source data — never absol
 
 ---
 
+## Experiment 1 — Stage 1: SHREC'18 Retrieval Tuning
+
+Runs the thesis ablation grid (E1, E2, E2b, E4, E6, E7, O1, O2, O4, O5 — 33 cells) on
+SHREC'18 ObjectNN+, scores every cell with the **official** track metrics, and writes the
+winning configuration to `best_config.json` for Stages 2–5. Selection rule: **highest nDCG,
+tie-break mAP**.
+
+One entry point, flag-driven, no subcommands:
+
+```bash
+docker compose run --rm oscar \
+    python3 experiments/experiment1_shrec18_stage1.py --all --resume
+```
+
+The script **never downloads anything**. You provide the data; it validates what is present
+and tells you exactly what is missing.
+
+### What you must provide
+
+| What | Where | How to get it |
+|---|---|---|
+| Raw SHREC'18 | `eval/datasets/shrec18/shrec18_full/` — `cad/*.obj` (3,308), `rgbd/*.ply` (2,101), `results/` | SHREC'18 ObjectNN+ track download |
+| Official GT + scorer | `eval/shrec18_official/` | `git clone https://github.com/hkust-vgd/shrec18 eval/shrec18_official` (gitignored) |
+| Rendered gallery | `object_images/shrec18/` — 42 views + 42 `_partial.npz` per CAD | "Preprocessing a New Dataset" above, `--dataset shrec18` |
+| Descriptions | `object_database/shrec18/descriptions_attributes.json` | same, `describe` step |
+
+The official clone matters: `rgbd.csv` and `cad.csv` carry the real category **and**
+subcategory for all 2,101 queries and 3,308 CADs, and the track's own `metrics.py` is reused
+unchanged — so the numbers are leaderboard-comparable rather than reconstructed. Graded
+relevance is subcategory match = 2, category match = 1, and every metric is cut at
+*f* = category size.
+
+### Setup, end to end
+
+```bash
+# 1. Official GT + scorer (gitignored; the script errors out clearly without it)
+git clone https://github.com/hkust-vgd/shrec18 eval/shrec18_official
+
+# 2. Gallery preprocessing — renders, partial point clouds, descriptions
+bash rendering/onboard_dataset.sh --dataset shrec18
+
+# 3. Gallery embedding caches (all six passes).
+#    This also validates the inputs first and reports anything missing,
+#    and it writes no ablation results — so it doubles as the setup check.
+docker compose run --rm oscar \
+    python3 experiments/experiment1_shrec18_stage1.py --precompute
+
+# 4. Run the grid
+docker compose run --rm oscar \
+    python3 experiments/experiment1_shrec18_stage1.py --all --resume
+```
+
+Steps 2 and 3 are the GPU-heavy part — rendering the gallery and encoding it with DINOv2 /
+SigLIP / ULIP-2 / Uni3D. **A strong GPU is strongly advised for them.** Both are idempotent
+and resumable, and the resulting caches are fingerprinted by content (relative path + size,
+never absolute paths or mtimes), so they can be built once and copied elsewhere; `--precompute`
+also writes `object_images/shrec18/precompute_manifest.json` recording what produced them.
+Step 4 only needs to encode the queries and score the grid.
+
+There is no dedicated "validate only" flag: input validation runs at the start of every real
+invocation (and under `--precompute`), and missing renders, descriptions or CAD meshes are
+reported as a list of what to provide. `--allow-partial-gallery` downgrades that to a warning.
+
+**Query preprocessing is automatic.** On first run the script builds, caches under
+`eval/datasets/shrec18/stage1/`, and reuses thereafter:
+
+- `queries/<hash>.npz` — normalized points + colors (feeds the shape channels and all geometry)
+- `queries/<hash>.png` — RGB crop (feeds the CLIP and DINOv2 channels)
+- `gt/official_labels.json` — parsed from the official CSVs
+
+Sanity-check the crops by adding `--viz-check 16` to a run — it writes
+`eval/datasets/shrec18/stage1/viz_check.png` and then continues, so pair it with a small
+selection rather than expecting it to exit on its own:
+
+```bash
+docker compose run --rm oscar python3 experiments/experiment1_shrec18_stage1.py \
+    --ablations E1a_text_only --limit-queries 20 --viz-check 16
+```
+
+Delete `object_retrieval/results_shrec18_stage1/E1a_text_only/` afterwards — see the traps
+below.
+
+### Useful flags
+
+```bash
+--list                     # print the ablation registry (name, group, passes, question) and exit
+--ablations E1,E4,O4_V8    # run groups or individual cells instead of --all
+--resume                   # skip ablations/passes whose outputs already exist
+--overwrite                # recompute even if results exist
+--with-geometry            # add the 6 GeDi/Chamfer cells (needs the gedi service)
+--limit-queries 20         # smoke test
+--allow-partial-gallery    # run against an incomplete gallery
+--precompute               # build the gallery reference caches only, then exit
+--bench-gedi N             # time N GeDi+RANSAC fits, extrapolate full-DB cost, exit
+--viz-check N              # contact sheet of N query crops
+```
+
+### How it runs: two tiers
+
+Six expensive **channel-score passes** (`base`, `siglip`, `ulip_pc_fullmesh`, `ulip_pc_rgb`,
+`ulip_pc_xyz`, `uni3d`) are computed once and cached as
+`object_retrieval/results_shrec18_stage1/_cache/scores_<pass>.pt`, each holding full per-query
+score vectors over all 3,308 CADs. The 33 grid cells are then **derived cheaply** from those
+vectors — fusion weights and method, shortlisting, view-count swaps. `O4 V∈{8,16,32,42}` is
+re-aggregated from the FPS-ordered view prefix, so changing the view budget costs no
+re-rendering and no re-encoding.
+
+Only `base` and `siglip` consume the query **images**; all four shape passes are pc-mode and
+read the query `.npz` point clouds.
+
+### Geometry cells (`--with-geometry`)
+
+Adds `E2_fitness`, `E2_chamfer_unaligned`, `E2_chamfer_ransac`, `E2_chamfer_icp`, `O1c`, `O1d`,
+which re-rank the top-5 fusion shortlist per query using GeDi descriptors + RANSAC and a
+trimmed one-sided surface distance.
+
+```bash
+docker compose up -d gedi        # wait for the container to report healthy
+docker compose run --rm oscar \
+    python3 experiments/experiment1_shrec18_stage1.py --all --resume --with-geometry
+```
+
+These are by far the most expensive cells in the grid, and the cost is almost entirely GeDi +
+RANSAC. The three aligned signals (`fitness`, `chamfer_ransac`, `chamfer_icp`) share **one**
+registration, so the first aligned cell pays for it and the other two are cache hits.
+Per-(query, CAD) scores are appended to `_cache/geometry_scores.jsonl` and are fully resumable:
+interrupting costs at most the query in flight, so the run can be stopped and continued freely.
+
+### Outputs
+
+```text
+object_retrieval/results_shrec18_stage1/
++-- <ablation>/metrics_summary.json     <- metrics + the full config that produced them
++-- <ablation>/results_per_query.json
++-- stage1_summary.csv                  <- every cell, one row
++-- stage1_summary.tex                  <- booktabs table, paste-ready
++-- best_config.json                    <- winner + frozen PipelineConfig for Stages 2-5
+```
+
+Aggregation reruns automatically at the end of every invocation, so the summary always
+reflects every cell computed so far.
+
+**Reading the metrics.** The seven columns come from the unmodified official
+`eval/shrec18_official/metrics.py`, and they are not seven independent views. Every metric is
+cut at `f` = the query's category size (~165 on average), which makes precision, recall, F1,
+NNT1 and NNT2 identical to one another by construction; NNT2 in particular is inoperative
+(`k2 = min(len(x), 2k)` collapses back to `f`). Only nDCG reads the graded relevance
+(same sub-category = 2, same category = 1) — precision and AP binarise it. So the winner is
+selected on **nDCG**, tie-broken by mAP.
+
+This matters most for the geometry cells: re-ranking touches only the top 5, and permuting 5
+items inside a 165-item prefix cannot change that prefix's membership, so precision is
+*identical across every geometry variant* including the one that is worse than baseline. That
+is the protocol working as specified, not a bug — but it means nDCG is the only official metric
+that can tell the re-ranking arms apart. `results_per_query.json` carries enough per-query
+detail (`top10` with labels, `first_relevant_rank`, `AP`, `nDCG`) to compute top-heavy
+diagnostics like hit@k or MRR post hoc, without re-running anything.
+
+### Traps worth knowing before you run
+
+- **`--resume` does not notice changed query images.** The pass cache is validated on the
+  gallery object list and on query **IDs** only — not on image content. Replacing the query
+  crops under the same filenames and re-running gives you `[pass:base] loaded cache` and the
+  **old** embeddings, with no warning. Delete `_cache/scores_base.pt` and
+  `_cache/scores_siglip.pt` (and the per-ablation output dirs) whenever the crops change.
+- **Smoke results poison a later full run.** Ablation directories are not tagged by query
+  count, so `--limit-queries 20` followed by `--all --resume` keeps the n=20 numbers. Delete
+  the ablation dirs between a smoke test and a real run.
+- **Don't bypass the service entrypoint.** `docker compose run --rm --entrypoint bash oscar`
+  breaks Open3D (`libgomp.so.1: cannot open shared object file`); the entrypoint sets up the
+  environment.
+- **If you reuse caches built on another machine, the encoder side must match exactly.** The
+  run prints a provenance warning when the caches were built at a different commit. Only the
+  encoder-side files matter (`pipeline/step3-5`, the encoder fields in `config.py`,
+  `eval_common.build_pipeline`) — rendering and onboarding may differ. Uni3D in particular
+  needs the pure-torch FPS patch applied wherever the caches were built *and* wherever queries
+  are encoded, or its embeddings mismatch silently. `docs/LAPTOP_EMBEDDINGS_SETUP.md` lists the
+  exact checkpoint and patch requirements.
+- **Give WSL enough memory for the geometry cells.** The oscar container and the GeDi service
+  share it, and the 50%-of-host default has been enough to get GeDi OOM-killed mid-run. See
+  `AI_HANDOFF.md` for the `.wslconfig` settings and the rest of the operational notes.
+
+---
+
 ## Running the Pipeline
 
 ### Debug mode (recommended for testing)

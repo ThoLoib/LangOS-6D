@@ -62,10 +62,10 @@ logger = logging.getLogger(__name__)
 DATASET_CONFIGS = {
     "ycbv": {
         "bop_root": "../eval/datasets/ycbv_gso/test",
-        "ref_dir": "../object_images/ycbv_gso",
-        "desc_file": "../object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json",
-        "cad_models_dir": "../object_database/ycbv_gso",
-        "cad_mesh_glob": "../object_database/ycbv_gso/*/meshes/model.obj",
+        "ref_dir": "../object_images/ycbv",
+        "desc_file": "../object_database/ycbv/descriptions_attributes.json",
+        "cad_models_dir": "../object_database/ycbv",
+        "cad_mesh_glob": "../object_database/ycbv/*/meshes/model.obj",
         "targets_file": "../eval/datasets/ycbv_gso/test_targets_bop19.json",
     },
     "tless": {

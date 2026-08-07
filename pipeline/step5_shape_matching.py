@@ -895,7 +895,9 @@ class ShapeMatcher:
             points: Punktwolke (N, 3) – XYZ-Koordinaten.
             colors: Optionale Farben (N, 3) – RGB in [0, 1].
                     Für 'pointbert_colored': wird verwendet oder mit 0 aufgefüllt.
-                    Für Uni3D / andere Backbones: wird ignoriert.
+                    Für Uni3D: wird als RGB-Eingabe verwendet; falls nicht
+                    vorhanden, setzt der Uni3D-Wrapper Ersatzfarben ein.
+                    Für andere Backbones: wird ignoriert.
 
         Returns:
             Normalisierter Tensor (1, embed_dim).

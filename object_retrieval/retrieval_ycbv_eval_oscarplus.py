@@ -34,10 +34,10 @@ from eval_common import (
 # ============================================================================
 # CONFIG — edit these to match your environment
 # ============================================================================
-ref_dir       = "../object_images/ycbv_gso"
+ref_dir       = "../object_images/ycbv"
 bop_root      = "../eval/datasets/ycbv_gso/test"
-desc_file     = "../object_database/descriptions_tessa/ycbv_gso/descriptions_attributes.json"
-cad_mesh_glob = "../object_database/ycbv_gso/*/meshes/model.obj"
+desc_file     = "../object_database/ycbv/descriptions_attributes.json"
+cad_mesh_glob = "../object_database/ycbv/*/meshes/model.obj"
 result_folder = "results_ycbv_oscarplus"
 
 cfg = EvalConfig(

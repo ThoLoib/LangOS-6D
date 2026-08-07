@@ -1,5 +1,108 @@
 # Decisions
 
+## 2026-07-31 Add a depth-matched metric table so the geometry stage is measurable
+
+Decision
+- Keep the official scorer as **Table A** (unchanged, per the 2026-07-30 entry) and add **Table B**: `NN_cat`, `NN_sub`, `hit@K`, `MRR@K`, `mAP@K` and a *corrected* `nDCG@K`, computed at the geometry depth K for **every** arm. `NN_sub` is the headline for the geometry cells.
+- Raise the geometry shortlist from the hardcoded `GEOM_SHORTLIST = 5` to a `--geom-k` chosen from the base-fusion **hit-rate@K curve**: the smallest K whose hit-rate@K is within 2 points of hit-rate@100. No K sweep is reported.
+- Combine RANSAC fitness and `d_trim` in `E2_both` by **mean rank (Borda, ties averaged)** — fixed, not ablated. Add `O1e` as the same Borda plus the base-fusion rank.
+- Reproduce OSCAR's pruning at **τ_text = 0.37** (threshold, not top-k), reported as a padded row plus a faithful variable-length paragraph.
+- Evaluate on all **2,101 official queries** (`rgbd.csv`/`cad.csv`), not the 1,452 reconstructed train queries.
+
+Rationale
+- The 2026-07-30 entry established that P/R/F1/NNT1/NNT2 are invariant to the whole B2 stage and closed with "that requires **new** metrics (hit@k, MRR, per-category breakdown)". This is that follow-up. At `GEOM_SHORTLIST = 5` the re-rank was also competing for only 12.7 % of the official DCG weight mass; K = 20 doubles it to 25.9 %.
+- K is chosen from measured recall headroom rather than taste, because geometry re-ranks but never inserts — base hit-rate@K is a hard ceiling on every top-1 metric, and the curve is the justification the thesis needs for the constant.
+- `fitness + (−d_trim)` reproduces the fitness-only ranking on representative data (fitness spans ~0.23, `d_trim` ~0.09), so a raw sum is not a fusion. Borda is scale-free with no free parameter; RRF's `k = 60` is provably inert at K = 20 (weights span 1/61…1/80) and a z-normalized weight would have to be tuned on the evaluation queries.
+- Measured costs (`results_gedi_large_19x10`): descriptors 3.446 s/cloud but **per cloud**, RANSAC 0.430 s **per pair**. Precomputing descriptors (5,409 clouds, ~5.2 h, ~4.1 GB) makes K nearly free — K = 20 over 2,101 queries is ~5.0 h.
+- Official GT covers all 2,101 queries with real subcategory labels, so the train-split limitation the earlier plan declared no longer applies — and `NN_sub` only exists because of those labels.
+
+Alternatives considered
+- Report only the official metrics — rejected: the geometry ablations would remain unmeasurable, which is the entire point of running them.
+- Patch the official DCG everywhere — rejected again, for the 2026-07-30 reason (comparability); the corrected nDCG lives only in Table B and is never placed in the same column.
+- Sweep K as an ablation — rejected: affordable (~12.6 h at K = 50) but it makes depth the result instead of geometry.
+- Ablate the fitness/Chamfer fusion rule — rejected: three near-identical rules would pad the grid without answering a thesis question.
+- Full-database S_GeDi (the originally specified O1e) — infeasible: 2,101 × 3,308 ≈ 6.95 M registrations ≈ 830 h per cell. Reframed as a shortlist-level question instead.
+
+Detail: `docs/STAGE1_EVALUATION_DESIGN.md`.
+
+## 2026-07-30 Select the Stage-1 config on nDCG, and do not patch the official metrics
+
+Decision
+- **nDCG is the selection metric** for the Stage-1 grid (tie-break mAP), as `subsec:eval_stage1_retrieval` specifies.
+- `eval/shrec18_official/metrics.py` is used **verbatim**, including a known off-by-one in `dcg`. No patched variant is computed, not even as a side-by-side.
+- The other six official metrics are still reported — they are what the SHREC'18 track publishes — but the thesis must state which of them can actually discriminate between the arms.
+
+Rationale
+- The choice is forced by the protocol, not aesthetic. Reading the official implementation: every metric is cut at `f` = the query's category size (~165 on average), and P, R, F1, NNT1, NNT2 are therefore **identical to each other by construction** at `k = f`. **NNT2 is inoperative** — `k2 = min(len(x), 2k)` collapses back to `f`. Only `dcg` reads the graded relevance at all (`total += x[i] * w`, subcat=2 / cat=1); precision and AP binarise it and discard the sub-category distinction the benchmark went to the trouble of defining.
+- Empirically confirmed by the geometry cells: P is **0.2686 across all six E2 arms**, including `chamfer_unaligned` which is genuinely *worse* than baseline. Geometry re-ranks `GEOM_SHORTLIST = 5` candidates, and permuting 5 items inside a 165-item prefix cannot change the prefix's membership — so every set-membership metric is provably blind to the whole B2 stage. nDCG is the only official metric that moves (0.5850 → 0.6028).
+- The off-by-one (`enumerate(x[1:])` while indexing `x[i]`: `x[0]` is counted twice and the last element dropped) is real, but `dcg` and `idcg` share it, so the normalised ratio remains a well-defined monotone score. Patching it would make every number in this thesis incomparable with the published SHREC'18 results — the entire reason for using the official script instead of the in-repo helpers. Comparability beats correctness here, and the defect is documented rather than silently inherited.
+
+Consequence to state in the thesis
+- Report nDCG as the headline and say plainly that P/R/F1/NNT1/NNT2 coincide at `k = f`; presenting them as five independent columns would overstate the evidence.
+- Any conclusion about the re-ranking stage (E2, O1c–e) rests on nDCG alone. If the write-up needs finer resolution on the top of the list, that requires **new** metrics (hit@k, MRR, per-category breakdown), which `results_per_query.json` already carries enough information to compute post hoc — `id`, `category`, `top10` with labels, `first_relevant_rank`, `AP`, `nDCG` — without re-running anything.
+
+Alternatives considered
+- Report a patched nDCG alongside the official one — rejected: two nDCG columns invite the reader to pick, and the patched one compares to nothing in the literature.
+- Select on mAP instead — rejected: mAP binarises relevance, so it cannot distinguish a same-sub-category hit from a same-category one, which is precisely the discrimination Stage 1 is tuning for.
+- Cut the metrics at a small fixed `k` (e.g. 10) so re-ranking becomes visible — rejected as a selection criterion because it silently redefines the benchmark; kept as a post-hoc *diagnostic* instead.
+
+## 2026-07-29 Drive Docker from WSL via the Windows binary, and start existing containers
+
+Decision
+- Long-running batch scripts that must survive idle periods (`_geom_duty.sh`, `_duty_watch.sh`) call Docker through **`/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe`**, not the `docker` on the distro's PATH. Every captured value is passed through `tr -d '\r'`.
+- They operate on **already-created containers** with `docker start` / `docker stop`, never `docker compose run`.
+
+Rationale
+- Docker Desktop's **Resource Saver** stops the WSL engine a few minutes after the last container exits. A battery duty cycle creates exactly that condition on purpose, so it kept disabling the tooling needed to start the next window: `/usr/bin/docker` vanished from the Ubuntu distro (observed as `Input/output error`, then `No such file or directory`) while the engine answered fine from Windows. `wsl -l -v` showed `docker-desktop` **Stopped**.
+- Restarting Docker Desktop restores the mount but is a workaround — it broke again on the very next idle phase, costing two consecutive windows. Waking the engine via `docker.exe info` returns a healthy server version but does **not** rebuild the Ubuntu mount, so "is the engine up?" is the wrong question to test.
+- `docker compose` cannot be used through the Windows binary here: the compose file's relative bind mounts would resolve against Windows paths rather than the WSL paths the containers actually use. Existing containers already carry the correct mounts (`/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/…`), and these survive stop/start.
+- `docker start` re-runs the container's original command. Because the experiment runs with `--resume` and geometry pair scores are cached per (query, CAD), restarting is exactly equivalent to continuing — verified: the restarted container logged `[resume] 16 ablations already computed`, reloaded both score caches from `/app`, and reconnected to GeDi.
+
+Alternatives considered
+- Disable Resource Saver in Docker Desktop settings — rejected: it exists to save power, which is the whole point of the duty cycle. Better to tolerate the engine sleeping than to prevent it.
+- Keep a dummy container running so the engine never idles — defeats the power saving just as directly.
+- Restart Docker Desktop from the duty script when the CLI goes missing — heavier, racy, and treats a predictable lifecycle event as an error.
+
+## 2026-07-28 Score the three aligned geometry signals from ONE registration
+
+Decision
+- `GeometryReRanker.rerank()` takes a new `all_aligned=True` flag that populates `d_ransac` **and** `d_icp` on every candidate alongside `fitness`, from a single GeDi + RANSAC pass. `_GeometryEngine.pair_scores` maps all three aligned signals (`fitness`, `chamfer_ransac`, `chamfer_icp`) onto one shared field set `("fitness", "d_ransac", "d_icp")`, so whichever aligned ablation runs first pays the registration and the other two are pure cache hits.
+- The unaligned diagnostic (`chamfer_unaligned`) stays separate — it involves no registration at all.
+- The requested `signal` still decides what `chamfer_score`, `transformation` and the ranking mean. Harvesting the extra distances must never change what a signal *is*: under `all_aligned` with a non-ICP signal, `gc.transformation` stays `T_RANSAC`, and for `signal="fitness"` no distance is computed into `chamfer_score` at all.
+
+Rationale
+- Measured on the 2026-07-28 run: **34.8 s/query** (82 → 225 queries over 83 min, consistent with a 10-min sample at 40.2 s/q and a 30-min tick at 34.6 s/q). Essentially all of it is GeDi + RANSAC — the trimmed distance on its own, measured as the `chamfer_unaligned` ablation, runs at **~0.5 s/query**, and ICP is local refinement, far cheaper than feature RANSAC.
+- Because the cache was keyed per signal, the three aligned signals each redid that 35 s to obtain three cheap readouts of the same alignment: **~60 h instead of ~26 h** over the 2,101 official queries.
+- Verified before committing to the long run: on one query/two CADs the one-pass call wrote all three fields in 14.3 s and the second aligned signal read back in 0.00 s. `d_icp < d_ransac` in both pairs (0.0313 vs 0.0326; 0.1794 vs 0.1837), i.e. ICP genuinely refines the alignment rather than the fields being copies — the specific failure this restructure could plausibly have introduced.
+- **Confirmed in production after the switch: 40.2 s/query** for all three aligned signals together (10-min window, 15 queries), against 34.8 s/query for `fitness` alone. ICP + the second trimmed distance therefore cost ~5.4 s/query — ~23 h for the aligned signals over the full query set, vs ~64 h split three ways.
+- Note `_icp_refine` is fed the **full-resolution** observed cloud (up to `QUERY_MAX_PTS = 500,000`) while every other step uses the voxel-downsampled `obs_down`. Measured cost says this is not worth changing — median query is 27.5k points and only ~145 of 2,101 exceed 1M — but it is the first place to look if the rate degrades on a query set with a heavier size distribution.
+
+Consequence to state in the thesis
+- `fitness` and `d_ransac` now come from the **same** RANSAC run rather than from independent stochastic ones. This is deliberate and arguably the more correct comparison — the E2 grid is meant to ask which *readout* of an alignment ranks best, not to average over RANSAC's randomness — but it is a change in what is measured and should not be glossed over.
+
+Alternatives considered
+- Leave it: ~2.5 days for the six cells, no code change, no semantic question. Rejected as an avoidable 34 h.
+- Drop `d_icp` and report E2_chamfer_icp / O1d as not run — rejected; the thesis grid specifies them.
+- Cache the RANSAC transform itself and recompute distances later — more general, but stores 4×4 matrices per (query, CAD) pair and still needs the same restructure to populate them.
+
+## 2026-07-28 Never cache a geometry failure that a dead service caused
+
+Decision
+- **A resumable cache may only persist results the run can stand behind.** `_GeometryEngine` now live-probes GeDi (`_gedi_healthy()`, separate from the memoized `gedi_available`) whenever a batch reports registration failures, and **aborts the run** if the service is unreachable rather than writing `{"failed": true}`. Genuine failures (service healthy, registration really did fail) are still cached — they are real signal.
+- **Resource limits are part of the experiment setup**, not an afterthought: `.wslconfig` pins WSL to 20 GB + 8 GB swap so the oscar container and the GeDi service coexist without the OOM killer choosing between them. `gedi` gets `restart: unless-stopped`.
+- **A healthcheck that cannot pass is worse than none** — it trains you to ignore the status column. The gedi healthcheck shelled out to `curl`, which that image does not contain, so the container reported `unhealthy` for its entire life while answering every request. Replaced with a `python3 urllib` probe.
+- **Watchdogs must watch the failure signal, not just the progress signal.** Counting rows in an append-only cache cannot distinguish "working" from "failing fast", and a dependency's health is not implied by the consumer still running.
+- **Wait out a self-healing dependency; abort only if it stays down.** With `restart: unless-stopped`, GeDi recovers in ~90 s, so `pair_scores` retries (`GEDI_WAIT_S=300` per attempt, `GEDI_RETRIES=4`) instead of ending a 15 h run over a blip. The invariant is "never cache a failure we can't stand behind", not "abort on first failure".
+
+Rationale
+- On 2026-07-27 GeDi was OOM-killed 50 min into the geometry run. The remaining 10 h wrote 2,845 permanently-poisoned pairs (the B2 policy ranks failed candidates last, so they would have silently depressed every geometry metric), and the monitor showed steady progress throughout — the failure path was simply faster than the real one. Only 87 of 656 queries survived.
+- The failure was invisible at three independent layers (cache, healthcheck, watchdog), so the fix is applied at all three rather than only at the one that happened to be noticed.
+
+Alternatives considered
+- Cache failures but tag them with a service-health flag and filter at read time — rejected: it keeps the poison in the file and defers the judgement to every future reader.
+- Rely on `restart: unless-stopped` alone — insufficient: a restart still leaves the pairs attempted during the outage cached as failures.
+- Drop the geometry cells and report the grid without them — rejected; the thesis grid specifies E2/O1c/O1d, and the B2 rework (RANSAC-before-distance, ICP refinement, failure policy) is otherwise untested at scale.
+
 ## 2026-07-30 HPR occlusion param, upsample jitter, and SHREC'18 re-onboard slot
 
 Decision
