@@ -30,6 +30,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 
@@ -130,11 +131,23 @@ class CLIPRetriever:
                 "Ref: https://github.com/openai/CLIP"
             )
 
+    # Foreign-view descriptions: 3-digit zero-padded view names (``_002.png``)
+    # are stray renders, not one of the 42 real views (``_0.png``..``_41.png``).
+    # The image loader quarantines them (see retrieval_mi3dor_eval_oscarplus.
+    # _quarantine_foreign_views, SAME regex); the descriptions JSON was built
+    # before that and still carries them, giving ~1817 MI3DOR objects a 43rd
+    # (foreign) description that biases CLIP scoring. Drop them so CLIP scores
+    # exactly the 42 real views per object, consistent with DINO/ULIP.
+    _FOREIGN_VIEW_RE = re.compile(r"_[0-9]{3,}\.png$")
+
     @staticmethod
     def _load_object_descriptions(desc_file: str) -> Tuple[List[str], List[str]]:
         """Lädt Objektbeschreibungen aus einer OSCAR-kompatiblen JSON-Datei.
 
         Format: {object_id: {"image_descriptions": {"view_name": "text", ...}}}
+
+        Foreign-view descriptions (3-digit ``_NNN.png`` view keys) are skipped
+        so CLIP scores only the 42 real views, matching the image quarantine.
 
         Args:
             desc_file: Pfad zur JSON-Datei.
@@ -147,10 +160,18 @@ class CLIPRetriever:
 
         texts: List[str] = []
         labels: List[str] = []
+        n_foreign = 0
         for obj_id, entry in descriptions.items():
-            for _, text in entry.get("image_descriptions", {}).items():
+            for view_name, text in entry.get("image_descriptions", {}).items():
+                if CLIPRetriever._FOREIGN_VIEW_RE.search(str(view_name)):
+                    n_foreign += 1
+                    continue
                 texts.append(text)
                 labels.append(obj_id)
+        if n_foreign:
+            logger.info(
+                "CLIP descriptions: skipped %d foreign-view (_NNN.png) entries; "
+                "keeping only the 42 real views per object.", n_foreign)
         return texts, labels
 
     def load_descriptions(
@@ -339,19 +360,23 @@ class CLIPRetriever:
             keep_indices = sims.topk(min(top_k, len(sims))).indices
 
         # --- Kandidaten aufbauen ---
+        # keep_indices is score-descending in both branches, so the first row
+        # seen for each object is its best (max) view — object score = max over
+        # its description rows. Gather all kept scores to CPU in ONE transfer to
+        # avoid a per-row .item() GPU sync (161k syncs/query on MI3DOR ≈ +1s);
+        # the result is bit-identical, just ~1s/query faster.
+        keep_indices_list = keep_indices.tolist()
+        keep_scores_list = sims[keep_indices].cpu().tolist()
         candidates = []
         seen_objects = set()  # Deduplizierung auf Objekt-Ebene
-        for idx in keep_indices.tolist():
+        for pos, idx in enumerate(keep_indices_list):
             obj_id = self._desc_labels[idx]
-            score = sims[idx].item()
-            desc = self._desc_texts[idx]
-
-            # Pro Objekt den besten Score behalten
+            # Pro Objekt den besten Score behalten (erste = höchste)
             if obj_id not in seen_objects:
                 candidates.append(CLIPCandidate(
                     object_id=obj_id,
-                    score=score,
-                    description=desc,
+                    score=keep_scores_list[pos],
+                    description=self._desc_texts[idx],
                 ))
                 seen_objects.add(obj_id)
 

@@ -48,8 +48,14 @@ ref_dir               = "../object_images/MI3DOR"
 bop_root              = "../eval/datasets/mi3dor/image/test"
 desc_file             = "../object_database/MI3DOR/descriptions_attributes.json"
 cad_mesh_glob         = "../object_database/MI3DOR/model/test/*/*.obj"
-result_folder         = "results_mi3dor_oscarplus_f20_3"
+result_folder         = os.environ.get("MI3DOR_RESULT_FOLDER", "results_mi3dor_oscarplus_v2_tau037")
 ulip_query_cache_path = "ulip_query_cache_mi3dor.pt"
+
+# DINO pooling ablation knob (CLS vs mean). Default "cls" = the frozen config;
+# set MI3DOR_DINO_POOLING=mean to reproduce Pulli's mean-patch pooling. The
+# gallery DINO cache is keyed by pooling (step4._cache_path), so the two runs
+# do not collide. Write mean results to a SEPARATE MI3DOR_RESULT_FOLDER.
+dino_pooling = os.environ.get("MI3DOR_DINO_POOLING", "cls")
 
 
 cfg = EvalConfig(
@@ -58,10 +64,18 @@ cfg = EvalConfig(
     cad_mesh_glob=cad_mesh_glob,
     result_folder=result_folder,
     topk=[15],
-    clip_top_k=20,
+    # CLIP shortlist S' for the pruned / OSCAR arms: threshold pruning (Pulli
+    # et al. arXiv:2601.07333), tau_text=0.37 on the image<->text cosine, with
+    # a top-20 fallback when no candidate clears tau. The full-DB arms
+    # (clip_only / dino_only_full / ulip_only_full / clip_dino_ulip_full) rank
+    # the whole gallery regardless (CLIP retrieval auto-expanded to |gallery|).
+    clip_top_k=20,               # = fallback depth; full CLIP ranking auto-expands
+    clip_prune_mode="threshold",
+    clip_tau=0.37,
+    clip_fallback_k=20,
     dino_top_k=9999,
     ulip2_top_k=9999,
-    fusion_top_k=1,
+    fusion_top_k=9999,
     TOP_F=20,
     ulip_query_cache_path=ulip_query_cache_path,
     # Best settings from the shrec18 experiment: the O4 view-count sweep peaked
@@ -73,12 +87,16 @@ cfg = EvalConfig(
         "dino_view_topk": 5,
         "dino_view_temperature": 0.5,
         # Partial-view shape mode: the per-view ULIP clouds are soft-k-max
-        # combined (topk_softmax, top-8, tau=0.5) — same as shrec18's partial
-        # shape channel (experiment1:1386). Full-mesh mode has one embedding,
-        # so aggregation is moot there.
+        # combined (topk_softmax, tau=0.5). top-k set to 5 to MATCH the DINO
+        # view aggregation (user request 2026-08-04) — was top-8 in shrec18's
+        # partial shape channel (experiment1:1386); equalised here so both
+        # channels pool the same way. Full-mesh mode has one embedding, so
+        # aggregation is moot there.
         "ulip_view_aggregation": "topk_softmax",
-        "ulip_view_topk": 8,
+        "ulip_view_topk": 5,
         "ulip_view_temperature": 0.5,
+        # CLS (frozen default) vs mean (Pulli) DINO pooling — ablation knob.
+        "dino_pooling": dino_pooling,
     },
 )
 
@@ -130,16 +148,31 @@ def _collect_filtered_cad_mesh_items(allowed_categories):
 
 
 def _collect_query_paths(categories):
+    # Respect the same MI3DOR_MAX_QUERIES_PER_CAT cap as the query factory so
+    # the ULIP query pre-encoding only touches the subset actually evaluated
+    # (identical first-N-sorted-per-category selection).
+    _cap = int(os.environ.get("MI3DOR_MAX_QUERIES_PER_CAT", "0") or "0")
     paths = []
     for cat in categories:
         cat_dir = os.path.join(bop_root, cat)
-        for fname in sorted(os.listdir(cat_dir)):
-            if fname.lower().endswith((".png", ".jpg", ".jpeg")):
-                paths.append(os.path.join(cat_dir, fname))
+        cat_files = sorted(
+            f for f in os.listdir(cat_dir)
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        )
+        if _cap > 0:
+            cat_files = cat_files[:_cap]
+        for fname in cat_files:
+            paths.append(os.path.join(cat_dir, fname))
     return paths
 
 
 def _make_query_factory(categories):
+    # Small-run knob: cap queries PER CATEGORY for a fast directional read
+    # (e.g. CLS-vs-mean pooling). |C| is the gallery class size, unaffected by
+    # how many queries we sample, so a capped run yields the same metric
+    # definitions on a smaller (noisier) query sample. 0/unset = all queries.
+    _cap = int(os.environ.get("MI3DOR_MAX_QUERIES_PER_CAT", "0") or "0")
+
     def factory(k):
         for category in tqdm(categories,
                              desc=f"Top-k={k} Categories", unit="cat"):
@@ -148,6 +181,8 @@ def _make_query_factory(categories):
                 f for f in os.listdir(cat_dir)
                 if f.lower().endswith((".png", ".jpg", ".jpeg"))
             )
+            if _cap > 0:
+                query_files = query_files[:_cap]
             for fname in tqdm(query_files, desc=category,
                               unit="img", leave=False):
                 img_path = os.path.join(cat_dir, fname)
@@ -210,8 +245,16 @@ def main():
     # in ref_dir; if they are absent build_pipeline warns and falls back to
     # full-mesh (which would make the two tables identical — check the log).
     base_result_folder = cfg.result_folder
+    # MI3DOR_MODES lets the DINO-pooling ablation run fullmesh-only: the DINO
+    # arms are shape-mode-independent, so fullmesh alone isolates the pooling
+    # effect at half the runtime. Default runs both.
+    _modes_env = os.environ.get("MI3DOR_MODES", "fullmesh,partial")
+    _wanted = {m.strip() for m in _modes_env.split(",") if m.strip()}
     ulip_cache = None
     for mode_name, use_partial in (("fullmesh", False), ("partial", True)):
+        if mode_name not in _wanted:
+            print(f"[mi3dor] skipping mode {mode_name} (MI3DOR_MODES={_modes_env})")
+            continue
         cfg.ulip2_use_partial_views = use_partial
         cfg.result_folder = os.path.join(base_result_folder, mode_name)
         print(f"\n===== MI3DOR shape-source ablation: {mode_name} "
