@@ -130,7 +130,11 @@ class DINOCandidate:
 
     Attributes:
         object_id: Identifikator des CAD-Modells.
-        dino_score: DINOv2 Cosine-Similarity.
+        dino_score: DINOv2 Cosine-Similarity (aggregierte View-Scores).
+        dino_score_maxview: Bester Einzel-View-Score (hard max ueber alle
+            Views). OSCAR-Baseline (Pulli et al.) aggregiert per max; unabhaengig
+            von ``dino_view_aggregation`` mitberechnet, damit max-view- und
+            softmax-Arme aus einem einzigen Pass abgeleitet werden koennen.
         clip_score: Urspruenglicher CLIP-Score (fuer spaetere Fusion).
         best_view_path: Pfad zum aehnlichsten Rendering.
     """
@@ -138,6 +142,7 @@ class DINOCandidate:
     dino_score: float
     clip_score: float
     best_view_path: str = ""
+    dino_score_maxview: float = 0.0
 
 
 @dataclass
@@ -316,7 +321,13 @@ class DINOReRanker:
             model_tag = self.config.siglip_model_name.replace("/", "_")
             return os.path.join(ref_dir, f".siglip_cache_{model_tag}_vall_{fp}.pt")
         model_tag = self.config.dino_model_name.replace("/", "_")
-        return os.path.join(ref_dir, f".dino_cache_{model_tag}_vall_{fp}.pt")
+        # Pooling mode MUST be part of the cache key: query and gallery must be
+        # pooled identically, so a CLS-pooled cache is invalid for a mean run.
+        # CLS keeps the historical name (no suffix) so the existing gallery
+        # cache is reused; non-cls variants get their own file.
+        pooling = getattr(self.config, "dino_pooling", "cls")
+        pool_tag = "" if pooling == "cls" else f"_{pooling}"
+        return os.path.join(ref_dir, f".dino_cache_{model_tag}_vall{pool_tag}_{fp}.pt")
 
     def _try_load_cache(self, ref_dir: str) -> bool:
         """Versucht, gecachte Embeddings zu laden.
@@ -597,7 +608,7 @@ class DINOReRanker:
         agg_topk = self.config.dino_view_topk
         agg_tau = self.config.dino_view_temperature
 
-        scored_objects: List[Tuple[str, float, str]] = []
+        scored_objects: List[Tuple[str, float, float, str]] = []
         for obj_id, view_list in obj_view_scores.items():
             view_scores_t = torch.tensor(
                 [s for s, _ in view_list], device=self.device
@@ -606,19 +617,24 @@ class DINOReRanker:
                 view_scores_t, method=agg_method, top_k=agg_topk,
                 temperature=agg_tau,
             )
+            # Hard best-view score (OSCAR baseline aggregation), computed
+            # alongside the configured aggregation from the same per-view sims.
+            maxview_score = float(view_scores_t.max().item())
             best_path = view_list[best_local_idx][1]
-            scored_objects.append((obj_id, agg_score, best_path))
+            scored_objects.append(
+                (obj_id, agg_score, maxview_score, best_path))
 
         # --- Sort by aggregated score ---
         scored_objects.sort(key=lambda x: x[1], reverse=True)
 
         candidates = []
-        for obj_id, dino_score, best_path in scored_objects[:top_k]:
+        for obj_id, dino_score, maxview_score, best_path in scored_objects[:top_k]:
             candidates.append(DINOCandidate(
                 object_id=obj_id,
                 dino_score=dino_score,
                 clip_score=clip_score_map.get(obj_id, 0.0),
                 best_view_path=best_path,
+                dino_score_maxview=maxview_score,
             ))
 
         logger.info(
