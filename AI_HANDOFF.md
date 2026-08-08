@@ -1,6 +1,9 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-07-31
+> Last updated: 2026-08-07 (merge of `origin/tessa-pc` and the laptop Stage-1
+> geometry run into `feat/stage1-official-eval-precompute`; entries below are
+> newest-first and the two 2026-07-3x updates come from the two machines
+> independently)
 
 ## Update 2026-07-31 (Stage-1 evaluation redesign — agreed, partially implemented)
 

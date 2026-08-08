@@ -74,6 +74,7 @@ def compute_descriptors():
     Request JSON:
         points: base64-encoded float32 array (N, 3)
         num_keypoints: int (optional, default 5000)
+        seed: int (optional, deterministic keypoint sampling)
         r_lrf: float (optional, override LRF radius)
 
     Response JSON:
@@ -105,8 +106,15 @@ def compute_descriptors():
 
         gedi = get_gedi()
 
-        # Sample keypoints
-        kp_indices = np.random.choice(len(pts_np), num_kp, replace=False)
+        # Sample keypoints. Existing callers remain stochastic when no seed
+        # is supplied; experiments can opt into reproducible sampling.
+        seed = data.get("seed")
+        if seed is None:
+            kp_indices = np.random.choice(len(pts_np), num_kp, replace=False)
+        else:
+            kp_indices = np.random.default_rng(int(seed)).choice(
+                len(pts_np), num_kp, replace=False
+            )
         kp_pts = torch.tensor(pts_np[kp_indices]).float()
         pcd_tensor = torch.tensor(pts_np).float()
 
