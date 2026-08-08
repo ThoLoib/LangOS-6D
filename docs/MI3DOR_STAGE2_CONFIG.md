@@ -132,12 +132,41 @@ Reading:
 
 ### vs. published OSCAR (paper: NN 89.4, FT 0.708, ST 0.850, DCG 0.844, ANMRR 0.205)
 
-With **corrected** metrics we land **below** OSCAR: best NN ≈ **85.9** (cascade) and
-best FT ≈ **0.620** (3-way fusion) vs OSCAR's 89.4 / 0.708. **The earlier
+With **corrected** metrics (CLS pooling) we land **below** OSCAR: best NN ≈ **85.9**
+(cascade) and best FT ≈ **0.620** (3-way fusion) vs OSCAR's 89.4 / 0.708. **The earlier
 "beats OSCAR on every metric" result (FT 0.855) was entirely the metric bug** —
-see the history note below. The remaining gap to OSCAR is under investigation
-(candidate causes: our DINO pooling vs Pulli's mean-patch-token; whether the paper's
-FT is the cascade or a DINO-full-DB ranking; preprocessing/description differences).
+see the history note below. Mean pooling (§7.1) then closes part of the remaining
+gap; the rest is attributed to the **10-category confound** (Pulli evaluates on 10
+MI3DOR categories, we use all 21 → far fewer distractors) and description/preprocessing
+differences.
+
+### 7.1 DINO pooling ablation — CLS vs mean (2026-08-07, full n=10,500/mode)
+
+Run: `results_mi3dor_oscarplus_v2_tau037_dinomean/{fullmesh,partial}/`. The **only**
+change from §7 is the DINOv2 pooling: our CNOS-style **CLS token** vs Pulli's
+**mean-patch-token** (`last_hidden_state.mean(dim=1)`, `dino_pooling="mean"`). The
+gallery DINO cache is keyed by pooling so the two never collide. Verified clean
+ablation: `clip_only` and `ulip_only_full` are **exactly unchanged** (Δ=0) — only the
+DINO channel moves; `dino_only_full` is identical across shape modes (DINO is
+shape-mode-independent).
+
+| arm | metric | CLS | mean | Δ |
+|---|---|---|---|---|
+| dino_only_full (both modes) | NN | 78.01 | **83.03** | +5.0 |
+| | FT | 0.587 | **0.629** | +0.042 |
+| | ANMRR↓ | 0.344 | 0.297 | −0.046 |
+| clip_dino_ulip_full — fullmesh | NN / FT / ANMRR | 83.42 / 0.620 / 0.304 | 85.17 / **0.639** / 0.283 | +1.8 / +0.020 |
+| clip_dino_ulip_full — **partial** | NN / FT / ANMRR | 84.11 / 0.620 / 0.300 | **87.05 / 0.648 / 0.270** | +2.9 / +0.028 |
+| cascades (oscar_*, clip_pruned) | NN | 84.5–85.9 | 84.9–86.2 (±0.5) | flat FT/ST (CLIP-inherited) |
+
+**Mean pooling is the better choice on MI3DOR** and is now the **MI3DOR default**
+(`retrieval_mi3dor_eval_oscarplus.py`: `MI3DOR_DINO_POOLING` defaults to `mean`).
+Best config = **partial + 3-way fusion: NN 87.05 / FT 0.648 / ST 0.786 / ANMRR 0.270**.
+Note: with mean-pooled DINO, **partial now beats fullmesh** on the fusion arm (was
+~tied under CLS) — the stronger DINO makes the partial ULIP shape signal more
+complementary. **Scope:** this default is MI3DOR-only; the global
+`PipelineConfig.dino_pooling` stays `cls`, so SHREC and other benchmarks are
+unaffected until pooling is separately ablated there.
 
 ### OLD (inflated, buggy) results — DO NOT CITE, kept for the record
 

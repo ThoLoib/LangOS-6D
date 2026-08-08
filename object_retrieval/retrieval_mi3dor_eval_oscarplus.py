@@ -51,11 +51,14 @@ cad_mesh_glob         = "../object_database/MI3DOR/model/test/*/*.obj"
 result_folder         = os.environ.get("MI3DOR_RESULT_FOLDER", "results_mi3dor_oscarplus_v2_tau037")
 ulip_query_cache_path = "ulip_query_cache_mi3dor.pt"
 
-# DINO pooling ablation knob (CLS vs mean). Default "cls" = the frozen config;
-# set MI3DOR_DINO_POOLING=mean to reproduce Pulli's mean-patch pooling. The
-# gallery DINO cache is keyed by pooling (step4._cache_path), so the two runs
-# do not collide. Write mean results to a SEPARATE MI3DOR_RESULT_FOLDER.
-dino_pooling = os.environ.get("MI3DOR_DINO_POOLING", "cls")
+# DINO pooling for MI3DOR. Default is now "mean" (Pulli's mean-patch pooling):
+# the 2026-08-07 full-set ablation showed mean beats CLS on MI3DOR
+# (dino_only_full FT 0.587->0.629 / NN 78.0->83.0; 3-way fusion FT 0.620->0.648
+# partial). This default is MI3DOR-SCOPED — the global PipelineConfig.dino_pooling
+# stays "cls" so SHREC/other benchmarks are unaffected until separately tested.
+# Set MI3DOR_DINO_POOLING=cls to reproduce the old CLS numbers. The gallery DINO
+# cache is keyed by pooling (step4._cache_path), so the two never collide.
+dino_pooling = os.environ.get("MI3DOR_DINO_POOLING", "mean")
 
 
 cfg = EvalConfig(
