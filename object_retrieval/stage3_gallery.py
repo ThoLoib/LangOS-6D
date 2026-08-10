@@ -266,17 +266,18 @@ def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master):
         master["pose_mesh"][nsid] = _pose_mesh_path(ds, oid)
 
 
-def assemble_gallery(target_ds=None, include_target=True,
-                     proxy_ds=PROXY_DATASETS, extra_overrides=None):
-    """Build the union gallery.
+def assemble_gallery(target_datasets=(), proxy_ds=PROXY_DATASETS,
+                     extra_overrides=None):
+    """Build the union gallery = G_proxy ∪ (exact CADs of each target dataset).
 
-    3a: assemble_gallery("ycbv", include_target=True)  -> G_proxy ∪ G_target,ycbv
-    3b: assemble_gallery("ycbv", include_target=False) -> G_proxy
+    3a (one big DB): assemble_gallery(TARGET_DATASETS) -> proxies + ALL targets;
+        every query dataset retrieves against this single combined gallery.
+    3b:              assemble_gallery(())              -> G_proxy only.
     """
-    datasets = list(proxy_ds)
-    if include_target and target_ds:
-        # target first so the encoders/models are constructed once against it
-        datasets = [target_ds] + [d for d in datasets if d != target_ds]
+    target_datasets = tuple(d for d in target_datasets)
+    # targets first so the encoders/models are constructed once against a target
+    datasets = list(target_datasets) + [d for d in proxy_ds
+                                        if d not in target_datasets]
 
     seed_ds = datasets[0]
     cfg = _base_cfg(seed_ds, extra_overrides)
@@ -309,7 +310,7 @@ def assemble_gallery(target_ds=None, include_target=True,
         config, clip_retr, dino_rer, fusion_mod, shape_m,
         gallery_ids=gallery_ids,
         id_to_pose_mesh=master["pose_mesh"],
-        target_ds=target_ds if include_target else None,
+        target_ds=target_datasets,          # tuple of included target datasets
         proxy_ds=tuple(proxy_ds),
         eval_cfg=cfg,
     )
@@ -319,14 +320,18 @@ if __name__ == "__main__":
     # Quick self-test: assemble a 3b (proxy-only) gallery and print sizes.
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--target", default="ycbv")
-    ap.add_argument("--include-target", action="store_true")
+    ap.add_argument("--targets", default="",
+                    help="comma-separated target datasets to include "
+                         "(empty = 3b proxies only; 'all' = 3a big DB)")
     ap.add_argument("--proxy", default=",".join(PROXY_DATASETS),
                     help="comma-separated proxy datasets (subset for quick tests)")
     args = ap.parse_args()
     _proxy = tuple(p.strip() for p in args.proxy.split(",") if p.strip())
-    g = assemble_gallery(args.target, include_target=args.include_target,
-                         proxy_ds=_proxy)
+    if args.targets == "all":
+        _targets = TARGET_DATASETS
+    else:
+        _targets = tuple(t.strip() for t in args.targets.split(",") if t.strip())
+    g = assemble_gallery(_targets, proxy_ds=_proxy)
     from collections import Counter
     by_ds = Counter(split_id(i)[0] for i in g.gallery_ids)
     print(f"[stage3_gallery] union |gallery| = {len(g.gallery_ids)}  by-dataset={dict(by_ds)}")

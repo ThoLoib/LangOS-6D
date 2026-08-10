@@ -11,11 +11,17 @@ single-relevant ones from the concept doc:
     Recall@1, Recall@5, Recall@10   — is the exact target in the top-k?
     MRR                              — 1 / rank of the exact target (0 if absent)
 
-Pose metrics (BOP-AR) and the 3b D_sym surface metric live in later phases
-(they depend on bop_toolkit / FoundationPose and are added in Phase B/C).
+Pose metrics: BOP-AR (VSD/MSSD/MSPD → AR) is implemented below (Phase B), on
+top of vendored bop_toolkit. It is pose-estimator-agnostic — it scores an
+estimated pose against GT, wherever the pose came from. The 3b D_sym surface
+metric is Phase C.
 """
 
-from typing import List, Optional, Sequence, Tuple
+import os
+import sys
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 
 def rank_of_target(ranking: Sequence[Tuple[str, float]],
@@ -52,3 +58,159 @@ def summarize_retrieval(ranks: List[Optional[int]],
     out["mrr"] = sum(1.0 / r for r in found) / n
     out["n_target_found"] = len(found)
     return out
+
+
+# ============================================================================
+# BOP-AR pose metric (Phase B)
+# ============================================================================
+#
+# bop_toolkit is vendored (not pip-installable into the ephemeral container),
+# so we put the vendored trees on sys.path here rather than relying on the
+# caller's PYTHONPATH. Paths resolve to /app/third_party/... inside the oscar
+# container (repo root is bind-mounted at /app).
+_TP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "third_party")
+for _p in ("bop_toolkit", "pylibs"):
+    _ap = os.path.abspath(os.path.join(_TP, _p))
+    if _ap not in sys.path:
+        sys.path.insert(0, _ap)
+
+# BOP-19 recall threshold grids (http://bop.felk.cvut.cz/challenges/).
+#   MSSD: e < θ·diameter,     θ ∈ {0.05,0.10,…,0.50}
+#   MSPD: e < θ·(w/640) px,   θ ∈ {5,10,…,50}       (r = image_width/640)
+#   VSD:  e < θ (unitless),   θ ∈ {0.05,…,0.50}, averaged over τ ∈ {0.05,…,0.50}·d
+# AR_X = mean recall over its grid; BOP-AR = mean(AR_VSD, AR_MSSD, AR_MSPD).
+_TH_MSSD = np.arange(0.05, 0.51, 0.05)          # ×diameter
+_TH_MSPD = np.arange(5.0, 50.1, 5.0)            # px, ×(w/640)
+_TH_VSD = np.arange(0.05, 0.51, 0.05)           # unitless
+_VSD_TAUS = np.arange(0.05, 0.51, 0.05)         # ×diameter
+_VSD_DELTA = 15.0                               # mm, BOP default
+
+
+def load_bop_model_points(model_path: str) -> np.ndarray:
+    """Nx3 vertices of a BOP model_eval PLY (mm, BOP object frame)."""
+    from bop_toolkit_lib import inout
+    return np.asarray(inout.load_ply(model_path)["pts"], dtype=np.float64)
+
+
+def get_symmetries(model_info: dict, max_sym_disc_step: float = 0.01) -> list:
+    """Symmetry transforms for one object from its models_info entry
+    (continuous axes discretised at ``max_sym_disc_step``·diameter)."""
+    from bop_toolkit_lib import misc
+    return misc.get_symmetry_transformations(model_info, max_sym_disc_step)
+
+
+def pose_errors(R_est, t_est, R_gt, t_gt, K, pts, syms,
+                depth_test=None, renderer=None, obj_id=None,
+                diameter=None) -> Dict[str, object]:
+    """MSSD (mm), MSPD (px) and — iff a renderer+depth are supplied — VSD
+    (a list, one entry per τ). t_* are 3×1 mm; K is 3×3; pts are Nx3 mm.
+
+    VSD needs a depth renderer (headless GL); when absent it is omitted and
+    only MSSD/MSPD contribute to AR (reported explicitly by the aggregator)."""
+    from bop_toolkit_lib import pose_error
+    R_est = np.asarray(R_est, float); t_est = np.asarray(t_est, float).reshape(3, 1)
+    R_gt = np.asarray(R_gt, float);   t_gt = np.asarray(t_gt, float).reshape(3, 1)
+    out: Dict[str, object] = {
+        "mssd": float(pose_error.mssd(R_est, t_est, R_gt, t_gt, pts, syms)),
+        "mspd": float(pose_error.mspd(R_est, t_est, R_gt, t_gt, K, pts, syms)),
+    }
+    if depth_test is not None and renderer is not None and diameter is not None:
+        out["vsd"] = list(pose_error.vsd(
+            R_est, t_est, R_gt, t_gt, depth_test, K, _VSD_DELTA,
+            _VSD_TAUS * diameter, normalized_by_diameter=True,
+            diameter=diameter, renderer=renderer, obj_id=obj_id))
+    return out
+
+
+def bop_ar(records: List[dict]) -> dict:
+    """Aggregate per-instance pose errors into BOP-AR.
+
+    Each record is a dict with ``mssd`` (mm), ``mspd`` (px), ``diameter`` (mm),
+    ``img_w`` (px) and optionally ``vsd`` (list of per-τ errors). Recall at a
+    threshold = fraction of instances below it (dataset-level pooling — BOP
+    averages per object first; equal when each object has one instance, which
+    we note in the summary). A missing pose (no record) is a miss upstream, so
+    only estimated instances are passed here alongside ``n_targets`` total.
+    """
+    n = len(records)
+    out = {"n_estimated": n}
+    if n == 0:
+        return {**out, "ar": 0.0, "ar_mssd": 0.0, "ar_mspd": 0.0, "ar_vsd": None}
+
+    mssd = np.array([r["mssd"] for r in records])
+    mspd = np.array([r["mspd"] for r in records])
+    diam = np.array([r["diameter"] for r in records])
+    imgw = np.array([r["img_w"] for r in records])
+
+    ar_mssd = np.mean([(mssd < th * diam).mean() for th in _TH_MSSD])
+    ar_mspd = np.mean([(mspd < th * (imgw / 640.0)).mean() for th in _TH_MSPD])
+    out["ar_mssd"] = float(ar_mssd)
+    out["ar_mspd"] = float(ar_mspd)
+
+    have_vsd = [("vsd" in r) for r in records]
+    if any(have_vsd):
+        # VSD was active. Recall averaged over the (τ × θ) grid, pooled over all
+        # instances; a failed pose (no "vsd") is a miss at every threshold so it
+        # stays in the denominator (inf error).
+        n_tau = len(next(r["vsd"] for r in records if "vsd" in r))
+        per_tau = []
+        for i in range(n_tau):
+            errs = np.array([r["vsd"][i] if "vsd" in r else np.inf
+                             for r in records])
+            per_tau.append(np.mean([(errs < th).mean() for th in _TH_VSD]))
+        ar_vsd = float(np.mean(per_tau))
+        out["ar_vsd"] = ar_vsd
+        out["ar"] = float((ar_vsd + ar_mssd + ar_mspd) / 3.0)
+    else:
+        # renderer unavailable: report the 2-metric mean and flag it
+        out["ar_vsd"] = None
+        out["ar"] = float((ar_mssd + ar_mspd) / 2.0)
+        out["ar_note"] = "VSD omitted (no renderer); AR = mean(MSSD,MSPD) only"
+    return out
+
+
+# ============================================================================
+# D_sym surface discrepancy (Phase C, 3b)
+# ============================================================================
+# 3b removes the exact target from the gallery, so top-1 is a proxy. D_sym is
+# the symmetric complete-surface distance between the GT-posed target and the
+# estimated-posed proxy — how far the proxy's geometry sits from the true
+# object once both are placed in the camera frame. Reported in mm and /diameter.
+DSYM_N = 10000        # surface samples per mesh
+DSYM_SEED = 0         # fixed so 3a and 3b sample identically (concept doc)
+
+
+def sample_surface_mm(mesh_path: str, units_m: bool,
+                      n: int = DSYM_N, seed: int = DSYM_SEED) -> np.ndarray:
+    """N points sampled uniformly on a mesh surface, in mm, deterministically."""
+    import trimesh
+    m = trimesh.load(mesh_path, force="mesh")
+    if units_m:
+        m.apply_scale(1000.0)             # metres -> mm
+    np.random.seed(seed)                  # trimesh.sample uses the global RNG
+    return np.asarray(m.sample(n), dtype=np.float64)
+
+
+def d_sym(tgt_pts_mm, R_t, t_t, prx_pts_mm, R_p, t_p, diameter) -> dict:
+    """Symmetric surface discrepancy (mm) between the GT-posed target points and
+    the estimated-posed proxy points. Both poses map model->camera in mm."""
+    from scipy.spatial import cKDTree
+    T = (np.asarray(R_t, float) @ tgt_pts_mm.T).T + np.asarray(t_t, float).reshape(3)
+    P = (np.asarray(R_p, float) @ prx_pts_mm.T).T + np.asarray(t_p, float).reshape(3)
+    d_t2p = float(cKDTree(P).query(T)[0].mean())   # target -> nearest proxy
+    d_p2t = float(cKDTree(T).query(P)[0].mean())    # proxy  -> nearest target
+    d = 0.5 * (d_t2p + d_p2t)
+    return {"d_t2p": d_t2p, "d_p2t": d_p2t, "d_sym": d,
+            "d_sym_norm": d / diameter if diameter else None}
+
+
+def summarize_dsym(records: List[dict]) -> dict:
+    """Mean D_sym (mm) and D_sym/diameter over the estimated 3b instances."""
+    n = len(records)
+    if n == 0:
+        return {"n_estimated": 0, "d_sym_mean": None, "d_sym_norm_mean": None}
+    ds = np.array([r["d_sym"] for r in records], float)
+    dn = np.array([r["d_sym_norm"] for r in records], float)
+    return {"n_estimated": n,
+            "d_sym_mean": float(ds.mean()), "d_sym_median": float(np.median(ds)),
+            "d_sym_norm_mean": float(dn.mean())}

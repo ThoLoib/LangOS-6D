@@ -43,3 +43,7 @@ blender-*/
 # Duty-cycle / long-run logs
 /logs/
 /.onboard_done_*.txt
+
+# Stage-3: vendored external deps (reproducible, see third_party/SETUP.md)
+third_party/bop_toolkit/
+third_party/pylibs/

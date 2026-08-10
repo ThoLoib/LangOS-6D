@@ -14,6 +14,12 @@ services:
       - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      # torch ships libgomp.so.1; without it on the path open3d fails to import
+      # (needed for step7/step8 + Stage-3 D_sym point sampling).
+      - LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/torch/lib
+      # inject libEGL_nvidia + the glvnd loader so pyrender can render depth
+      # headless on the GPU (Stage-3 VSD renderer, stage3_render.py).
+      - NVIDIA_DRIVER_CAPABILITIES=all
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
