@@ -113,9 +113,12 @@ BOP_SOURCE=""
 MESH_GLOB=""
 # Partial point-cloud (HPR) knobs. Defaults reproduce the legacy behaviour
 # (param 3.2, no jitter) so already-onboarded datasets (e.g. MI3DOR) are
-# unaffected. Per-dataset cases below may override them.
-HPR_PARAM="3.2"
-JITTER_STD="0"
+# unaffected. Per-dataset cases below may override them; an exported
+# HPR_PARAM/JITTER_STD overrides the default for datasets without such a case
+# (ycbv, tless, lmo), so a caller can opt into the corrected shrec18_v2
+# settings (2.8 / 0.001) without editing this file.
+HPR_PARAM="${HPR_PARAM:-3.2}"
+JITTER_STD="${JITTER_STD:-0}"
 
 case "$DATASET" in
     ycbv_gso)
@@ -124,6 +127,17 @@ case "$DATASET" in
         DESC_OUTPUT="$OSCAR_ROOT/object_database/ycbv_gso/descriptions_attributes.json"
         ;;
     ycbv)
+        # object_database/ycbv holds obj_0000NN/textured_simple.obj — the
+        # TEXTURED YCB-Video meshes filed under BOP object ids, built by
+        # tools/stage_ycbv_bop_ids.py from object_database/ycbv_ycbvideo.
+        # NOT the BOP PLYs: rendering.py imports .ply via Blender's legacy
+        # importer (bpy.ops.import_mesh.ply), which ignores the
+        # `comment TextureFile` header, and the BOP ycbv PLYs carry texture_u/v
+        # but no per-vertex colour — so they would render flat grey and gut the
+        # DINOv2/SigLIP/caption channels. Geometry is identical between the two
+        # sets (bbox sizes agree to 0.00 mm) and rendering normalises the origin
+        # difference away, so the textured .obj is strictly better here.
+        # Pose evaluation still uses eval/datasets/ycbv/models (BOP frame).
         CAD_DIR="$OSCAR_ROOT/object_database/ycbv"
         IMAGES_DIR="$OSCAR_ROOT/object_images/ycbv"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/ycbv/descriptions_attributes.json"

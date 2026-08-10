@@ -140,7 +140,50 @@ def resolve_paths(args: argparse.Namespace) -> Dict[str, str]:
         "desc_file": args.desc_file,
         "results_root": args.results_root,
         "mesh_glob": mesh_glob,
+        "mesh_id_mode": args.mesh_id_mode,
     }
+
+
+def build_mesh_items(mesh_glob: str, mode: str):
+    """(obj_id, path) pairs for the ulip_fullmesh pass, or None for the default.
+
+    eval_common.build_pipeline derives the full-mesh obj_id from the FILENAME
+    STEM. That is right for flat layouts (MI3DOR's `<id>.obj`, BOP's
+    `obj_000001.ply`) but silently wrong for nested ones where every object's
+    mesh has the SAME name: GSO's `<id>/meshes/model.obj` and YCB-V's
+    `<id>/textured_simple.obj` would map all 1030 / 21 objects onto the single
+    id "model" / "textured_simple", keeping one arbitrary mesh and discarding
+    the rest. build_pipeline takes an explicit `cad_mesh_items` for exactly this
+    case, so pick the id off the right path component instead of copying meshes
+    into a flat staging directory.
+
+      stem        <id>.obj                 -> "<id>"   (default; MI3DOR, BOP)
+      parent      <id>/textured_simple.obj -> "<id>"   (YCB-V)
+      grandparent <id>/meshes/model.obj    -> "<id>"   (GSO)
+    """
+    import glob as _glob
+
+    if mode == "stem":
+        return None                      # let build_pipeline do its default
+    paths = sorted(_glob.glob(mesh_glob))
+    if not paths:
+        return None
+    if mode == "parent":
+        pick = lambda p: os.path.basename(os.path.dirname(p))
+    elif mode == "grandparent":
+        pick = lambda p: os.path.basename(os.path.dirname(os.path.dirname(p)))
+    else:
+        raise ValueError(f"unknown --mesh-id-mode {mode!r}")
+
+    items = [(pick(p), p) for p in paths]
+    ids = [i for i, _ in items]
+    if len(set(ids)) != len(ids):
+        dupes = sorted({i for i in ids if ids.count(i) > 1})[:5]
+        raise SystemExit(
+            f"[mesh-items] --mesh-id-mode {mode} still yields duplicate object "
+            f"ids (e.g. {dupes}) for glob {mesh_glob!r}. Fix the mode or the "
+            f"glob — duplicates silently drop meshes from the fullmesh cache.")
+    return items
 
 
 def validate_inputs(paths: Dict[str, str]) -> List[str]:
@@ -266,7 +309,11 @@ def run_pass(pass_key: str, paths: Dict[str, str], root: str) -> dict:
     if "shape" not in need:
         cfg.cad_mesh_glob = ""
 
-    pipe_cfg, _clip, _dino, _fusion, shape_m = ec.build_pipeline(cfg)
+    mesh_items = (None if "shape" not in need or not cfg.cad_mesh_glob
+                  else build_mesh_items(paths["mesh_glob"],
+                                        paths.get("mesh_id_mode", "stem")))
+    pipe_cfg, _clip, _dino, _fusion, shape_m = ec.build_pipeline(
+        cfg, cad_mesh_items=mesh_items)
     if "shape" in need and shape_m is None:
         raise RuntimeError(
             f"[pass:{pass_key}] shape encoder failed to load "
@@ -320,6 +367,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--data-root", help="Dataset root. Only used to default "
                                          "--mesh-glob to <data_root>/cad/*.obj "
                                          "when --mesh-glob is not given.")
+    ap.add_argument("--mesh-id-mode", default="stem",
+                    choices=("stem", "parent", "grandparent"),
+                    help="Which path component names the object for the "
+                         "ulip_fullmesh pass. 'stem' (default) = filename, for "
+                         "flat layouts (MI3DOR, BOP obj_000001.ply). 'parent' "
+                         "for YCB-V's <id>/textured_simple.obj. 'grandparent' "
+                         "for GSO's <id>/meshes/model.obj. Using 'stem' on a "
+                         "nested layout maps every object to the same id.")
     ap.add_argument("--mesh-glob", default="",
                      help="Glob for this dataset's CAD meshes (e.g. "
                           "'object_database/MI3DOR/model/test/*/*.obj'). Only "
