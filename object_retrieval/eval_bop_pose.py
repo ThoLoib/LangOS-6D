@@ -119,6 +119,19 @@ def _bbox_of(info):
     return b
 
 
+def _pad_bbox(bbox, img_w, img_h, min_size=16):
+    """Grow a tiny (heavily-occluded) bbox to a minimum size, centred and
+    clamped to the image. A 1px-thin crop otherwise confuses the HF image
+    processor's channel inference (it reads the size-1 axis as 1 channel and
+    crashes on the 3-element mean). No-op for boxes already >= min_size."""
+    x, y, w, h = (float(v) for v in bbox)
+    cx, cy = x + w / 2.0, y + h / 2.0
+    w, h = max(w, min_size), max(h, min_size)
+    x = min(max(0.0, cx - w / 2.0), max(0.0, img_w - w))
+    y = min(max(0.0, cy - h / 2.0), max(0.0, img_h - h))
+    return [x, y, min(w, img_w), min(h, img_h)]
+
+
 # ============================================================================
 # Pose inputs + FoundationPose call (Phase B)
 # ============================================================================
@@ -249,7 +262,7 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             bbox = _bbox_of(info)
             if bbox is None:
                 continue
-            roi = crop_by_bbox(rgb, bbox)
+            roi = crop_by_bbox(rgb, _pad_bbox(bbox, rgb.width, rgb.height))
 
             out = run_query(pcfg, clip_retr, dino_rer, fusion_mod, shape_m,
                             roi, cfg,
