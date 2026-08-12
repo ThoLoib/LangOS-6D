@@ -116,6 +116,15 @@ DATASET_LAYOUT = {
 PROXY_DATASETS = ("gso", "housecat6d", "itodd")
 TARGET_DATASETS = ("ycbv", "tless", "lmo")
 
+# Shape-arm ablation: swap ULIP-2 -> Uni3D. Passed as ``extra_overrides`` to
+# assemble_gallery so it flows into pipeline_overrides. The partial cache path
+# is encoder-keyed (step5 _get_partial_cache_path), so the Uni3D partial gallery
+# embeddings live in their OWN .ulip_partial_cache_* file and never collide with
+# the ULIP-2 caches. The Uni3D checkpoint (uni3d-g) is mounted at /uni3d and its
+# defaults come from PipelineConfig (uni3d_model_name / embed_dim / num_points).
+# View aggregation (topk_softmax/5/0.5) is unchanged — only the encoder swaps.
+UNI3D_OVERRIDES = {"shape_encoder": "uni3d"}
+
 
 def namespaced_id(ds: str, obj_id: str) -> str:
     return f"{ds}/{obj_id}"

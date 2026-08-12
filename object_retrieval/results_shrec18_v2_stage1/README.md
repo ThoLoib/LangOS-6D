@@ -7,8 +7,10 @@ geometry arms (E2_*, O1_*) and the depth-matched **Table B** (@K columns).
 
 ## Layout
 
-- **Top level** (`stage1_summary*.{csv,tex}`, `best_config.json`, per-arm
-  folders) mirrors **K=50**, the primary/deeper result.
+- **Top level** (`stage1_summary*.{csv,tex}`, `best_config.json`) holds the
+  Stage-1 summaries. The per-arm result folders that mirrored **K=50** were
+  removed on 2026-08-06 as byte-identical duplicates of `k50/` — use
+  `k50/<arm>/` for the primary/deeper result (and `k20/<arm>/` for K=20).
 - **`k20/`** — the corrected first run: all arms depth-matched at **K=20**
   (`hit_sub` ceiling 0.746). Same Table A as top level; different geometry arms
   and Table B.
