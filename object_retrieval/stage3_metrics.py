@@ -115,9 +115,13 @@ def pose_errors(R_est, t_est, R_gt, t_gt, K, pts, syms,
         "mspd": float(pose_error.mspd(R_est, t_est, R_gt, t_gt, K, pts, syms)),
     }
     if depth_test is not None and renderer is not None and diameter is not None:
+        # BOP-19: taus are DIMENSIONLESS fractions of the diameter and the
+        # function divides the surface distance by the diameter internally
+        # (normalized_by_diameter=True). Passing `taus * diameter` here would
+        # apply the diameter twice -> VSD far too lenient (audit P0.2).
         out["vsd"] = list(pose_error.vsd(
             R_est, t_est, R_gt, t_gt, depth_test, K, _VSD_DELTA,
-            _VSD_TAUS * diameter, normalized_by_diameter=True,
+            _VSD_TAUS, normalized_by_diameter=True,
             diameter=diameter, renderer=renderer, obj_id=obj_id))
     return out
 
@@ -204,13 +208,24 @@ def d_sym(tgt_pts_mm, R_t, t_t, prx_pts_mm, R_p, t_p, diameter) -> dict:
             "d_sym_norm": d / diameter if diameter else None}
 
 
-def summarize_dsym(records: List[dict]) -> dict:
-    """Mean D_sym (mm) and D_sym/diameter over the estimated 3b instances."""
+def summarize_dsym(records: List[dict], n_attempted: int = None) -> dict:
+    """Mean D_sym (mm) and D_sym/diameter over the estimated 3b instances.
+
+    ``n_attempted`` is the number of instances the D_sym block was entered for
+    (a top-1 with a mesh). When given, the summary reports pose-success
+    ``coverage`` and ``n_failed`` so the conditional mean is not read as if it
+    covered every instance — a method must not look better by failing on its
+    hardest cases (audit P0.7)."""
     n = len(records)
     if n == 0:
         return {"n_estimated": 0, "d_sym_mean": None, "d_sym_norm_mean": None}
     ds = np.array([r["d_sym"] for r in records], float)
     dn = np.array([r["d_sym_norm"] for r in records], float)
-    return {"n_estimated": n,
-            "d_sym_mean": float(ds.mean()), "d_sym_median": float(np.median(ds)),
-            "d_sym_norm_mean": float(dn.mean())}
+    out = {"n_estimated": n,
+           "d_sym_mean": float(ds.mean()), "d_sym_median": float(np.median(ds)),
+           "d_sym_norm_mean": float(dn.mean())}
+    if n_attempted:
+        out["n_attempted"] = int(n_attempted)
+        out["n_failed"] = int(n_attempted - n)
+        out["coverage"] = float(n / n_attempted)
+    return out

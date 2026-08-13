@@ -208,6 +208,10 @@ def _base_cfg(ds: str, extra_overrides=None) -> EvalConfig:
         result_folder="results_stage3_tmp",
         clip_top_k=10 ** 6, dino_top_k=10 ** 6,
         ulip2_top_k=10 ** 6, fusion_top_k=10 ** 6,
+        # Frozen Stage-1 E2 full-fusion weights (best_config.json). MUST be set
+        # explicitly: EvalConfig defaults to 0/0.5/0.5 (CLIP off), which would
+        # silently make Stage-3 a DINO+ULIP run, not full fusion (audit P0.1).
+        weight_clip=0.3, weight_dino=0.4, weight_ulip=0.3,
         ulip2_use_partial_views=True,   # base pass = ULIP-2 partial-view shape
         pipeline_overrides=overrides,
     )

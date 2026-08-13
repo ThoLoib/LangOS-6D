@@ -336,12 +336,20 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             # cosine vs the gallery pc embeddings). Replaces ULIP-2's default
             # image-cross-modal query.
             ulip_q_emb = None
-            if (use_uni3d or use_pc_query) and q_cloud is not None:
-                try:
-                    ulip_q_emb = shape_m.encode_pointcloud(q_cloud, colors=q_colors)
-                except Exception as exc:
-                    logger.warning("pc-query encode failed (%s im %s obj %s): %s",
-                                   scene_id, im_id, obj_id, exc)
+            pc_query_fallback = False
+            if (use_uni3d or use_pc_query):
+                if q_cloud is not None:
+                    try:
+                        ulip_q_emb = shape_m.encode_pointcloud(q_cloud, colors=q_colors)
+                    except Exception as exc:
+                        logger.warning("pc-query encode failed (%s im %s obj %s): %s",
+                                       scene_id, im_id, obj_id, exc)
+                if ulip_q_emb is None:
+                    # pc-query was requested but there is no usable cloud/embedding
+                    # -> run_query silently falls back to the ULIP image (cross)
+                    # query. Flag it so a pc-mode run's image-fallback share is
+                    # visible instead of silently mixing modalities (audit P1.4).
+                    pc_query_fallback = True
 
             out = run_query(pcfg, clip_retr, dino_rer, fusion_mod, shape_m,
                             roi, cfg, ulip_query_emb=ulip_q_emb,
@@ -353,12 +361,19 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             # service is down or the query cloud is unusable).
             ranking = fused_ranking
             geo_applied = False
+            dgedi_n_req = dgedi_n_ok = 0
             if use_dgedi and q_cloud is not None:
                 cand_ids = [oid for oid, _ in fused_ranking[:dgedi_top_k]]
                 geo = dgedi_rerank(q_cloud, cand_ids)   # {id:{ok,fitness,d_ransac}}
                 if geo:
-                    ranking = _geo_rerank(fused_ranking, geo, dgedi_top_k)
-                    geo_applied = True
+                    dgedi_n_req = len(cand_ids)
+                    # geo_applied means geometry ACTUALLY re-ranked something: at
+                    # least one candidate registration succeeded. A non-empty dict
+                    # of all-ok=False is NOT a dGeDi result (audit P0.5).
+                    dgedi_n_ok = sum(1 for v in geo.values() if v.get("ok"))
+                    if dgedi_n_ok > 0:
+                        ranking = _geo_rerank(fused_ranking, geo, dgedi_top_k)
+                        geo_applied = True
 
             r = rank_of_target(ranking, target_nsid) if include_target else None
             if include_target:
@@ -370,11 +385,15 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                 "top5": [{"id": oid, "score": round(s, 5)}
                          for oid, s in ranking[:5]],
             }
+            if use_uni3d or use_pc_query:
+                rec["pc_query_fallback"] = pc_query_fallback
             if use_dgedi:
                 # keep the pre-geometry (fused) rank for the E2 ablation table
                 rec["fused_rank"] = (rank_of_target(fused_ranking, target_nsid)
                                      if include_target else None)
                 rec["geo_applied"] = geo_applied
+                rec["dgedi_n_requested"] = dgedi_n_req
+                rec["dgedi_n_ok"] = dgedi_n_ok
                 if include_target:
                     fused_ranks.append(rec["fused_rank"])
 
@@ -406,6 +425,12 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                         renderer=vsd_renderer, obj_id=obj_id,
                         diameter=m["diameter"])
                     rec["oracle_pose_conf"] = round(conf, 4)
+                    # store the raw pose (R row-major 9, t mm 3) so the official
+                    # object-balanced BOP-AR can be recomputed post-hoc from a
+                    # BOP results CSV (audit P0.8; also sidesteps the internal
+                    # VSD path for the headline number).
+                    rec["oracle_R"] = np.asarray(R_e, float).reshape(9).tolist()
+                    rec["oracle_t"] = np.asarray(t_e, float).reshape(3).tolist()
                     oracle_ok, oracle_R, oracle_t, oracle_conf = True, R_e, t_e, conf
                 except Exception as exc:           # degrade: count as a miss
                     logger.warning("FP oracle failed (%s im %s obj %s): %s",
@@ -453,6 +478,8 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                         rec["d_sym"] = round(ds["d_sym"], 3)
                         rec["d_sym_norm"] = round(ds["d_sym_norm"], 4)
                         rec["top1_pose_conf"] = round(conf, 4)
+                        rec["top1_R"] = np.asarray(Rt, float).reshape(9).tolist()
+                        rec["top1_t"] = np.asarray(tt, float).reshape(3).tolist()
                         dsym_recs.append(ds)
                     except Exception as exc:      # degrade: drop this instance
                         logger.warning("FP top-1 pose failed (%s): %s", top1, exc)
@@ -483,12 +510,30 @@ def _summarize(dataset, mode, G, records, ranks, oracle_recs, retr_recs,
         # E2 ablation: retrieval WITHOUT the geometry re-rank (pre-geometry).
         if fused_ranks:
             summary["pre_geometry"] = summarize_retrieval(fused_ranks)
+    # pc-query image-fallback share (audit P1.4): how much of a "pc-mode" run
+    # silently reverted to the ULIP image query for want of a usable cloud.
+    if any(r and "pc_query_fallback" in r for r in records):
+        n_pc = sum(1 for r in records if r and "pc_query_fallback" in r)
+        summary["pc_query_fallback"] = {
+            "n_fell_back": sum(1 for r in records if r and r.get("pc_query_fallback")),
+            "n_pc_query": n_pc}
+    # dGeDi coverage (audit P0.5): how often geometry actually re-ranked, and the
+    # mean number of successful candidate registrations.
+    if any(r and "geo_applied" in r for r in records):
+        oks = [r.get("dgedi_n_ok", 0) for r in records if r and "geo_applied" in r]
+        summary["dgedi_coverage"] = {
+            "n_geo_applied": sum(1 for r in records if r and r.get("geo_applied")),
+            "n_dgedi_query": len(oks),
+            "mean_n_ok": float(np.mean(oks)) if oks else 0.0}
     if do_pose_3a:
         summary["bop_ar_oracle"] = bop_ar(oracle_recs)
         summary["bop_ar_retrieved_exact"] = bop_ar(retr_recs)
         summary["n_exact_top1"] = len(retr_recs)
     if do_dsym:
-        summary["dsym"] = summarize_dsym(dsym_recs)
+        # D_sym coverage: instances where a top-1 was posed successfully vs all
+        # instances the D_sym block was entered for (audit P0.7 — survivor bias).
+        n_att = sum(1 for r in records if r and "top1" in r)
+        summary["dsym"] = summarize_dsym(dsym_recs, n_attempted=n_att)
     return summary
 
 
@@ -560,7 +605,7 @@ def run_stage3(datasets, mode="3a", max_targets=0,
     prx_samples = {}          # proxy nsid -> surface points (mm), shared
     per_dataset = {}
     pooled = {"records": 0, "ranks": [], "oracle_recs": [],
-              "retr_recs": [], "dsym_recs": []}
+              "retr_recs": [], "dsym_recs": [], "all_records": []}
 
     for dataset in datasets:
         res = _eval_dataset(dataset, gallery, components, mode, max_targets,
@@ -577,13 +622,16 @@ def run_stage3(datasets, mode="3a", max_targets=0,
             json.dump(s, f, indent=2)
         _print_summary(f"{dataset} {mode}", s, include_target, do_pose_3a, do_dsym)
         pooled["records"] += len(res["records"])
+        pooled["all_records"] += res["records"]
         pooled["ranks"] += res["ranks"]
         pooled["oracle_recs"] += res["oracle_recs"]
         pooled["retr_recs"] += res["retr_recs"]
         pooled["dsym_recs"] += res["dsym_recs"]
 
     # --- combined summary pooled across all query datasets ---
-    combined = _summarize("ALL", mode, G, [None] * pooled["records"],
+    # Pass the real pooled records (not a [None] placeholder) so the per-record
+    # coverage blocks (pc-fallback, dGeDi, D_sym) aggregate across datasets too.
+    combined = _summarize("ALL", mode, G, pooled["all_records"],
                           pooled["ranks"], pooled["oracle_recs"],
                           pooled["retr_recs"], pooled["dsym_recs"], 0,
                           include_target, do_pose_3a, do_dsym)
