@@ -245,6 +245,8 @@ def rerank():
     trim = float(req.get("trim_ratio", 0.1))
     max_iter = int(req.get("ransac_max_iter", RANSAC_MAXIT))
     nkp = int(req.get("ransac_keypoints", RANSAC_KEYPOINTS))
+    use_icp = bool(req.get("use_icp", False))          # dGeDi repo config = RANSAC->ICP
+    icp_thr = float(req.get("icp_threshold", 0.05))
 
     results = {}
     if pts.shape[0] < 4:
@@ -276,6 +278,16 @@ def rerank():
                 results[cid] = {"ok": False}
                 continue
             T = np.asarray(res.transformation)
+            if use_icp:
+                # dGeDi reference (utils.register_one): refine RANSAC with ICP on
+                # the full (co-scaled, normalized) clouds. Point-to-point (no
+                # normals needed); repo criteria (max_iter 2000).
+                icp = o3d.pipelines.registration.registration_icp(
+                    pcd_q, pcd_t, icp_thr, T,
+                    o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+                    o3d.pipelines.registration.ICPConvergenceCriteria(
+                        relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=2000))
+                T = np.asarray(icp.transformation)
             q_aln = q_norm @ T[:3, :3].T + T[:3, 3]    # obs -> CAD frame (dense)
             d_ransac = trimmed_chamfer(q_aln, np.asarray(pcd_t.points), trim)
             results[cid] = {"ok": True,

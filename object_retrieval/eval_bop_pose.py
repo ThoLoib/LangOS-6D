@@ -248,7 +248,7 @@ def _geo_rerank(fused_ranking, geo, top_k):
 def _eval_dataset(dataset, gallery, components, mode, max_targets,
                   do_pose_3a, do_dsym, refine_iter, prx_samples,
                   use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-                  use_pc_query=False):
+                  use_pc_query=False, dgedi_repo=False):
     """Retrieval (+pose) for ONE query dataset against the shared gallery.
 
     In 3a the gallery is the one big combined DB (proxies + ALL target datasets),
@@ -364,7 +364,11 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             dgedi_n_req = dgedi_n_ok = 0
             if use_dgedi and q_cloud is not None:
                 cand_ids = [oid for oid, _ in fused_ranking[:dgedi_top_k]]
-                geo = dgedi_rerank(q_cloud, cand_ids)   # {id:{ok,fitness,d_ransac}}
+                # dgedi_repo -> the dGeDi demo.py config (6000 kp / 10k iter /
+                # + ICP); else the fast service defaults (512 kp / 5k / no ICP).
+                _dg = ({"ransac_keypoints": 6000, "ransac_max_iter": 10000,
+                        "use_icp": True} if dgedi_repo else {})
+                geo = dgedi_rerank(q_cloud, cand_ids, **_dg)  # {id:{ok,fitness,d_ransac}}
                 if geo:
                     dgedi_n_req = len(cand_ids)
                     # geo_applied means geometry ACTUALLY re-ranked something: at
@@ -560,7 +564,7 @@ def _print_summary(tag, s, include_target, do_pose_3a, do_dsym):
 def run_stage3(datasets, mode="3a", max_targets=0,
                output_dir="results_bop_stage3", do_pose=False, refine_iter=5,
                use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-               use_pc_query=False):
+               use_pc_query=False, dgedi_repo=False):
     """Run Stage-3 over one or more query datasets against a SINGLE gallery.
 
     3a: gallery = G_proxy ∪ G_ycbv ∪ G_tless ∪ G_lmo (one big combined DB) —
@@ -611,7 +615,8 @@ def run_stage3(datasets, mode="3a", max_targets=0,
         res = _eval_dataset(dataset, gallery, components, mode, max_targets,
                             do_pose_3a, do_dsym, refine_iter, prx_samples,
                             use_uni3d=use_uni3d, use_dgedi=use_dgedi,
-                            dgedi_top_k=dgedi_top_k, use_pc_query=use_pc_query)
+                            dgedi_top_k=dgedi_top_k, use_pc_query=use_pc_query,
+                            dgedi_repo=dgedi_repo)
         s = res["summary"]
         per_dataset[dataset] = s
         result_dir = os.path.join(output_dir, f"{dataset}_stage{mode}")
@@ -681,6 +686,10 @@ def main():
                          "descriptor cache (dgedi_service/precompute_gallery.py).")
     ap.add_argument("--dgedi-top-k", type=int, default=10,
                     help="fused shortlist depth re-ranked by dGeDi (default 10)")
+    ap.add_argument("--dgedi-repo", action="store_true",
+                    help="use the dGeDi *repo* config for the re-rank: 6000 "
+                         "keypoints / 10k RANSAC iters / + ICP (demo.py), instead "
+                         "of the fast service defaults (512 kp / 5k / no ICP).")
     args = ap.parse_args()
 
     datasets = (list(TARGET_DATASETS) if args.datasets == "all"
@@ -691,7 +700,8 @@ def main():
                output_dir=args.output, do_pose=args.pose,
                refine_iter=args.refine_iter,
                use_uni3d=args.uni3d, use_dgedi=args.dgedi,
-               dgedi_top_k=args.dgedi_top_k, use_pc_query=args.pc_query)
+               dgedi_top_k=args.dgedi_top_k, use_pc_query=args.pc_query,
+               dgedi_repo=args.dgedi_repo)
 
 
 if __name__ == "__main__":
