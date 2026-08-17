@@ -58,7 +58,10 @@ wait_healthy() {  # $1 = service
 }
 
 # --- background gdrive sync (skips unchanged files; no duplicate uploads) -----
-sync_now() { "$HOME/apps/rclone/rclone" copy "$OUTROOT" \
+# The eval writes under object_retrieval/ (cwd inside the container), so the
+# host source path is object_retrieval/$OUTROOT, mirrored to the same relative
+# path on the remote.
+sync_now() { "$HOME/apps/rclone/rclone" copy "object_retrieval/$OUTROOT" \
   "$REMOTE/object_retrieval/$OUTROOT" --transfers 16 --checkers 16 \
   --stats-one-line --stats 0 >>logs/rclone_stage3.log 2>&1 || true; }
 
