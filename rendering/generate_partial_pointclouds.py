@@ -23,6 +23,7 @@
 # =============================================================================
 
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -151,8 +152,12 @@ def sample_visible_surface(
         except (AttributeError, IndexError):
             pass
 
-    # Resample to exact target count (deterministic seed for reproducibility)
-    content_hash = hash(vis_points.tobytes()) & 0xFFFFFFFF
+    # Resample to exact target count. Seed from a STABLE content digest (SHA-256),
+    # not Python's built-in hash(): the latter is salted per process
+    # (PYTHONHASHSEED) so it is not reproducible across runs/machines unless the
+    # env var is pinned. SHA-256 of the same bytes always yields the same seed.
+    content_hash = int.from_bytes(
+        hashlib.sha256(vis_points.tobytes()).digest()[:4], "little")
     rng = np.random.RandomState(content_hash)
     n = len(vis_points)
     if n >= num_points:
