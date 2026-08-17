@@ -55,8 +55,11 @@
 #   MESH_GLOBS table below so this script can find its meshes).
 #
 #   Partial-PC knobs currently in onboard_dataset.sh:
-#       default          HPR param 3.2, no jitter   (legacy datasets)
-#       shrec18_v2       HPR param 2.8, jitter 0.001 (the corrected settings)
+#       default          HPR param 2.8, jitter 0.001 (corrected protocol — every
+#                        current dataset: ycbv, tless, lmo, itodd, gso,
+#                        housecat6d, MI3DOR, shrec18_v2)
+#       legacy slots     HPR param 3.2, no jitter    (shrec18, shrec18_fixed,
+#                        ycbv_gso — pinned for archived before/after comparison)
 # =============================================================================
 
 set -uo pipefail

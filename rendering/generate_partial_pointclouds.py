@@ -54,7 +54,7 @@ def axis_transform_for_ext(ext: str):
 
 
 def hpr_visible_indices(points: np.ndarray, cam_pos: np.ndarray,
-                        param: float = 3.2) -> np.ndarray:
+                        param: float = 2.8) -> np.ndarray:
     """Indices of points visible from cam_pos via Katz et al. Hidden Point Removal.
 
     Occlusion-aware and normal-free (needs only the viewpoint), so it is robust
@@ -108,7 +108,7 @@ def load_camera_matrix(cam_matrix_path: str) -> np.ndarray:
 def sample_visible_surface(
     mesh, cam_pos: np.ndarray, num_points: int,
     oversample_factor: int = 4, with_colors: bool = True,
-    hpr_param: float = 3.2, jitter_std: float = 0.0,
+    hpr_param: float = 2.8, jitter_std: float = 0.001,
 ) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
     """Sample the surface visible from a camera position (true single-view partial).
 
@@ -164,8 +164,8 @@ def sample_visible_surface(
         # which would collapse PointBERT's FPS + kNN groupings, so (when
         # enabled) add small Gaussian jitter to break them up — same rationale
         # and magnitude as step5's _normalize_and_resample_pc (Qi et al. 2017).
-        # Positions only; colors are indexed unchanged. jitter_std=0 (default)
-        # reproduces the previous no-jitter behaviour.
+        # Positions only; colors are indexed unchanged. Default jitter_std=0.001
+        # matches step5; pass 0 to reproduce the legacy no-jitter behaviour.
         indices = rng.choice(n, num_points, replace=True)
         vis_points = vis_points[indices]
         if jitter_std > 0:
@@ -196,7 +196,7 @@ def _discover_view_indices(obj_images_dir: str, obj_id: str) -> list:
 def process_object(obj_id: str, cad_dir: str, images_dir: str,
                    num_points: int, overwrite: bool = False,
                    mesh_path: Optional[str] = None,
-                   hpr_param: float = 3.2, jitter_std: float = 0.0) -> int:
+                   hpr_param: float = 2.8, jitter_std: float = 0.001) -> int:
     """Generate partial point clouds for all views of one object.
 
     Auto-discovers all available camera matrices (view0, view1, ..., viewN)
@@ -347,15 +347,16 @@ def main():
                         help="Points per partial PC (default: 10000, matches ULIP-2)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing .npz files")
-    parser.add_argument("--hpr-param", type=float, default=3.2,
+    parser.add_argument("--hpr-param", type=float, default=2.8,
                         help="Katz HPR radius exponent (radius = r.max()*10^param). "
                              "Lower = stricter occlusion removal (fewer leaked "
-                             "occluded points). Default 3.2 (legacy). SHREC'18 uses 2.8.")
-    parser.add_argument("--jitter-std", type=float, default=0.0,
+                             "occluded points). Default 2.8 (the corrected protocol "
+                             "value; legacy comparison slots used 3.2).")
+    parser.add_argument("--jitter-std", type=float, default=0.001,
                         help="Gaussian jitter std applied to duplicated points when "
                              "a view is upsampled to num_points, to break coincident "
-                             "duplicates (matches step5). 0 = off (default/legacy). "
-                             "SHREC'18 uses 0.001.")
+                             "duplicates (matches step5). Default 0.001 (corrected "
+                             "protocol; legacy comparison slots used 0).")
     args = parser.parse_args()
 
     logging.basicConfig(

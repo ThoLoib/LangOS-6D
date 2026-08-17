@@ -111,20 +111,27 @@ fi
 IS_BOP=0
 BOP_SOURCE=""
 MESH_GLOB=""
-# Partial point-cloud (HPR) knobs. Defaults reproduce the legacy behaviour
-# (param 3.2, no jitter) so already-onboarded datasets (e.g. MI3DOR) are
-# unaffected. Per-dataset cases below may override them; an exported
-# HPR_PARAM/JITTER_STD overrides the default for datasets without such a case
-# (ycbv, tless, lmo), so a caller can opt into the corrected shrec18_v2
-# settings (2.8 / 0.001) without editing this file.
-HPR_PARAM="${HPR_PARAM:-3.2}"
-JITTER_STD="${JITTER_STD:-0}"
+# Partial point-cloud (HPR) knobs. The corrected settings (param 2.8, jitter
+# 0.001 — stricter HPR drops points that leaked at 3.2, jitter breaks the
+# coincident duplicates from upsampling a sparse view to 10k) are now the
+# GLOBAL DEFAULT, so every current dataset (ycbv, tless, lmo, itodd, gso,
+# housecat6d, MI3DOR, shrec18_v2) is onboarded identically — one preprocessing
+# protocol across stages (cross-stage comparability audit 2026-08-13). The
+# explicitly-legacy before/after comparison slots (shrec18, shrec18_fixed,
+# ycbv_gso) pin themselves back to 3.2 / 0 in their case blocks so their
+# archived artifacts stay reproducible. An exported HPR_PARAM/JITTER_STD still
+# overrides the default.
+HPR_PARAM="${HPR_PARAM:-2.8}"
+JITTER_STD="${JITTER_STD:-0.001}"
 
 case "$DATASET" in
     ycbv_gso)
         CAD_DIR="$OSCAR_ROOT/object_database/ycbv_gso"
         IMAGES_DIR="$OSCAR_ROOT/object_images/ycbv_gso"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/ycbv_gso/descriptions_attributes.json"
+        # Legacy comparison slot: pin the pre-correction HPR/jitter so the
+        # archived artifacts stay reproducible (global default is now 2.8/0.001).
+        HPR_PARAM="3.2"; JITTER_STD="0"
         ;;
     ycbv)
         # object_database/ycbv holds obj_0000NN/textured_simple.obj — the
@@ -164,6 +171,8 @@ case "$DATASET" in
         IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        # Legacy comparison slot: pin pre-correction HPR/jitter (default now 2.8/0.001).
+        HPR_PARAM="3.2"; JITTER_STD="0"
         ;;
     shrec18_fixed)
         # Same CAD source as shrec18 (the "shrec18" in the path also triggers the
@@ -173,6 +182,8 @@ case "$DATASET" in
         IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18_fixed"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18_fixed/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
+        # Legacy comparison slot: pin pre-correction HPR/jitter (default now 2.8/0.001).
+        HPR_PARAM="3.2"; JITTER_STD="0"
         ;;
     shrec18_v2)
         # Full re-onboard with the 2026-07-28 render fix (weld+outward normals,
@@ -185,12 +196,8 @@ case "$DATASET" in
         IMAGES_DIR="$OSCAR_ROOT/object_images/shrec18_v2"
         DESC_OUTPUT="$OSCAR_ROOT/object_database/shrec18_v2/descriptions_attributes.json"
         MESH_GLOB="$OSCAR_ROOT/eval/datasets/shrec18/shrec18_full/cad/*.obj"
-        # Corrected partial-PC settings: stricter HPR (2.8) removes the occluded
-        # points that leaked at 3.2, plus generation-time Gaussian jitter (0.001)
-        # to break the coincident duplicates created when a sparse view is
-        # upsampled to 10k (so PointBERT's FPS+kNN don't collapse on them).
-        HPR_PARAM="2.8"
-        JITTER_STD="0.001"
+        # Uses the global default HPR 2.8 / jitter 0.001 (the corrected settings,
+        # first introduced here — now the protocol default for every dataset).
         ;;
     tless)
         IS_BOP=1
