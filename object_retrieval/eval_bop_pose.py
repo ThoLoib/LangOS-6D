@@ -428,8 +428,11 @@ def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
             rec = {"dataset": dataset, "scene_id": scene_id, "im_id": im_id,
                    "obj_id": obj_id, "gt_idx": gt_idx, "target_id": target_nsid,
                    "target_rank": r,
-                   "top5": [{"id": oid, "score": round(s, 5)}
-                            for oid, s in ranking[:5]]}
+                   # ranked shortlist with fused/geo scores (top-10, matching the
+                   # deepest reported Recall@k). In 3b these are the proxies that
+                   # displaced the removed exact target.
+                   "top10": [{"id": oid, "score": round(s, 5)}
+                             for oid, s in ranking[:10]]}
             if use_uni3d or use_pc_query:
                 rec["pc_query_fallback"] = pc_query_fallback
             if use_dgedi:
