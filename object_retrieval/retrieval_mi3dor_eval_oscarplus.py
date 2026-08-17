@@ -80,6 +80,11 @@ cfg = EvalConfig(
     ulip2_top_k=9999,
     fusion_top_k=9999,
     TOP_F=20,
+    # Frozen Stage-1 E2 full-fusion weights. MUST be set explicitly: EvalConfig
+    # defaults to 0/0.5/0.5 (CLIP OFF), which silently made clip_dino_ulip_full a
+    # DINO+ULIP run and the pruned arm DINO:ULIP 1:1 instead of 4:3 (cross-stage
+    # comparability audit 2026-08-13 P0.1 — same bug that hit Stage 3).
+    weight_clip=0.3, weight_dino=0.4, weight_ulip=0.3,
     ulip_query_cache_path=ulip_query_cache_path,
     # Best settings from the shrec18 experiment: the O4 view-count sweep peaked
     # at V=42 (nDCG 0.597; V8 0.580 < V16 0.593 < V42 0.597), with topk_softmax
