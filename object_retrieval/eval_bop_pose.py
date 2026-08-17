@@ -1,35 +1,52 @@
 """
 eval_bop_pose.py
 ================
-Stage-3 BOP evaluation for OSCAR+ (paired 3a / 3b), per
-``Downloads/STAGE3_EVALUATION_CONCEPT.md``.
+Stage-3 BOP evaluation for OSCAR+, per ``STAGE3_EVALUATION_CONCEPT.md``
+(revised 2026-08-17). Three independent settings over the same RGB-D BOP
+queries (YCB-V, T-LESS, LM-O; GT visible bbox + mask + 6D pose, so retrieval
+and pose are isolated from segmentation):
 
-Query datasets: YCB-V, T-LESS, LM-O (RGB-D, GT visible bbox + mask + 6D pose).
-Gallery: a multi-dataset union assembled by ``stage3_gallery`` —
+    --mode 3a   exact CAD in the gallery -> RETRIEVAL ONLY
+                Recall@1/5/10, MRR, geometry coverage, mean #registered.
+                FoundationPose is NOT run in 3a.
 
-    3a (exact CAD available): G_proxy ∪ G_target,d  → retrieval Recall@K/MRR
-                              + pose BOP-AR (oracle & retrieved-exact)
-    3b (proxy only):          G_proxy                → proxy pose + D_sym
+    --mode gt   exact-CAD FoundationPose benchmark (the "GT run"):
+                FoundationPose with the GROUND-TRUTH target CAD ->
+                D_posed_gt = D_sym(T_gt·P_T, T_hat·P_T)  (P_P == P_T).
+                No retrieval; the reference D_sym for the Delta pairing.
 
-Implemented: **Phase A** retrieval (Recall@1/5/10 + MRR) and **Phase B** 3a pose
-(FoundationPose -> BOP-AR, oracle + conditional retrieved-exact). 3b proxy pose +
-D_sym is Phase C. VSD needs a depth renderer (not yet wired) so BOP-AR is
-currently MSSD/MSPD-only — reported with a note. Pose needs the foundationpose
-compose service up.
+    --mode 3b   proxy-only gallery -> retrieve top-1 proxy, FoundationPose it ->
+                D_posed = D_sym(T_gt·P_T, T_hat·P_P), and (with --gt-records)
+                the paired substitution cost Delta = D_posed - D_posed_gt.
 
-In 3a the gallery is ONE big combined DB (G_proxy ∪ all target datasets); every
-query dataset is scored against it and a combined summary is pooled.
+Pose quality is reported as D_sym (mm + /diameter) and F-score at 1% and 5% of
+the target diameter, for BOTH the gt benchmark and 3b — the two are directly
+comparable on one scale. Official BOP-AR (VSD/MSSD/MSPD) is descoped from the
+headline (user decision 2026-08-17); raw estimated poses are stored per
+instance so it can be derived later.
+
+Determinism: all explicit RNGs are seeded (see ``_seed_everything``). Two
+sources are NOT bit-reproducible and are documented, not silenced:
+  * FoundationPose's pose-hypothesis sampling / refinement is stochastic on GPU;
+    we fix refine_iter and store the returned pose, but repeated calls can
+    differ slightly.
+  * open3d RANSAC in the dGeDi service is seeded server-side where the open3d
+    build supports it; older builds ignore the seed (documented in DETERMINISM).
 
 How to run (inside the oscar container, from object_retrieval/):
-    python3 eval_bop_pose.py --datasets all --mode 3a                    # retrieval, all queries
-    python3 eval_bop_pose.py --datasets all --mode 3a --pose            # + BOP-AR
-    python3 eval_bop_pose.py --datasets ycbv --mode 3a --max-targets 5  # single-dataset smoke
+    python3 eval_bop_pose.py --datasets all --mode 3a                 # retrieval
+    python3 eval_bop_pose.py --datasets all --mode 3a --pc-query      # pc mode
+    python3 eval_bop_pose.py --datasets all --mode 3a --dgedi --dgedi-repo
+    python3 eval_bop_pose.py --datasets all --mode gt                 # FP benchmark
+    python3 eval_bop_pose.py --datasets all --mode 3b \
+        --gt-records results_bop_stage3_gt/combined_gt.json
 """
 
 import argparse
 import json
 import logging
 import os
+import random
 import sys
 
 import numpy as np
@@ -46,21 +63,9 @@ from query_cloud import backproject_masked
 from dgedi_bridge import dgedi_rerank, dgedi_health
 from stage3_gallery import assemble_gallery, TARGET_DATASETS, UNI3D_OVERRIDES
 from stage3_metrics import (rank_of_target, summarize_retrieval,
-                            load_bop_model_points, get_symmetries,
-                            pose_errors, bop_ar,
-                            sample_surface_mm, d_sym, summarize_dsym)
+                            sample_surface_mm, d_sym, summarize_dsym,
+                            summarize_delta, instance_key)
 from pipeline.foundationpose_bridge import call_foundationpose
-
-
-def _build_vsd_renderer(width, height):
-    """pyrender+EGL depth renderer for VSD, or None if headless GL is
-    unavailable (then BOP-AR degrades to MSSD/MSPD, flagged in the summary)."""
-    try:
-        from stage3_render import PyrenderDepthRenderer
-        return PyrenderDepthRenderer(width, height)
-    except Exception as exc:
-        logger.warning("VSD renderer unavailable (%s); AR will be MSSD/MSPD only", exc)
-        return None
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,26 @@ logger = logging.getLogger(__name__)
 # (models_eval, mm) pass scale=0.001, and the returned translation *1000 -> mm.
 FP_URL = "http://foundationpose:5050/estimate_pose"
 _M_TO_MM = 1000.0
+
+# Minimum points in the query partial cloud for the shape/geometry arms; below
+# this, skip pc-query encode + dGeDi (degrade to the appearance arms only).
+MIN_CLOUD_PTS = 64
+
+
+def _seed_everything(seed: int = 0):
+    """Seed every explicit RNG the eval touches. FoundationPose (separate
+    container, GPU) and — on older open3d builds — RANSAC remain stochastic;
+    that residual is documented, not hidden."""
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -123,9 +148,7 @@ def _bbox_of(info):
 
 def _pad_bbox(bbox, img_w, img_h, min_size=16):
     """Grow a tiny (heavily-occluded) bbox to a minimum size, centred and
-    clamped to the image. A 1px-thin crop otherwise confuses the HF image
-    processor's channel inference (it reads the size-1 axis as 1 channel and
-    crashes on the 3-element mean). No-op for boxes already >= min_size."""
+    clamped to the image (a 1px-thin crop crashes the HF image processor)."""
     x, y, w, h = (float(v) for v in bbox)
     cx, cy = x + w / 2.0, y + h / 2.0
     w, h = max(w, min_size), max(h, min_size)
@@ -135,15 +158,11 @@ def _pad_bbox(bbox, img_w, img_h, min_size=16):
 
 
 # ============================================================================
-# Pose inputs + FoundationPose call (Phase B)
+# Pose inputs + FoundationPose call
 # ============================================================================
 
 def _cam_entry(scene_dir, im_id):
-    return _load_scene_json_dict(scene_dir, "scene_camera.json", im_id)
-
-
-def _load_scene_json_dict(scene_dir, name, im_id):
-    p = os.path.join(scene_dir, name)
+    p = os.path.join(scene_dir, "scene_camera.json")
     with open(p) as f:
         return json.load(f)[str(im_id)]
 
@@ -156,20 +175,19 @@ def _gt_pose(gt):
 
 
 def _pose_inputs(scene_dir, im_id, gt_idx, cam):
-    """Full-frame depth (metres for FP, mm for VSD), mask, K for one instance."""
+    """Full-frame depth (metres for FP), mask, K for one instance."""
     im6 = f"{im_id:06d}"
     depth_raw = np.array(Image.open(os.path.join(scene_dir, "depth", f"{im6}.png")))
-    depth_mm = depth_raw.astype(np.float32) * float(cam["depth_scale"])
-    depth_m = depth_mm / _M_TO_MM
+    depth_m = depth_raw.astype(np.float32) * float(cam["depth_scale"]) / _M_TO_MM
     mask_p = os.path.join(scene_dir, "mask_visib", f"{im6}_{gt_idx:06d}.png")
     mask = (np.array(Image.open(mask_p)) > 0).astype(np.uint8)
     K = np.array(cam["cam_K"], float).reshape(3, 3)
-    return depth_m, depth_mm, mask, K
+    return depth_m, mask, K
 
 
 def estimate_pose(cad_path, rgb_np, depth_m, mask, K, mesh_units_m, refine_iter):
-    """FoundationPose register() -> (R 3x3, t 3 in mm). ``mesh_units_m`` True if
-    the mesh is already in metres (scale 1.0); False for BOP-mm meshes (0.001)."""
+    """FoundationPose register() -> (R 3x3, t 3 in mm, conf). ``mesh_units_m``
+    True if the mesh is already in metres (scale 1.0); False for BOP-mm meshes."""
     scale = 1.0 if mesh_units_m else (1.0 / _M_TO_MM)
     pose, conf = call_foundationpose(FP_URL, rgb=rgb_np, depth=depth_m, mask=mask,
                                      K=K, cad_path=cad_path, scale=scale,
@@ -182,7 +200,7 @@ def _models_eval_dir(dataset):
 
 
 class _ModelCache:
-    """Lazily loads BOP models_eval points/symmetries/diameter per obj_id."""
+    """Lazily loads BOP models_eval diameter + surface sample per obj_id (mm)."""
     def __init__(self, dataset):
         self.dir = _models_eval_dir(dataset)
         self.info = json.load(open(os.path.join(self.dir, "models_info.json")))
@@ -192,33 +210,20 @@ class _ModelCache:
         if obj_id not in self._c:
             mp = os.path.join(self.dir, f"obj_{obj_id:06d}.ply")
             mi = self.info[str(obj_id)]
-            self._c[obj_id] = dict(pts=load_bop_model_points(mp),
-                                   syms=get_symmetries(mi),
-                                   diameter=float(mi["diameter"]),
-                                   path=mp)
+            self._c[obj_id] = dict(path=mp, diameter=float(mi["diameter"]),
+                                   pts=sample_surface_mm(mp, units_m=False))
         return self._c[obj_id]
 
 
 # ============================================================================
-# Stage-3 retrieval (Phase A)
+# Geometry re-rank (dGeDi, Stage-1 E2_both — Borda mean-rank of RANSAC fitness
+# and trimmed Chamfer)
 # ============================================================================
 
-# Minimum points in the query partial cloud for the shape/geometry arms; below
-# this, skip Uni3D-pc encode + dGeDi (degrade to the appearance arms only).
-MIN_CLOUD_PTS = 64
-
-
 def _geo_rerank(fused_ranking, geo, top_k):
-    """Re-rank the fused top-K by dGeDi geometry, mirroring Stage-1's winning
-    **E2_both** (``geometry="both_borda"``, skip_icp): combine the RANSAC
-    fitness and the trimmed Chamfer distance ``d_ransac`` by **Borda mean-rank**
-    (average of the two rank orders), then order by that. Registration-failed /
-    uncached candidates (``ok=False``) get -inf on both signals so they sort to
-    the back of the shortlist (their fused order kept among themselves via the
-    stable sort). Geometry reorders ONLY the shortlist; the tail is untouched.
-
-    ``geo`` is ``{id: {"ok": bool, "ransac_fitness": float, "d_ransac": float}}``.
-    """
+    """Re-rank the fused top-K by dGeDi geometry (Borda mean-rank of RANSAC
+    fitness and trimmed distance). Failed/uncached candidates sort to the back
+    of the shortlist; the tail past top_k is untouched."""
     head = fused_ranking[:top_k]
     tail = fused_ranking[top_k:]
     ids = [oid for oid, _ in head]
@@ -230,73 +235,133 @@ def _geo_rerank(fused_ranking, geo, top_k):
             return NEG
         return sign * float(g[key])
 
-    fit = [_sig(o, "ransac_fitness", 1.0) for o in ids]   # higher = better
-    dst = [_sig(o, "d_ransac", -1.0) for o in ids]         # -distance, higher = better
+    fit = [_sig(o, "ransac_fitness", 1.0) for o in ids]
+    dst = [_sig(o, "d_ransac", -1.0) for o in ids]
 
     def _ranks(vals):
-        # rank position (0 = best); double argsort of -vals, stable — identical
-        # to stage1_reproduce.both_borda.
         return np.argsort(np.argsort(-np.asarray(vals), kind="stable"),
                           kind="stable").astype(float)
 
     mean_rank = (_ranks(fit) + _ranks(dst)) / 2.0
-    order = list(np.argsort(mean_rank, kind="stable"))     # lowest mean rank first
-    head_re = [(ids[i], -float(mean_rank[i])) for i in order]  # score = -mean_rank
+    order = list(np.argsort(mean_rank, kind="stable"))
+    head_re = [(ids[i], -float(mean_rank[i])) for i in order]
     return head_re + tail
 
 
-def _eval_dataset(dataset, gallery, components, mode, max_targets,
-                  do_pose_3a, do_dsym, refine_iter, prx_samples,
-                  use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-                  use_pc_query=False, dgedi_repo=False):
-    """Retrieval (+pose) for ONE query dataset against the shared gallery.
+# ============================================================================
+# Per-object aggregation (concept doc requires per-object tables)
+# ============================================================================
 
-    In 3a the gallery is the one big combined DB (proxies + ALL target datasets),
-    so every query dataset is scored against the same index. Returns a per-dataset
-    summary plus the raw accumulators so the caller can pool a combined summary.
-    ``prx_samples`` is shared across datasets (proxy meshes are dataset-agnostic)."""
+def _per_object(dsym_recs, value_key="d_sym"):
+    """Group per-instance D_sym records by obj_id -> mean/median + n."""
+    by = {}
+    for r in dsym_recs:
+        by.setdefault(r["obj_id"], []).append(r[value_key])
+    out = {}
+    for oid, vals in sorted(by.items()):
+        a = np.array(vals, float)
+        out[str(oid)] = {"n": int(a.size), "mean": float(a.mean()),
+                         "median": float(np.median(a))}
+    return out
+
+
+# ============================================================================
+# Mode `gt`: exact-CAD FoundationPose benchmark (D_posed_gt, P_P == P_T)
+# ============================================================================
+
+def _eval_gt_dataset(dataset, refine_iter, max_targets):
+    models = _ModelCache(dataset)
+    ds_test = DATASET_TEST[dataset]
+    test_root = os.path.join(_THIS_DIR, ds_test["test_root"])
+    targets = load_bop_targets(os.path.join(_THIS_DIR, ds_test["targets"]))
+    if max_targets > 0:
+        targets = targets[:max_targets]
+    print(f"[stage3-gt] {dataset}: {len(targets)} BOP targets (FP with GT CAD)")
+
+    records = []
+    dsym_recs = []
+    n_att = 0
+    for t in tqdm(targets, desc=f"{dataset} gt"):
+        scene_id, im_id, obj_id = t["scene_id"], t["im_id"], t["obj_id"]
+        scene_dir = os.path.join(test_root, f"{scene_id:06d}")
+        rgb_path = os.path.join(scene_dir, "rgb", f"{im_id:06d}.png")
+        if not os.path.isfile(rgb_path):
+            alt = rgb_path[:-4] + ".jpg"
+            rgb_path = alt if os.path.isfile(alt) else rgb_path
+        if not os.path.isfile(rgb_path):
+            continue
+        rgb_np = np.asarray(Image.open(rgb_path).convert("RGB"), dtype=np.uint8)
+        cam = _cam_entry(scene_dir, im_id)
+        for gt_idx, gt, info in _matching_instances(scene_dir, im_id, obj_id):
+            if _bbox_of(info) is None:
+                continue
+            depth_m, mask, K = _pose_inputs(scene_dir, im_id, gt_idx, cam)
+            m = models.get(obj_id)
+            R_gt, t_gt = _gt_pose(gt)
+            n_att += 1
+            rec = {"dataset": dataset, "scene_id": scene_id, "im_id": im_id,
+                   "obj_id": obj_id, "gt_idx": gt_idx, "diameter": m["diameter"]}
+            try:
+                R_e, t_e, conf = estimate_pose(m["path"], rgb_np, depth_m, mask,
+                                               K, mesh_units_m=False,
+                                               refine_iter=refine_iter)
+                ds = d_sym(m["pts"], R_gt, t_gt, m["pts"], R_e, t_e, m["diameter"])
+                rec.update({"d_posed_gt": round(ds["d_sym"], 3),
+                            "d_sym_norm": round(ds["d_sym_norm"], 4),
+                            "fscore": ds["fscore"], "pose_conf": round(conf, 4),
+                            "R": np.asarray(R_e).reshape(9).tolist(),
+                            "t": np.asarray(t_e).reshape(3).tolist()})
+                dsym_recs.append({**ds, "obj_id": obj_id,
+                                  "_key": instance_key(rec)})
+            except Exception as exc:
+                logger.warning("FP-gt failed (%s im %s obj %s): %s",
+                               scene_id, im_id, obj_id, exc)
+                rec["failed"] = True
+            records.append(rec)
+
+    summary = {"dataset": dataset, "mode": "gt",
+               "n_queries_evaluated": len(records),
+               "dsym": summarize_dsym(dsym_recs, n_attempted=n_att),
+               "per_object": _per_object(dsym_recs)}
+    return {"summary": summary, "records": records, "dsym_recs": dsym_recs}
+
+
+# ============================================================================
+# Modes `3a` / `3b`: retrieval (+ 3b proxy pose + D_sym + Delta)
+# ============================================================================
+
+def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
+                            refine_iter, prx_samples, gt_by_key,
+                            use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
+                            use_pc_query=False, dgedi_repo=False):
+    """3a: retrieval only. 3b: retrieval (proxy gallery) + FP top-1 + D_sym."""
     pcfg, clip_retr, dino_rer, fusion_mod, shape_m = components
     cfg = gallery.eval_cfg
     include_target = (mode == "3a")
+    do_pose = (mode == "3b")
     G = len(gallery.gallery_ids)
-    top_k = G + 5    # DINO/ULIP are per-object: this ranks the whole gallery.
-    # CLIP.retrieve caps DESCRIPTION ROWS (42/object), not objects — so to let
-    # the dedup reach all G objects, CLIP must be given the total row count.
+    top_k = G + 5
     clip_rows = len(clip_retr._desc_labels)
 
-    models = _ModelCache(dataset) if (do_pose_3a or do_dsym) else None
-    do_any_pose = do_pose_3a or do_dsym
-    # The pc-query shape arm (Uni3D, or ULIP-2 in pc mode) and the dGeDi geometry
-    # re-rank all need the query partial cloud, hence depth+mask+K, even when no
-    # pose is estimated.
-    need_cloud = use_uni3d or use_pc_query or use_dgedi
+    models = _ModelCache(dataset) if do_pose else None
+    need_cloud = use_uni3d or use_pc_query or use_dgedi or do_pose
 
     ds_test = DATASET_TEST[dataset]
     test_root = os.path.join(_THIS_DIR, ds_test["test_root"])
     targets = load_bop_targets(os.path.join(_THIS_DIR, ds_test["targets"]))
     if max_targets > 0:
         targets = targets[:max_targets]
-    print(f"[stage3] {dataset}: {len(targets)} BOP targets vs |gallery|={G}")
+    print(f"[stage3] {dataset} {mode}: {len(targets)} BOP targets vs |gallery|={G}")
 
-    ranks = []
-    fused_ranks = []      # pre-geometry ranks (only tracked when use_dgedi)
-    records = []
-    oracle_recs = []      # one per GT instance (BOP-AR with the GT CAD)
-    retr_recs = []        # only where top-1 == exact target (conditional AR)
+    ranks, fused_ranks, records, dsym_recs = [], [], [], []
+    tgt_samples = {}
     n_missing_rgb = 0
-
-    _INF = dict(mssd=float("inf"), mspd=float("inf"))   # failed pose = miss
-    vsd_renderer = None   # built lazily once we know the image size
-    vsd_objs = set()      # obj_ids already added to the renderer
-    dsym_recs = []        # 3b per-instance D_sym
-    tgt_samples = {}      # obj_id  -> target surface points (mm), per-dataset
 
     for t in tqdm(targets, desc=f"{dataset} {mode}"):
         scene_id, im_id, obj_id = t["scene_id"], t["im_id"], t["obj_id"]
         scene_dir = os.path.join(test_root, f"{scene_id:06d}")
         rgb_path = os.path.join(scene_dir, "rgb", f"{im_id:06d}.png")
         if not os.path.isfile(rgb_path):
-            # some datasets use .jpg
             alt = rgb_path[:-4] + ".jpg"
             rgb_path = alt if os.path.isfile(alt) else rgb_path
         if not os.path.isfile(rgb_path):
@@ -304,9 +369,7 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             continue
         rgb = Image.open(rgb_path).convert("RGB")
         rgb_np = np.asarray(rgb, dtype=np.uint8)
-        img_w = rgb.width
-        cam = _cam_entry(scene_dir, im_id) if (do_any_pose or need_cloud) else None
-
+        cam = _cam_entry(scene_dir, im_id) if need_cloud else None
         target_nsid = f"{dataset}/obj_{obj_id:06d}"
 
         for gt_idx, gt, info in _matching_instances(scene_dir, im_id, obj_id):
@@ -315,29 +378,19 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                 continue
             roi = crop_by_bbox(rgb, _pad_bbox(bbox, rgb.width, rgb.height))
 
-            # Load depth/mask/K ONCE per instance — shared by the query cloud
-            # (Uni3D pc-query + dGeDi) and by the pose blocks below.
-            depth_m = depth_mm = mask = K = None
-            if do_any_pose or need_cloud:
-                depth_m, depth_mm, mask, K = _pose_inputs(
-                    scene_dir, im_id, gt_idx, cam)
+            depth_m = mask = K = None
+            if need_cloud:
+                depth_m, mask, K = _pose_inputs(scene_dir, im_id, gt_idx, cam)
 
-            # Query partial cloud (camera frame) from the GT-masked depth, with
-            # RGB colors so the Uni3D pc-query is XYZ+RGB like the gallery.
             q_cloud = q_colors = None
             if need_cloud and mask is not None:
                 q_cloud, q_colors = backproject_masked(depth_m, mask, K, rgb=rgb_np)
                 if len(q_cloud) < MIN_CLOUD_PTS:
                     q_cloud = q_colors = None
 
-            # pc-query embedding: encode the partial cloud with the active shape
-            # encoder (Uni3D, or ULIP-2 in pc mode) and pass it as the shape-arm
-            # query (run_query's ulip_query_emb hook overrides encode_image ->
-            # cosine vs the gallery pc embeddings). Replaces ULIP-2's default
-            # image-cross-modal query.
             ulip_q_emb = None
             pc_query_fallback = False
-            if (use_uni3d or use_pc_query):
+            if use_uni3d or use_pc_query:
                 if q_cloud is not None:
                     try:
                         ulip_q_emb = shape_m.encode_pointcloud(q_cloud, colors=q_colors)
@@ -345,35 +398,24 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                         logger.warning("pc-query encode failed (%s im %s obj %s): %s",
                                        scene_id, im_id, obj_id, exc)
                 if ulip_q_emb is None:
-                    # pc-query was requested but there is no usable cloud/embedding
-                    # -> run_query silently falls back to the ULIP image (cross)
-                    # query. Flag it so a pc-mode run's image-fallback share is
-                    # visible instead of silently mixing modalities (audit P1.4).
                     pc_query_fallback = True
 
             out = run_query(pcfg, clip_retr, dino_rer, fusion_mod, shape_m,
                             roi, cfg, ulip_query_emb=ulip_q_emb,
                             dino_full_top_k=top_k, ulip_full_top_k=top_k,
                             clip_full_top_k=clip_rows)
-            fused_ranking = fusion_ranking(out["fused_full"])  # [(nsid, score),...]
+            fused_ranking = fusion_ranking(out["fused_full"])
 
-            # dGeDi geometry re-rank of the fused top-K (degrade to fused if the
-            # service is down or the query cloud is unusable).
             ranking = fused_ranking
             geo_applied = False
             dgedi_n_req = dgedi_n_ok = 0
             if use_dgedi and q_cloud is not None:
                 cand_ids = [oid for oid, _ in fused_ranking[:dgedi_top_k]]
-                # dgedi_repo -> the dGeDi demo.py config (6000 kp / 10k iter /
-                # + ICP); else the fast service defaults (512 kp / 5k / no ICP).
                 _dg = ({"ransac_keypoints": 6000, "ransac_max_iter": 10000,
                         "use_icp": True} if dgedi_repo else {})
-                geo = dgedi_rerank(q_cloud, cand_ids, **_dg)  # {id:{ok,fitness,d_ransac}}
+                geo = dgedi_rerank(q_cloud, cand_ids, **_dg)
                 if geo:
                     dgedi_n_req = len(cand_ids)
-                    # geo_applied means geometry ACTUALLY re-ranked something: at
-                    # least one candidate registration succeeded. A non-empty dict
-                    # of all-ok=False is NOT a dGeDi result (audit P0.5).
                     dgedi_n_ok = sum(1 for v in geo.values() if v.get("ok"))
                     if dgedi_n_ok > 0:
                         ranking = _geo_rerank(fused_ranking, geo, dgedi_top_k)
@@ -383,16 +425,14 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
             if include_target:
                 ranks.append(r)
 
-            rec = {
-                "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id,
-                "gt_idx": gt_idx, "target_id": target_nsid, "target_rank": r,
-                "top5": [{"id": oid, "score": round(s, 5)}
-                         for oid, s in ranking[:5]],
-            }
+            rec = {"dataset": dataset, "scene_id": scene_id, "im_id": im_id,
+                   "obj_id": obj_id, "gt_idx": gt_idx, "target_id": target_nsid,
+                   "target_rank": r,
+                   "top5": [{"id": oid, "score": round(s, 5)}
+                            for oid, s in ranking[:5]]}
             if use_uni3d or use_pc_query:
                 rec["pc_query_fallback"] = pc_query_fallback
             if use_dgedi:
-                # keep the pre-geometry (fused) rank for the E2 ablation table
                 rec["fused_rank"] = (rank_of_target(fused_ranking, target_nsid)
                                      if include_target else None)
                 rec["geo_applied"] = geo_applied
@@ -401,197 +441,174 @@ def _eval_dataset(dataset, gallery, components, mode, max_targets,
                 if include_target:
                     fused_ranks.append(rec["fused_rank"])
 
-            # oracle pose is captured here so the D_sym block below can REUSE it
-            # when the retrieved top-1 is the exact target (avoids re-posing the
-            # same mesh in 3a).
-            oracle_ok = False
-            oracle_R = oracle_t = None
-            oracle_conf = 0.0
-
-            # --- 3a pose (BOP-AR): oracle GT CAD + conditional retrieved-exact ---
-            if do_pose_3a:
+            # --- 3b: pose the RETRIEVED top-1 proxy, D_sym vs GT-posed target ---
+            if do_pose and ranking:
                 m = models.get(obj_id)
-                R_gt, t_gt = _gt_pose(gt)   # depth_m/depth_mm/mask/K hoisted above
-                # build the VSD renderer once (first frame gives us H,W) and
-                # register the object's GT CAD before rendering it
-                if vsd_renderer is None:
-                    vsd_renderer = _build_vsd_renderer(rgb.width, rgb.height)
-                if vsd_renderer is not None and obj_id not in vsd_objs:
-                    vsd_renderer.add_object(obj_id, m["path"])
-                    vsd_objs.add(obj_id)
-                try:
-                    R_e, t_e, conf = estimate_pose(
-                        m["path"], rgb_np, depth_m, mask, K,
-                        mesh_units_m=False, refine_iter=refine_iter)
-                    err = pose_errors(
-                        R_e, t_e, R_gt, t_gt, K, m["pts"], m["syms"],
-                        depth_test=(depth_mm if vsd_renderer is not None else None),
-                        renderer=vsd_renderer, obj_id=obj_id,
-                        diameter=m["diameter"])
-                    rec["oracle_pose_conf"] = round(conf, 4)
-                    # store the raw pose (R row-major 9, t mm 3) so the official
-                    # object-balanced BOP-AR can be recomputed post-hoc from a
-                    # BOP results CSV (audit P0.8; also sidesteps the internal
-                    # VSD path for the headline number).
-                    rec["oracle_R"] = np.asarray(R_e, float).reshape(9).tolist()
-                    rec["oracle_t"] = np.asarray(t_e, float).reshape(3).tolist()
-                    oracle_ok, oracle_R, oracle_t, oracle_conf = True, R_e, t_e, conf
-                except Exception as exc:           # degrade: count as a miss
-                    logger.warning("FP oracle failed (%s im %s obj %s): %s",
-                                   scene_id, im_id, obj_id, exc)
-                    err = _INF
-                orec = dict(err, diameter=m["diameter"], img_w=img_w)
-                oracle_recs.append(orec)
-                rec["oracle_mssd"] = err["mssd"]
-                rec["oracle_mspd"] = err["mspd"]
-                # retrieved-exact: top-1 is the exact target -> same CAD/pose,
-                # so reuse (mesh is identical).
-                if ranking and ranking[0][0] == target_nsid:
-                    retr_recs.append(orec)
-                    rec["retrieved_exact"] = True
-
-            # --- D_sym on the RETRIEVED top-1 (both modes; comparable metric) ---
-            # 3a: top-1 is usually the exact target -> D_sym ~ pose error (reuse
-            #     the oracle pose). 3b: top-1 is a proxy. The retrieved mesh may
-            #     be a target CAD (mm) or a proxy (native units) -> id_to_pose_mesh
-            #     carries the correct units per id.
-            if do_dsym and ranking:
-                m = models.get(obj_id)          # target: diameter + surface
-                R_gt, t_gt = _gt_pose(gt)   # depth_m/mask/K hoisted above
+                R_gt, t_gt = _gt_pose(gt)
                 top1 = ranking[0][0]
-                is_exact = (top1 == target_nsid)
                 rec["top1"] = top1
-                rec["top1_is_exact"] = is_exact
+                rec["top1_is_exact"] = (top1 == target_nsid)
                 tpath, tunits = gallery.id_to_pose_mesh.get(top1, (None, False))
                 if tpath and os.path.isfile(tpath):
                     if obj_id not in tgt_samples:
-                        tgt_samples[obj_id] = sample_surface_mm(m["path"], units_m=False)
+                        tgt_samples[obj_id] = m["pts"]
                     try:
-                        # reuse the oracle pose iff the top-1 IS the exact target
-                        # (same mesh already posed for BOP-AR).
-                        if is_exact and oracle_ok:
-                            Rt, tt, conf = oracle_R, oracle_t, oracle_conf
-                        else:
-                            Rt, tt, conf = estimate_pose(
-                                tpath, rgb_np, depth_m, mask, K,
-                                mesh_units_m=tunits, refine_iter=refine_iter)
+                        Rt, tt, conf = estimate_pose(tpath, rgb_np, depth_m, mask,
+                                                     K, mesh_units_m=tunits,
+                                                     refine_iter=refine_iter)
                         if top1 not in prx_samples:
                             prx_samples[top1] = sample_surface_mm(tpath, units_m=tunits)
                         ds = d_sym(tgt_samples[obj_id], R_gt, t_gt,
                                    prx_samples[top1], Rt, tt, m["diameter"])
-                        rec["d_sym"] = round(ds["d_sym"], 3)
-                        rec["d_sym_norm"] = round(ds["d_sym_norm"], 4)
-                        rec["top1_pose_conf"] = round(conf, 4)
-                        rec["top1_R"] = np.asarray(Rt, float).reshape(9).tolist()
-                        rec["top1_t"] = np.asarray(tt, float).reshape(3).tolist()
-                        dsym_recs.append(ds)
-                    except Exception as exc:      # degrade: drop this instance
+                        rec.update({"d_posed": round(ds["d_sym"], 3),
+                                    "d_sym_norm": round(ds["d_sym_norm"], 4),
+                                    "fscore": ds["fscore"],
+                                    "top1_pose_conf": round(conf, 4),
+                                    "diameter": m["diameter"],
+                                    "top1_R": np.asarray(Rt).reshape(9).tolist(),
+                                    "top1_t": np.asarray(tt).reshape(3).tolist()})
+                        key = instance_key(rec)
+                        drec = {**ds, "obj_id": obj_id, "_key": key}
+                        if gt_by_key and key in gt_by_key:
+                            rec["delta"] = round(ds["d_sym"] - gt_by_key[key], 3)
+                        dsym_recs.append(drec)
+                    except Exception as exc:
                         logger.warning("FP top-1 pose failed (%s): %s", top1, exc)
                 else:
                     logger.warning("top-1 mesh missing for %s", top1)
 
             records.append(rec)
 
-    summary = _summarize(dataset, mode, G, records, ranks, oracle_recs,
-                         retr_recs, dsym_recs, n_missing_rgb,
-                         include_target, do_pose_3a, do_dsym,
+    summary = _summarize(dataset, mode, G, records, ranks, dsym_recs,
+                         n_missing_rgb, include_target, do_pose,
+                         gt_by_key=gt_by_key,
                          fused_ranks=fused_ranks if use_dgedi else None)
     return {"summary": summary, "records": records, "ranks": ranks,
-            "fused_ranks": fused_ranks,
-            "oracle_recs": oracle_recs, "retr_recs": retr_recs,
-            "dsym_recs": dsym_recs}
+            "fused_ranks": fused_ranks, "dsym_recs": dsym_recs}
 
 
-def _summarize(dataset, mode, G, records, ranks, oracle_recs, retr_recs,
-               dsym_recs, n_missing_rgb, include_target, do_pose_3a, do_dsym,
-               fused_ranks=None):
+def _summarize(dataset, mode, G, records, ranks, dsym_recs, n_missing_rgb,
+               include_target, do_pose, gt_by_key=None, fused_ranks=None):
     summary = {"dataset": dataset, "mode": mode, "gallery_size": G,
                "target_in_gallery": include_target,
                "n_queries_evaluated": len(records),
                "n_missing_rgb": n_missing_rgb}
     if include_target:
         summary.update(summarize_retrieval(ranks))
-        # E2 ablation: retrieval WITHOUT the geometry re-rank (pre-geometry).
         if fused_ranks:
             summary["pre_geometry"] = summarize_retrieval(fused_ranks)
-    # pc-query image-fallback share (audit P1.4): how much of a "pc-mode" run
-    # silently reverted to the ULIP image query for want of a usable cloud.
     if any(r and "pc_query_fallback" in r for r in records):
         n_pc = sum(1 for r in records if r and "pc_query_fallback" in r)
         summary["pc_query_fallback"] = {
             "n_fell_back": sum(1 for r in records if r and r.get("pc_query_fallback")),
             "n_pc_query": n_pc}
-    # dGeDi coverage (audit P0.5): how often geometry actually re-ranked, and the
-    # mean number of successful candidate registrations.
     if any(r and "geo_applied" in r for r in records):
         oks = [r.get("dgedi_n_ok", 0) for r in records if r and "geo_applied" in r]
-        summary["dgedi_coverage"] = {
+        summary["geometry_coverage"] = {
             "n_geo_applied": sum(1 for r in records if r and r.get("geo_applied")),
             "n_dgedi_query": len(oks),
-            "mean_n_ok": float(np.mean(oks)) if oks else 0.0}
-    if do_pose_3a:
-        summary["bop_ar_oracle"] = bop_ar(oracle_recs)
-        summary["bop_ar_retrieved_exact"] = bop_ar(retr_recs)
-        summary["n_exact_top1"] = len(retr_recs)
-    if do_dsym:
-        # D_sym coverage: instances where a top-1 was posed successfully vs all
-        # instances the D_sym block was entered for (audit P0.7 — survivor bias).
+            "mean_n_registered": float(np.mean(oks)) if oks else 0.0}
+    if do_pose:
         n_att = sum(1 for r in records if r and "top1" in r)
         summary["dsym"] = summarize_dsym(dsym_recs, n_attempted=n_att)
+        summary["per_object"] = _per_object(dsym_recs)
+        if gt_by_key:
+            summary["delta"] = summarize_delta(dsym_recs, gt_by_key)
     return summary
 
 
-def _print_summary(tag, s, include_target, do_pose_3a, do_dsym):
+def _print_summary(tag, s):
     print(f"\n[stage3] {tag} — {s['n_queries_evaluated']} queries")
-    if include_target and "recall@1" in s:
+    if "recall@1" in s:
         print(f"  Recall@1={s['recall@1']:.3f}  Recall@5={s['recall@5']:.3f}  "
               f"Recall@10={s['recall@10']:.3f}  MRR={s['mrr']:.3f}  "
-              f"(target found {s['n_target_found']}/{s['n_queries_evaluated']})")
-    if do_pose_3a and "bop_ar_oracle" in s:
-        ao, ar_ = s["bop_ar_oracle"], s["bop_ar_retrieved_exact"]
-        vsd_o = f" / VSD {ao['ar_vsd']:.3f}" if ao.get("ar_vsd") is not None else ""
-        print(f"  BOP-AR oracle          = {ao['ar']:.3f}  "
-              f"(MSSD {ao['ar_mssd']:.3f} / MSPD {ao['ar_mspd']:.3f}{vsd_o}, n={ao['n_estimated']})")
-        print(f"  BOP-AR retrieved-exact = {ar_['ar']:.3f}  (n_exact_top1={s['n_exact_top1']})")
-        if ao.get("ar_note"):
-            print(f"  note: {ao['ar_note']}")
-    if do_dsym and "dsym" in s and s["dsym"]["n_estimated"]:
+              f"(found {s['n_target_found']}/{s['n_queries_evaluated']})")
+        if "pre_geometry" in s:
+            p = s["pre_geometry"]
+            print(f"  pre-geometry: Recall@1={p['recall@1']:.3f} "
+                  f"Recall@5={p['recall@5']:.3f} MRR={p['mrr']:.3f}")
+    if "geometry_coverage" in s:
+        g = s["geometry_coverage"]
+        print(f"  geometry: applied {g['n_geo_applied']}/{g['n_dgedi_query']}, "
+              f"mean #registered={g['mean_n_registered']:.2f}")
+    if "dsym" in s and s["dsym"].get("n_estimated"):
         d = s["dsym"]
-        print(f"  D_sym mean = {d['d_sym_mean']:.2f} mm  (median {d['d_sym_median']:.2f}, "
-              f"/diam {d['d_sym_norm_mean']:.3f}, n={d['n_estimated']})")
+        line = (f"  D_sym mean={d['d_sym_mean']:.2f}mm median={d['d_sym_median']:.2f} "
+                f"/diam={d['d_sym_norm_mean']:.3f} (n={d['n_estimated']}, "
+                f"cov={d.get('coverage', 1.0):.2f})")
+        if "fscore" in d:
+            fs = " ".join(f"F@{k}={v['f']:.3f}" for k, v in d["fscore"].items())
+            line += f"  {fs}"
+        print(line)
+    if "delta" in s and s["delta"].get("n_paired"):
+        dl = s["delta"]
+        print(f"  Delta mean={dl['delta_mean']:.2f}mm median={dl['delta_median']:.2f} "
+              f"(paired n={dl['n_paired']})")
+
+
+# ============================================================================
+# Driver
+# ============================================================================
+
+def _load_gt_by_key(path):
+    """Build instance_key -> D_posed_gt (mm) from a gt-benchmark records/combined
+    file, so 3b can pair each proxy D_posed with its exact-CAD reference."""
+    if not path:
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    recs = data.get("all_records") if isinstance(data, dict) else data
+    if recs is None and isinstance(data, dict):
+        recs = data.get("records", [])
+    out = {}
+    for r in (recs or []):
+        if r.get("d_posed_gt") is None:
+            continue
+        k = (r.get("dataset"), r["scene_id"], r["im_id"], r["obj_id"], r["gt_idx"])
+        out[k] = float(r["d_posed_gt"])
+    return out
 
 
 def run_stage3(datasets, mode="3a", max_targets=0,
-               output_dir="results_bop_stage3", do_pose=False, refine_iter=5,
+               output_dir="results_bop_stage3", refine_iter=5,
                use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-               use_pc_query=False, dgedi_repo=False):
-    """Run Stage-3 over one or more query datasets against a SINGLE gallery.
-
-    3a: gallery = G_proxy ∪ G_ycbv ∪ G_tless ∪ G_lmo (one big combined DB) —
-        every query dataset retrieves against the same index, and a combined
-        summary is pooled across all of them.
-    3b: gallery = G_proxy only (exact targets removed).
-
-    ``use_uni3d``  swaps the shape arm ULIP-2 -> Uni3D (pc-query: the query
-        partial cloud is encoded by Uni3D). ``use_dgedi`` adds the dGeDi
-        geometry re-rank of the fused top-``dgedi_top_k`` (needs the ``dgedi``
-        compose service up + its gallery descriptor cache precomputed)."""
-    datasets = [d for d in datasets]
+               use_pc_query=False, dgedi_repo=False, gt_records=None):
     for d in datasets:
         if d not in DATASET_TEST:
             raise ValueError(f"Unknown dataset {d}; choose {list(DATASET_TEST)}")
-    include_target = (mode == "3a")
-    do_pose_3a = do_pose and mode == "3a"    # BOP-AR (oracle + retrieved-exact)
-    # D_sym on the retrieved top-1 is now computed in BOTH modes so 3a and 3b
-    # stay comparable on one metric: 3a top-1 is usually the exact target
-    # (D_sym ~ pose error), 3b top-1 is a proxy — the 3b-3a gap is the geometric
-    # cost of not having the exact CAD.
-    do_dsym = do_pose
     os.makedirs(output_dir, exist_ok=True)
-
     print(f"\n{'='*64}\nStage-3 {mode} — queries {datasets}\n{'='*64}")
 
-    # --- assemble the single gallery ONCE ---
+    # ---- mode gt: no gallery, no retrieval — FP with the GT CAD ----
+    if mode == "gt":
+        per_dataset, all_records, all_dsym = {}, [], []
+        for dataset in datasets:
+            res = _eval_gt_dataset(dataset, refine_iter, max_targets)
+            per_dataset[dataset] = res["summary"]
+            rdir = os.path.join(output_dir, f"{dataset}_gt")
+            os.makedirs(rdir, exist_ok=True)
+            with open(os.path.join(rdir, "records.json"), "w") as f:
+                json.dump(res["records"], f, indent=2)
+            with open(os.path.join(rdir, "summary.json"), "w") as f:
+                json.dump(res["summary"], f, indent=2)
+            _print_summary(f"{dataset} gt", res["summary"])
+            all_records += res["records"]
+            all_dsym += res["dsym_recs"]
+        combined = {"mode": "gt", "datasets": datasets,
+                    "n_queries_evaluated": len(all_records),
+                    "dsym": summarize_dsym(all_dsym, n_attempted=len(all_records)),
+                    "per_dataset": per_dataset, "all_records": all_records}
+        with open(os.path.join(output_dir, "combined_gt.json"), "w") as f:
+            json.dump(combined, f, indent=2)
+        _print_summary("COMBINED gt", combined)
+        print(f"\n[stage3] saved -> {output_dir}")
+        return combined
+
+    # ---- modes 3a / 3b: assemble the union gallery once ----
+    gt_by_key = _load_gt_by_key(gt_records) if mode == "3b" else {}
+    if mode == "3b" and gt_records:
+        print(f"[stage3] paired Delta against {len(gt_by_key)} gt records "
+              f"from {gt_records}")
     target_datasets = TARGET_DATASETS if mode == "3a" else ()
     print(f"[stage3] assembling gallery (targets in gallery: "
           f"{list(target_datasets) or 'none (proxy-only)'})"
@@ -603,50 +620,44 @@ def run_stage3(datasets, mode="3a", max_targets=0,
     print(f"[stage3] |gallery| = {G}  clip_rows = {len(components[1]._desc_labels)}")
     if use_dgedi:
         h = dgedi_health()
-        print(f"[stage3] dGeDi geometry re-rank ON (top_k={dgedi_top_k}); "
+        print(f"[stage3] dGeDi geometry re-rank ON (top_k={dgedi_top_k}, "
+              f"{'repo 6000kp/10k/+ICP' if dgedi_repo else 'fast 512kp/5k'}); "
               f"service: {h if h else 'UNREACHABLE — will degrade to fused'}")
 
-    prx_samples = {}          # proxy nsid -> surface points (mm), shared
+    prx_samples = {}
     per_dataset = {}
-    pooled = {"records": 0, "ranks": [], "oracle_recs": [],
-              "retr_recs": [], "dsym_recs": [], "all_records": []}
-
+    pooled = {"ranks": [], "dsym_recs": [], "all_records": []}
     for dataset in datasets:
-        res = _eval_dataset(dataset, gallery, components, mode, max_targets,
-                            do_pose_3a, do_dsym, refine_iter, prx_samples,
-                            use_uni3d=use_uni3d, use_dgedi=use_dgedi,
-                            dgedi_top_k=dgedi_top_k, use_pc_query=use_pc_query,
-                            dgedi_repo=dgedi_repo)
+        res = _eval_retrieval_dataset(
+            dataset, gallery, components, mode, max_targets, refine_iter,
+            prx_samples, gt_by_key, use_uni3d=use_uni3d, use_dgedi=use_dgedi,
+            dgedi_top_k=dgedi_top_k, use_pc_query=use_pc_query,
+            dgedi_repo=dgedi_repo)
         s = res["summary"]
         per_dataset[dataset] = s
-        result_dir = os.path.join(output_dir, f"{dataset}_stage{mode}")
-        os.makedirs(result_dir, exist_ok=True)
-        with open(os.path.join(result_dir, "records.json"), "w") as f:
+        rdir = os.path.join(output_dir, f"{dataset}_stage{mode}")
+        os.makedirs(rdir, exist_ok=True)
+        with open(os.path.join(rdir, "records.json"), "w") as f:
             json.dump(res["records"], f, indent=2)
-        with open(os.path.join(result_dir, "summary.json"), "w") as f:
+        with open(os.path.join(rdir, "summary.json"), "w") as f:
             json.dump(s, f, indent=2)
-        _print_summary(f"{dataset} {mode}", s, include_target, do_pose_3a, do_dsym)
-        pooled["records"] += len(res["records"])
+        _print_summary(f"{dataset} {mode}", s)
         pooled["all_records"] += res["records"]
         pooled["ranks"] += res["ranks"]
-        pooled["oracle_recs"] += res["oracle_recs"]
-        pooled["retr_recs"] += res["retr_recs"]
         pooled["dsym_recs"] += res["dsym_recs"]
 
-    # --- combined summary pooled across all query datasets ---
-    # Pass the real pooled records (not a [None] placeholder) so the per-record
-    # coverage blocks (pc-fallback, dGeDi, D_sym) aggregate across datasets too.
-    combined = _summarize("ALL", mode, G, pooled["all_records"],
-                          pooled["ranks"], pooled["oracle_recs"],
-                          pooled["retr_recs"], pooled["dsym_recs"], 0,
-                          include_target, do_pose_3a, do_dsym)
+    combined = _summarize("ALL", mode, G, pooled["all_records"], pooled["ranks"],
+                          pooled["dsym_recs"], 0, mode == "3a", mode == "3b",
+                          gt_by_key=gt_by_key,
+                          fused_ranks=[r.get("fused_rank") for r in
+                                       pooled["all_records"] if "fused_rank" in r]
+                                      if use_dgedi else None)
     combined["datasets"] = datasets
-    combined["per_dataset"] = {d: per_dataset[d] for d in datasets}
+    combined["per_dataset"] = per_dataset
     with open(os.path.join(output_dir, f"combined_stage{mode}.json"), "w") as f:
         json.dump(combined, f, indent=2)
     if len(datasets) > 1:
-        _print_summary(f"COMBINED {mode}", combined, include_target,
-                       do_pose_3a, do_dsym)
+        _print_summary(f"COMBINED {mode}", combined)
     print(f"\n[stage3] saved -> {output_dir}")
     return combined
 
@@ -658,50 +669,43 @@ def run_stage3(datasets, mode="3a", max_targets=0,
 def main():
     ap = argparse.ArgumentParser(description="Stage-3 BOP evaluation (OSCAR+)")
     ap.add_argument("--datasets", default="all",
-                    help="comma-separated query datasets, or 'all' "
-                         f"(= {','.join(TARGET_DATASETS)}). 3a scores them all "
-                         "against one combined gallery.")
-    ap.add_argument("--mode", choices=["3a", "3b"], default="3a")
+                    help=f"comma-separated query datasets, or 'all' (= "
+                         f"{','.join(TARGET_DATASETS)}).")
+    ap.add_argument("--mode", choices=["3a", "gt", "3b"], default="3a",
+                    help="3a=retrieval only; gt=FP with GT CAD (D_posed_gt); "
+                         "3b=proxy pose + D_sym (+Delta with --gt-records).")
     ap.add_argument("--max-targets", type=int, default=0,
                     help="limit targets PER dataset (0 = all; for smoke tests)")
     ap.add_argument("--output", default="results_bop_stage3")
-    ap.add_argument("--pose", action="store_true",
-                    help="run FoundationPose: in 3a -> BOP-AR (oracle + "
-                         "retrieved-exact); in 3b -> proxy pose + D_sym. "
-                         "Requires the foundationpose service.")
     ap.add_argument("--refine-iter", type=int, default=5,
                     help="FoundationPose refinement iterations (default 5)")
+    ap.add_argument("--gt-records", default=None,
+                    help="3b only: gt-benchmark records/combined JSON to pair "
+                         "D_posed against for Delta.")
     ap.add_argument("--uni3d", action="store_true",
-                    help="swap the shape arm ULIP-2 -> Uni3D (pc-query: encode "
-                         "the query partial cloud). Needs the Uni3D partial "
-                         "gallery caches precomputed (precompute_uni3d_partial.py).")
+                    help="swap the shape arm ULIP-2 -> Uni3D (pc-query).")
     ap.add_argument("--pc-query", action="store_true",
-                    help="use a POINT-CLOUD query for the shape arm instead of "
-                         "ULIP-2's default image-cross query (encode the query "
-                         "partial cloud with the active encoder). With --uni3d "
-                         "this is implied; alone it gives ULIP-2 in pc mode.")
+                    help="point-cloud query for the shape arm (else ULIP-2 "
+                         "image-cross query).")
     ap.add_argument("--dgedi", action="store_true",
-                    help="add the dGeDi geometry re-rank of the fused top-K. "
-                         "Needs the dgedi compose service up + its gallery "
-                         "descriptor cache (dgedi_service/precompute_gallery.py).")
+                    help="add the dGeDi geometry re-rank of the fused top-K.")
     ap.add_argument("--dgedi-top-k", type=int, default=10,
                     help="fused shortlist depth re-ranked by dGeDi (default 10)")
     ap.add_argument("--dgedi-repo", action="store_true",
-                    help="use the dGeDi *repo* config for the re-rank: 6000 "
-                         "keypoints / 10k RANSAC iters / + ICP (demo.py), instead "
-                         "of the fast service defaults (512 kp / 5k / no ICP).")
+                    help="dGeDi repo config: 6000 kp / 10k iters / +ICP.")
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
+    _seed_everything(args.seed)
     datasets = (list(TARGET_DATASETS) if args.datasets == "all"
                 else [d.strip() for d in args.datasets.split(",") if d.strip()])
 
     logging.basicConfig(level=logging.WARNING)
     run_stage3(datasets, mode=args.mode, max_targets=args.max_targets,
-               output_dir=args.output, do_pose=args.pose,
-               refine_iter=args.refine_iter,
+               output_dir=args.output, refine_iter=args.refine_iter,
                use_uni3d=args.uni3d, use_dgedi=args.dgedi,
                dgedi_top_k=args.dgedi_top_k, use_pc_query=args.pc_query,
-               dgedi_repo=args.dgedi_repo)
+               dgedi_repo=args.dgedi_repo, gt_records=args.gt_records)
 
 
 if __name__ == "__main__":

@@ -174,42 +174,92 @@ def bop_ar(records: List[dict]) -> dict:
 
 
 # ============================================================================
-# D_sym surface discrepancy (Phase C, 3b)
+# D_sym surface discrepancy + F-score  (the Stage-3 pose metric)
 # ============================================================================
-# 3b removes the exact target from the gallery, so top-1 is a proxy. D_sym is
-# the symmetric complete-surface distance between the GT-posed target and the
-# estimated-posed proxy — how far the proxy's geometry sits from the true
-# object once both are placed in the camera frame. Reported in mm and /diameter.
-DSYM_N = 10000        # surface samples per mesh
-DSYM_SEED = 0         # fixed so 3a and 3b sample identically (concept doc)
+# Per STAGE3_EVALUATION_CONCEPT.md, D_sym is the single pose-quality scale for
+# BOTH the exact-CAD FoundationPose benchmark (D_posed_gt, proxy == target so
+# P_P == P_T) and 3b proxy substitution (D_posed):
+#
+#     D_sym = 0.5 * ( mean_{p in target} min_{q in est} ||p-q||
+#                   + mean_{q in est}    min_{p in target} ||q-p|| )
+#
+# the symmetric point-to-surface (Chamfer-style) distance of DiffCD
+# (Härenstam-Nielsen et al., ECCV 2024), reported in mm and /target-diameter.
+#
+# F-score at a distance threshold τ (Knapitsch et al., "Tanks and Temples",
+# ACM TOG 2017) is reported ALONGSIDE the mean distance, because a mean can be
+# dominated by outlier geometry while the F-score at a fixed tolerance stays
+# stable (Tatarchenko et al., CVPR 2019). With the estimated-posed proxy as the
+# "reconstruction" and the GT-posed target as "ground truth":
+#
+#     precision(τ) = fraction of PROXY  points within τ of the target surface
+#     recall(τ)    = fraction of TARGET points within τ of the proxy  surface
+#     F(τ)         = 2·precision·recall / (precision + recall)
+#
+# τ is taken at 1% and 5% of the target diameter (concept doc).
+#
+# BOP-AR (VSD/MSSD/MSPD) above is descoped from the headline (user decision
+# 2026-08-17): it is NOT computed in the driver. Raw estimated poses are still
+# stored per instance so official BOP-AR can be derived later if needed.
+DSYM_N = 10000               # surface samples per mesh
+DSYM_SEED = 0                # fixed so every run samples a mesh identically
+FSCORE_FRACS = (0.01, 0.05)  # F-score thresholds, as fractions of diameter
 
 
 def sample_surface_mm(mesh_path: str, units_m: bool,
                       n: int = DSYM_N, seed: int = DSYM_SEED) -> np.ndarray:
-    """N points sampled uniformly on a mesh surface, in mm, deterministically."""
+    """N points sampled uniformly on a mesh surface, in mm, deterministically.
+
+    trimesh.sample draws from the GLOBAL numpy RNG, so we seed it immediately
+    before sampling. The seed is fixed per call (not per mesh), which is enough
+    for reproducibility: the same mesh always yields the same points because the
+    RNG state at the sample() call is identical. Determinism note: this reseeds
+    the global RNG as a side effect — acceptable here since all randomness in
+    the eval is explicitly seeded (see eval_bop_pose._seed_everything)."""
     import trimesh
     m = trimesh.load(mesh_path, force="mesh")
     if units_m:
         m.apply_scale(1000.0)             # metres -> mm
-    np.random.seed(seed)                  # trimesh.sample uses the global RNG
+    np.random.seed(seed)
     return np.asarray(m.sample(n), dtype=np.float64)
 
 
-def d_sym(tgt_pts_mm, R_t, t_t, prx_pts_mm, R_p, t_p, diameter) -> dict:
-    """Symmetric surface discrepancy (mm) between the GT-posed target points and
-    the estimated-posed proxy points. Both poses map model->camera in mm."""
+def _fscores(d_t2p: np.ndarray, d_p2t: np.ndarray, diameter: float,
+             fracs=FSCORE_FRACS) -> dict:
+    """precision/recall/F at each τ = frac·diameter, from the per-point NN
+    distance arrays (target->proxy = recall side, proxy->target = precision)."""
+    out = {}
+    for frac in fracs:
+        tau = frac * diameter
+        recall = float((d_t2p < tau).mean())      # target covered by proxy
+        precision = float((d_p2t < tau).mean())   # proxy near target
+        denom = precision + recall
+        f = (2.0 * precision * recall / denom) if denom > 0 else 0.0
+        out[f"{frac:g}"] = {"tau_mm": float(tau), "precision": precision,
+                            "recall": recall, "f": f}
+    return out
+
+
+def d_sym(tgt_pts_mm, R_t, t_t, prx_pts_mm, R_p, t_p, diameter,
+          fscore_fracs=FSCORE_FRACS) -> dict:
+    """Symmetric surface discrepancy (mm) + F-score between the GT-posed target
+    points and the estimated-posed proxy points. Both poses map model->camera in
+    mm. For the exact-CAD benchmark, pass prx_pts == tgt_pts (P_P == P_T)."""
     from scipy.spatial import cKDTree
     T = (np.asarray(R_t, float) @ tgt_pts_mm.T).T + np.asarray(t_t, float).reshape(3)
     P = (np.asarray(R_p, float) @ prx_pts_mm.T).T + np.asarray(t_p, float).reshape(3)
-    d_t2p = float(cKDTree(P).query(T)[0].mean())   # target -> nearest proxy
-    d_p2t = float(cKDTree(T).query(P)[0].mean())    # proxy  -> nearest target
-    d = 0.5 * (d_t2p + d_p2t)
-    return {"d_t2p": d_t2p, "d_p2t": d_p2t, "d_sym": d,
-            "d_sym_norm": d / diameter if diameter else None}
+    d_t2p = cKDTree(P).query(T)[0]   # per target point -> nearest proxy point
+    d_p2t = cKDTree(T).query(P)[0]   # per proxy  point -> nearest target point
+    m_t2p, m_p2t = float(d_t2p.mean()), float(d_p2t.mean())
+    d = 0.5 * (m_t2p + m_p2t)
+    return {"d_t2p": m_t2p, "d_p2t": m_p2t, "d_sym": d,
+            "d_sym_norm": (d / diameter) if diameter else None,
+            "fscore": _fscores(d_t2p, d_p2t, diameter, fscore_fracs)}
 
 
 def summarize_dsym(records: List[dict], n_attempted: int = None) -> dict:
-    """Mean D_sym (mm) and D_sym/diameter over the estimated 3b instances.
+    """Mean/median D_sym (mm), D_sym/diameter, and mean F-score at each τ over
+    the estimated instances.
 
     ``n_attempted`` is the number of instances the D_sym block was entered for
     (a top-1 with a mesh). When given, the summary reports pose-success
@@ -223,9 +273,49 @@ def summarize_dsym(records: List[dict], n_attempted: int = None) -> dict:
     dn = np.array([r["d_sym_norm"] for r in records], float)
     out = {"n_estimated": n,
            "d_sym_mean": float(ds.mean()), "d_sym_median": float(np.median(ds)),
-           "d_sym_norm_mean": float(dn.mean())}
+           "d_sym_norm_mean": float(dn.mean()),
+           "d_sym_norm_median": float(np.median(dn))}
+    # mean F-score / precision / recall at each threshold, over instances that
+    # carry an fscore block (all of them, but guard defensively).
+    fr = [r.get("fscore") for r in records if r.get("fscore")]
+    if fr:
+        keys = list(fr[0].keys())
+        out["fscore"] = {}
+        for k in keys:
+            out["fscore"][k] = {
+                "f": float(np.mean([r[k]["f"] for r in fr])),
+                "precision": float(np.mean([r[k]["precision"] for r in fr])),
+                "recall": float(np.mean([r[k]["recall"] for r in fr])),
+            }
     if n_attempted:
         out["n_attempted"] = int(n_attempted)
         out["n_failed"] = int(n_attempted - n)
         out["coverage"] = float(n / n_attempted)
     return out
+
+
+def instance_key(rec: dict) -> tuple:
+    """Stable per-instance identity used to pair a 3b record with its exact-CAD
+    benchmark record (same physical detection)."""
+    return (rec.get("dataset") or rec.get("_dataset"), rec["scene_id"],
+            rec["im_id"], rec["obj_id"], rec["gt_idx"])
+
+
+def summarize_delta(dsym_recs_3b: List[dict], gt_by_key: Dict[tuple, float]) -> dict:
+    """Paired substitution cost Delta = D_posed - D_posed_gt.
+
+    ``dsym_recs_3b`` are the 3b per-instance records (each carries ``d_sym`` and
+    an instance key); ``gt_by_key`` maps instance_key -> D_posed_gt (mm) from the
+    exact-CAD benchmark. Only instances posed in BOTH runs contribute (paired),
+    so Delta isolates the proxy-substitution cost from FoundationPose's own
+    placement error on that instance."""
+    deltas = []
+    for r in dsym_recs_3b:
+        k = r.get("_key")
+        if k is not None and k in gt_by_key:
+            deltas.append(r["d_sym"] - gt_by_key[k])
+    if not deltas:
+        return {"n_paired": 0, "delta_mean": None}
+    a = np.array(deltas, float)
+    return {"n_paired": int(a.size), "delta_mean": float(a.mean()),
+            "delta_median": float(np.median(a))}
