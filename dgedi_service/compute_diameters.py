@@ -59,6 +59,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--repo-root", default="/oscar")
     ap.add_argument("--n-points", type=int, default=10000)
+    ap.add_argument("--diam-scale", type=float, default=None,
+                    help="Override the native->query-units factor. Default uses the "
+                         "UNITS_M mm/m table (BOP query=metres, CAD=mm -> 0.001). "
+                         "SHREC'18 has no metric scale and its query shares the CAD's "
+                         "native units, so pass --diam-scale 1.0 (native, no conversion).")
     args = ap.parse_args()
 
     manifest = json.load(open(args.manifest))
@@ -75,7 +80,9 @@ def main():
         if not (d_native > 0):
             missing += 1
             continue
-        diam[nsid] = d_native * (1.0 if UNITS_M.get(ds, False) else 0.001)  # -> m
+        factor = (args.diam_scale if args.diam_scale is not None
+                  else (1.0 if UNITS_M.get(ds, False) else 0.001))  # -> query units
+        diam[nsid] = d_native * factor
         if (i + 1) % 200 == 0:
             print(f"[diam] {i+1}/{len(manifest)}", flush=True)
 
