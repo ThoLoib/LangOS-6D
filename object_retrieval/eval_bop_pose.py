@@ -19,6 +19,17 @@ and pose are isolated from segmentation):
                 D_posed = D_sym(T_gt·P_T, T_hat·P_P), and (with --gt-records)
                 the paired substitution cost Delta = D_posed - D_posed_gt.
 
+    --mode 3c   next-best-non-GT diagnostic (decomposes the 3b substitution cost).
+                REUSES the stored 3a ranking (--from-3a; gallery = G_proxy ∪ ALL
+                target CADs, so the exact target IS present). Per query it poses
+                the highest-ranked candidate that is NOT the exact target — the
+                best available stand-in from the *richer* 3a gallery — and scores
+                D_posed + Delta exactly like 3b. Provenance (real target CAD of
+                another object vs a G_proxy item) is recorded so the error can be
+                split into "gallery too sparse/different" (3b) vs "substitution is
+                inherently lossy" (3c). No retrieval or encoders are run — only
+                FoundationPose + D_sym on the reused shortlist (retrieval is free).
+
 Pose quality is reported as D_sym (mm + /diameter) and F-score at 1% and 5% of
 the target diameter, for BOTH the gt benchmark and 3b — the two are directly
 comparable on one scale. Official BOP-AR (VSD/MSSD/MSPD) is descoped from the
@@ -61,7 +72,8 @@ if _OSCAR_ROOT not in sys.path:
 from eval_common import run_query, fusion_ranking, crop_by_bbox
 from query_cloud import backproject_masked
 from dgedi_bridge import dgedi_rerank, dgedi_health
-from stage3_gallery import assemble_gallery, TARGET_DATASETS, UNI3D_OVERRIDES
+from stage3_gallery import (assemble_gallery, TARGET_DATASETS, UNI3D_OVERRIDES,
+                            _pose_mesh_path, split_id)
 from stage3_metrics import (rank_of_target, summarize_retrieval,
                             sample_surface_mm, d_sym, summarize_dsym,
                             summarize_delta, instance_key)
@@ -327,6 +339,150 @@ def _eval_gt_dataset(dataset, refine_iter, max_targets):
 
 
 # ============================================================================
+# Mode `3c`: next-best-non-GT diagnostic (reuse the stored 3a ranking, pose the
+# best available stand-in that is NOT the exact target, D_sym + Delta)
+# ============================================================================
+
+def _load_3a_records(from_3a, dataset):
+    """Load the per-dataset 3a records (retrieval rankings) to reuse in 3c.
+
+    ``from_3a`` is a Stage-3 output dir written in --mode 3a; per dataset the
+    driver stored ``<ds>_stage3a/records.json`` (each record carries target_id,
+    target_rank and the top-10 namespaced shortlist)."""
+    p = os.path.join(from_3a, f"{dataset}_stage3a", "records.json")
+    if not os.path.isfile(p):
+        raise FileNotFoundError(
+            f"3c needs the stored 3a ranking but {p} is missing. Point --from-3a "
+            f"at a --mode 3a output dir (e.g. results_bop_stage3_v2/3a_cross).")
+    with open(p) as f:
+        return json.load(f)
+
+
+def _next_best_non_gt(top10, target_id):
+    """Highest-ranked shortlist id that is NOT the exact target (id, score).
+
+    The next-best-non-GT is always within the top-2 (rank 1 if it isn't the
+    target, else rank 2), so the stored top-10 always contains it."""
+    for e in (top10 or []):
+        if e["id"] != target_id:
+            return e["id"], e.get("score")
+    return None, None
+
+
+def _provenance_breakdown(records, dsym_recs):
+    """Split the next-best D_sym by substitute provenance — a real target CAD of
+    another object vs a G_proxy item — the core 3c decomposition."""
+    by = {}
+    for r in dsym_recs:
+        by.setdefault(r.get("provenance", "proxy"), []).append(r["d_sym"])
+    out = {}
+    for prov, vals in by.items():
+        a = np.array(vals, float)
+        out[prov] = {"n": int(a.size),
+                     "d_sym_mean": float(a.mean()) if a.size else None,
+                     "d_sym_median": float(np.median(a)) if a.size else None}
+    out["counts"] = {
+        "n_target_cad": sum(1 for r in records
+                            if r.get("nb_provenance") == "target_cad"),
+        "n_proxy": sum(1 for r in records if r.get("nb_provenance") == "proxy"),
+        "n_same_dataset": sum(1 for r in records if r.get("nb_same_dataset")),
+        "n_target_was_top1": sum(1 for r in records if r.get("target_was_top1")),
+    }
+    return out
+
+
+def _eval_3c_dataset(dataset, records_3a, refine_iter, max_targets, gt_by_key,
+                     nb_samples):
+    """Pose the next-best-non-GT candidate of each reused 3a record and score
+    D_sym vs the GT-posed target (+ Delta against the exact-CAD benchmark)."""
+    models = _ModelCache(dataset)
+    ds_test = DATASET_TEST[dataset]
+    test_root = os.path.join(_THIS_DIR, ds_test["test_root"])
+    recs_in = records_3a[:max_targets] if max_targets > 0 else records_3a
+    print(f"[stage3-3c] {dataset}: {len(recs_in)} reused 3a records "
+          f"(pose next-best-non-GT)")
+
+    records, dsym_recs, tgt_samples = [], [], {}
+    n_att = n_no_candidate = 0
+    for t in tqdm(recs_in, desc=f"{dataset} 3c"):
+        scene_id, im_id = t["scene_id"], t["im_id"]
+        obj_id, gt_idx = t["obj_id"], t["gt_idx"]
+        target_id = t.get("target_id") or f"{dataset}/obj_{obj_id:06d}"
+        nb_id, nb_score = _next_best_non_gt(t.get("top10", []), target_id)
+        if nb_id is None:
+            n_no_candidate += 1
+            continue
+
+        scene_dir = os.path.join(test_root, f"{scene_id:06d}")
+        rgb_path = os.path.join(scene_dir, "rgb", f"{im_id:06d}.png")
+        if not os.path.isfile(rgb_path):
+            alt = rgb_path[:-4] + ".jpg"
+            rgb_path = alt if os.path.isfile(alt) else rgb_path
+        if not os.path.isfile(rgb_path):
+            continue
+        rgb_np = np.asarray(Image.open(rgb_path).convert("RGB"), dtype=np.uint8)
+        cam = _cam_entry(scene_dir, im_id)
+        gts = _load_scene_json(scene_dir, "scene_gt.json", im_id)
+        if gt_idx >= len(gts):
+            continue
+        R_gt, t_gt = _gt_pose(gts[gt_idx])
+        depth_m, mask, K = _pose_inputs(scene_dir, im_id, gt_idx, cam)
+        m = models.get(obj_id)
+
+        nb_ds, nb_obj = split_id(nb_id)
+        provenance = "target_cad" if nb_ds in TARGET_DATASETS else "proxy"
+        rec = {"dataset": dataset, "scene_id": scene_id, "im_id": im_id,
+               "obj_id": obj_id, "gt_idx": gt_idx, "target_id": target_id,
+               "target_rank": t.get("target_rank"),
+               "target_was_top1": (t.get("target_rank") == 1),
+               "nb_id": nb_id, "nb_score": nb_score,
+               "nb_provenance": provenance,
+               "nb_same_dataset": (nb_ds == dataset), "diameter": m["diameter"]}
+
+        nb_path, nb_units = _pose_mesh_path(nb_ds, nb_obj)
+        if not (nb_path and os.path.isfile(nb_path)):
+            logger.warning("3c next-best mesh missing for %s -> %s", nb_id, nb_path)
+            rec["failed"] = True
+            records.append(rec)
+            continue
+        n_att += 1
+        try:
+            if obj_id not in tgt_samples:
+                tgt_samples[obj_id] = m["pts"]
+            R_e, t_e, conf = estimate_pose(nb_path, rgb_np, depth_m, mask, K,
+                                           mesh_units_m=nb_units,
+                                           refine_iter=refine_iter)
+            if nb_id not in nb_samples:
+                nb_samples[nb_id] = sample_surface_mm(nb_path, units_m=nb_units)
+            ds = d_sym(tgt_samples[obj_id], R_gt, t_gt,
+                       nb_samples[nb_id], R_e, t_e, m["diameter"])
+            rec.update({"d_posed": round(ds["d_sym"], 3),
+                        "d_sym_norm": round(ds["d_sym_norm"], 4),
+                        "fscore": ds["fscore"], "nb_pose_conf": round(conf, 4),
+                        "nb_R": np.asarray(R_e).reshape(9).tolist(),
+                        "nb_t": np.asarray(t_e).reshape(3).tolist()})
+            key = instance_key(rec)
+            drec = {**ds, "obj_id": obj_id, "_key": key, "provenance": provenance}
+            if gt_by_key and key in gt_by_key:
+                rec["delta"] = round(ds["d_sym"] - gt_by_key[key], 3)
+            dsym_recs.append(drec)
+        except Exception as exc:
+            logger.warning("3c FP failed (%s): %s", nb_id, exc)
+            rec["failed"] = True
+        records.append(rec)
+
+    summary = {"dataset": dataset, "mode": "3c",
+               "n_queries_evaluated": len(records),
+               "n_no_candidate": n_no_candidate,
+               "dsym": summarize_dsym(dsym_recs, n_attempted=n_att),
+               "provenance": _provenance_breakdown(records, dsym_recs),
+               "per_object": _per_object(dsym_recs)}
+    if gt_by_key:
+        summary["delta"] = summarize_delta(dsym_recs, gt_by_key)
+    return {"summary": summary, "records": records, "dsym_recs": dsym_recs}
+
+
+# ============================================================================
 # Modes `3a` / `3b`: retrieval (+ 3b proxy pose + D_sym + Delta)
 # ============================================================================
 
@@ -547,6 +703,17 @@ def _print_summary(tag, s):
         dl = s["delta"]
         print(f"  Delta mean={dl['delta_mean']:.2f}mm median={dl['delta_median']:.2f} "
               f"(paired n={dl['n_paired']})")
+    if "provenance" in s:
+        pv = s["provenance"]
+        c = pv.get("counts", {})
+        print(f"  next-best provenance: target_cad={c.get('n_target_cad',0)} "
+              f"proxy={c.get('n_proxy',0)} same-ds={c.get('n_same_dataset',0)} "
+              f"(target-was-top1={c.get('n_target_was_top1',0)})")
+        for prov in ("target_cad", "proxy"):
+            b = pv.get(prov)
+            if b and b.get("n"):
+                print(f"    {prov:<10} n={b['n']:>5}  D_sym mean={b['d_sym_mean']:.2f}mm "
+                      f"median={b['d_sym_median']:.2f}")
 
 
 # ============================================================================
@@ -575,7 +742,8 @@ def _load_gt_by_key(path):
 def run_stage3(datasets, mode="3a", max_targets=0,
                output_dir="results_bop_stage3", refine_iter=5,
                use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-               use_pc_query=False, dgedi_repo=False, gt_records=None):
+               use_pc_query=False, dgedi_repo=False, gt_records=None,
+               from_3a=None):
     for d in datasets:
         if d not in DATASET_TEST:
             raise ValueError(f"Unknown dataset {d}; choose {list(DATASET_TEST)}")
@@ -604,6 +772,47 @@ def run_stage3(datasets, mode="3a", max_targets=0,
         with open(os.path.join(output_dir, "combined_gt.json"), "w") as f:
             json.dump(combined, f, indent=2)
         _print_summary("COMBINED gt", combined)
+        print(f"\n[stage3] saved -> {output_dir}")
+        return combined
+
+    # ---- mode 3c: reuse the stored 3a ranking; pose the next-best-non-GT ----
+    if mode == "3c":
+        if not from_3a:
+            raise ValueError("mode 3c requires --from-3a <3a output dir> "
+                             "(e.g. results_bop_stage3_v2/3a_cross)")
+        gt_by_key = _load_gt_by_key(gt_records)
+        if gt_records:
+            print(f"[stage3] paired Delta against {len(gt_by_key)} gt records "
+                  f"from {gt_records}")
+        print(f"[stage3] 3c reuses 3a rankings from {from_3a}")
+        per_dataset, all_records, all_dsym = {}, [], []
+        nb_samples = {}
+        for dataset in datasets:
+            recs3a = _load_3a_records(from_3a, dataset)
+            res = _eval_3c_dataset(dataset, recs3a, refine_iter, max_targets,
+                                   gt_by_key, nb_samples)
+            per_dataset[dataset] = res["summary"]
+            rdir = os.path.join(output_dir, f"{dataset}_stage3c")
+            os.makedirs(rdir, exist_ok=True)
+            with open(os.path.join(rdir, "records.json"), "w") as f:
+                json.dump(res["records"], f, indent=2)
+            with open(os.path.join(rdir, "summary.json"), "w") as f:
+                json.dump(res["summary"], f, indent=2)
+            _print_summary(f"{dataset} 3c", res["summary"])
+            all_records += res["records"]
+            all_dsym += res["dsym_recs"]
+        n_att = sum(1 for r in all_records if r and "nb_id" in r
+                    and not r.get("failed"))
+        combined = {"mode": "3c", "datasets": datasets, "from_3a": from_3a,
+                    "n_queries_evaluated": len(all_records),
+                    "dsym": summarize_dsym(all_dsym, n_attempted=n_att),
+                    "provenance": _provenance_breakdown(all_records, all_dsym),
+                    "per_dataset": per_dataset, "all_records": all_records}
+        if gt_by_key:
+            combined["delta"] = summarize_delta(all_dsym, gt_by_key)
+        with open(os.path.join(output_dir, "combined_stage3c.json"), "w") as f:
+            json.dump(combined, f, indent=2)
+        _print_summary("COMBINED 3c", combined)
         print(f"\n[stage3] saved -> {output_dir}")
         return combined
 
@@ -674,17 +883,24 @@ def main():
     ap.add_argument("--datasets", default="all",
                     help=f"comma-separated query datasets, or 'all' (= "
                          f"{','.join(TARGET_DATASETS)}).")
-    ap.add_argument("--mode", choices=["3a", "gt", "3b"], default="3a",
+    ap.add_argument("--mode", choices=["3a", "gt", "3b", "3c"], default="3a",
                     help="3a=retrieval only; gt=FP with GT CAD (D_posed_gt); "
-                         "3b=proxy pose + D_sym (+Delta with --gt-records).")
+                         "3b=proxy pose + D_sym (+Delta with --gt-records); "
+                         "3c=next-best-non-GT pose from a reused 3a ranking "
+                         "(--from-3a, +Delta with --gt-records).")
     ap.add_argument("--max-targets", type=int, default=0,
                     help="limit targets PER dataset (0 = all; for smoke tests)")
     ap.add_argument("--output", default="results_bop_stage3")
     ap.add_argument("--refine-iter", type=int, default=5,
                     help="FoundationPose refinement iterations (default 5)")
     ap.add_argument("--gt-records", default=None,
-                    help="3b only: gt-benchmark records/combined JSON to pair "
+                    help="3b/3c: gt-benchmark records/combined JSON to pair "
                          "D_posed against for Delta.")
+    ap.add_argument("--from-3a", default=None,
+                    help="3c only: a --mode 3a output dir whose stored per-dataset "
+                         "rankings (<ds>_stage3a/records.json) are reused to pick "
+                         "the next-best-non-GT candidate (e.g. "
+                         "results_bop_stage3_v2/3a_cross).")
     ap.add_argument("--uni3d", action="store_true",
                     help="swap the shape arm ULIP-2 -> Uni3D (pc-query).")
     ap.add_argument("--pc-query", action="store_true",
@@ -708,7 +924,8 @@ def main():
                output_dir=args.output, refine_iter=args.refine_iter,
                use_uni3d=args.uni3d, use_dgedi=args.dgedi,
                dgedi_top_k=args.dgedi_top_k, use_pc_query=args.pc_query,
-               dgedi_repo=args.dgedi_repo, gt_records=args.gt_records)
+               dgedi_repo=args.dgedi_repo, gt_records=args.gt_records,
+               from_3a=args.from_3a)
 
 
 if __name__ == "__main__":
