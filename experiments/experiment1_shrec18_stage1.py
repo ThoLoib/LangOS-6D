@@ -1284,7 +1284,14 @@ def run_pass(pass_key: str, paths: dict, index: List[dict],
         ulip2_use_partial_views=pdef["partial"],
         ulip2_checkpoint=ULIP_CKPT_DEFAULT,
         # Encode/keep ALL views; O4 trimming happens at derivation time.
-        pipeline_overrides={"num_views": None, **pdef["overrides"]},
+        # SHREC_DINO_POOLING selects the DINO view-embedding pooling: default
+        # "cls" reproduces the archived Stage-1 winner; "mean" (mean-over-tokens,
+        # the pipeline's mean-patch pooling) matches Stage 2/3 for the cross-stage
+        # comparable rerun. The DINO gallery cache is keyed by pooling
+        # (step4._cache_path), so cls and mean never collide.
+        pipeline_overrides={"num_views": None,
+                            "dino_pooling": os.environ.get("SHREC_DINO_POOLING", "cls"),
+                            **pdef["overrides"]},
     )
     if "shape" not in need:
         cfg.cad_mesh_glob = ""
@@ -1917,6 +1924,24 @@ GEDI_WAIT_S = 300   # how long to wait for it to come back before aborting
 QUERY_MAX_PTS = 500_000   # cap on query cloud size fed to GeDi/RANSAC
                           # (larger clouds crash the service; see _query_cloud)
 
+# --- dGeDi geometry backend (cross-stage: the SAME service Stage 3 uses) -------
+# STAGE1_GEOMETRY_BACKEND: "gedi" (default, the legacy in-process UnitSphere
+# GeDi re-ranker = the archived winner) or "dgedi" (the dGeDi HTTP service,
+# object_retrieval/dgedi_bridge, for a cross-stage-comparable geometry arm).
+#
+# SCALE: SHREC'18 queries are SceneNN-metric crops, CADs are ShapeNet arbitrary
+# units — they share NO physical scale, so dGeDi's native per-candidate diameter
+# co-scaling (built for metric datasets like BOP) is inapplicable. Instead we do
+# exactly what the GeDi UnitSphereReRanker does: make the match SCALE-INVARIANT
+# by normalizing BOTH sides to unit diameter — the gallery descriptors are
+# self-normalized by prep_cloud, and here the query is divided by its own
+# diameter. The SHREC gallery's diameters.json MUST be 1.0 so the server's
+# per-candidate co-scale is a no-op (built that way in run_reruns.sh).
+STAGE1_GEOMETRY_BACKEND = os.environ.get("STAGE1_GEOMETRY_BACKEND", "gedi")
+DGEDI_KP = int(os.environ.get("DGEDI_KP", "6000"))        # repo config
+DGEDI_MAXIT = int(os.environ.get("DGEDI_MAXIT", "10000"))
+DGEDI_USE_ICP = os.environ.get("DGEDI_USE_ICP", "1") != "0"
+
 
 class _GeometryEngine:
     """Lazy wrapper around pipeline.step_b2_geometry_reranking with
@@ -2112,6 +2137,8 @@ class _GeometryEngine:
         RANSAC-aligned distance and the ICP-refined distance must never be
         read from one another's entries.
         """
+        if STAGE1_GEOMETRY_BACKEND == "dgedi":
+            return self._pair_scores_dgedi(qid, npz_path, cad_ids)
         # Field names are signal-scoped; "fitness" is shared by every signal
         # that performs a registration (it is the same RANSAC either way).
         #
@@ -2196,6 +2223,85 @@ class _GeometryEngine:
                 elif dist_field:
                     rec[dist_field] = _num(gc.chamfer_score)
                 self.cache[(qid, gc.object_id)] = rec
+                self._append_cache(rec)
+        return {c: self.cache.get((qid, c), {}) for c in cad_ids}
+
+    # -- dGeDi backend (cross-stage geometry arm) --------------------------
+    @staticmethod
+    def _cloud_diameter(pts: np.ndarray) -> float:
+        """Max pairwise distance = unit-diameter normalizer, matching the
+        gallery's server._diameter. Computed over the convex hull so it stays
+        O(H^2) rather than O(N^2) on large query clouds."""
+        from scipy.spatial.distance import pdist
+        h = pts
+        if len(pts) > 64:
+            try:
+                from scipy.spatial import ConvexHull
+                h = pts[ConvexHull(pts).vertices]
+            except Exception:
+                h = pts
+        if len(h) > 4000:      # bound pdist memory if the hull fallback is large
+            h = h[np.random.RandomState(0).choice(len(h), 4000, replace=False)]
+        return float(pdist(h).max()) if len(h) > 1 else 1.0
+
+    def _pair_scores_dgedi(self, qid: str, npz_path: str,
+                           cad_ids: Sequence[str]) -> Dict[str, dict]:
+        """Per-(query, cad) geometry signals via the dGeDi HTTP service — the
+        exact backend Stage 3 uses (object_retrieval/dgedi_bridge). Produces the
+        SAME cache fields (``fitness`` = RANSAC inlier fraction, ``d_ransac`` =
+        trimmed one-sided Chamfer after RANSAC[->ICP]) that ``geometry_score``
+        and the both_borda arm already consume, so no downstream change.
+
+        Scale-invariant: the query is normalized to unit diameter to match the
+        self-normalized gallery descriptors (server co-scale is a no-op because
+        the SHREC diameters.json is 1.0). See STAGE1_GEOMETRY_BACKEND note."""
+        need = ("fitness", "d_ransac")
+        missing = [c for c in cad_ids
+                   if any(self.cache.get((qid, c), {}).get(f) is None
+                          for f in need)]
+        if missing:
+            import sys as _sys
+            oret = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "object_retrieval")
+            if oret not in _sys.path:
+                _sys.path.insert(0, oret)
+            from dgedi_bridge import dgedi_rerank
+
+            pts = np.load(npz_path)["points"].astype(np.float64)
+            if len(pts) > QUERY_MAX_PTS:
+                idx = np.random.RandomState(0).choice(
+                    len(pts), QUERY_MAX_PTS, replace=False)
+                pts = pts[idx]
+            pts = pts - pts.mean(axis=0)
+            diam = self._cloud_diameter(pts)
+            q_unit = (pts / diam if diam > 0 else pts).astype(np.float32)
+
+            geo = dgedi_rerank(q_unit, list(missing),
+                               ransac_keypoints=DGEDI_KP,
+                               ransac_max_iter=DGEDI_MAXIT,
+                               use_icp=DGEDI_USE_ICP)
+            if geo is None:
+                # Service unreachable — a dead dGeDi fails EVERY candidate, and
+                # caching those as real failures would poison the pair cache
+                # permanently (mirrors the GeDi path's guard). Abort instead.
+                raise SystemExit(
+                    "[geometry] dGeDi service unreachable — aborting rather "
+                    "than caching bogus failures.\n"
+                    "  Bring it up on the SHREC gallery:  docker compose up -d dgedi\n"
+                    "  Completed pairs are already cached; re-run to resume.")
+            for cid in missing:
+                g = geo.get(cid, {})
+                ok = bool(g.get("ok"))
+                rec = dict(self.cache.get((qid, cid),
+                                          {"qid": qid, "cad": cid}))
+                rec["failed"] = not ok
+                rec["fitness"] = float(g.get("ransac_fitness", 0.0)) if ok else 0.0
+                dr = g.get("d_ransac")
+                dv = float(dr) if (ok and dr is not None) else None
+                rec["d_ransac"] = dv
+                rec["d_icp"] = dv          # dGeDi repo config already runs RANSAC->ICP
+                self.cache[(qid, cid)] = rec
                 self._append_cache(rec)
         return {c: self.cache.get((qid, c), {}) for c in cad_ids}
 
