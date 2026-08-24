@@ -73,7 +73,7 @@ services:
     command: >
       python3 /oscar/dgedi_service/server.py
       --config /dgedi/config_dgedi.yaml
-      --cache-dir /oscar/object_retrieval/.dgedi_gallery
+      --cache-dir /oscar/object_retrieval/${DGEDI_CACHE_DIR:-.dgedi_gallery}
       --port 5061
     ports:
       - "5061:5061"
