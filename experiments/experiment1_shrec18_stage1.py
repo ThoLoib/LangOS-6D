@@ -2045,19 +2045,40 @@ class _GeometryEngine:
 
     def gedi_available(self) -> bool:
         if self._gedi_available is None:
-            # A SINGLE 5s probe is not enough to decide whether to skip four
-            # ablations: on 2026-07-28 it timed out against a service that was
-            # healthy throughout (the GeDi Flask server is single-threaded, so
-            # /health blocks behind any in-flight descriptor call, and a
-            # cold container's first DNS lookup adds to that).  The cost of a
-            # false negative here is silently dropping E2_fitness /
-            # chamfer_ransac / chamfer_icp / O1c from the grid, so retry.
-            self._gedi_available = self._wait_for_gedi(GEDI_WAIT_S)
-            if not self._gedi_available:
-                print("[geometry] GeDi service unreachable "
-                      "(docker compose up -d gedi) — GeDi-signal "
-                      "ablations will be skipped.")
+            if STAGE1_GEOMETRY_BACKEND == "dgedi":
+                # dGeDi backend: the geometry ablations register against the
+                # dGeDi service (port 5061), NOT the legacy GeDi service (5060).
+                # Gating them on GeDi health skipped E2_both whenever only dGeDi
+                # was up — the exact Stage-1 dGeDi rerun config — silently
+                # falling back to mean-only (2026-08-25 gate FAIL). Probe dGeDi.
+                self._gedi_available = self._dgedi_healthy()
+                if not self._gedi_available:
+                    print("[geometry] dGeDi service unreachable "
+                          "(docker compose up -d dgedi) — geometry "
+                          "ablations will be skipped.")
+            else:
+                # A SINGLE 5s probe is not enough to decide whether to skip four
+                # ablations: on 2026-07-28 it timed out against a service that was
+                # healthy throughout (the GeDi Flask server is single-threaded, so
+                # /health blocks behind any in-flight descriptor call, and a
+                # cold container's first DNS lookup adds to that).  The cost of a
+                # false negative here is silently dropping E2_fitness /
+                # chamfer_ransac / chamfer_icp / O1c from the grid, so retry.
+                self._gedi_available = self._wait_for_gedi(GEDI_WAIT_S)
+                if not self._gedi_available:
+                    print("[geometry] GeDi service unreachable "
+                          "(docker compose up -d gedi) — GeDi-signal "
+                          "ablations will be skipped.")
         return self._gedi_available
+
+    def _dgedi_healthy(self) -> bool:
+        """LIVE probe of the dGeDi service (port 5061), for the dgedi backend —
+        the analogue of _gedi_healthy for the GeDi service."""
+        try:
+            from dgedi_bridge import dgedi_health
+            return bool(dgedi_health())
+        except Exception:
+            return False
 
     def _gedi_healthy(self) -> bool:
         """LIVE probe of the GeDi service (unlike the cached gedi_available).
