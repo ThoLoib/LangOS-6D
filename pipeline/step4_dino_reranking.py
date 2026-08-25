@@ -240,7 +240,7 @@ class DINOReRanker:
         with torch.no_grad():
             inputs = self.processor(images=image, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
-            features = self._pool_features(outputs.last_hidden_state)
+            features = self._appearance_features(outputs)
             features = F.normalize(features, p=2, dim=1)
         return features
 
@@ -257,9 +257,28 @@ class DINOReRanker:
         with torch.no_grad():
             inputs = self.processor(images=images, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
-            features = self._pool_features(outputs.last_hidden_state)
+            features = self._appearance_features(outputs)
             features = F.normalize(features, p=2, dim=1)
         return features
+
+    def _appearance_features(self, outputs) -> torch.Tensor:
+        """Global per-image descriptor, per encoder's INTENDED pooling.
+
+        DINOv2 -> its CLS token (or mean patch token), the descriptor it was
+        designed around (CNOS convention). SigLIP has NO CLS token — it was
+        trained with a multihead-attention-pooling (MAP) head, so its native
+        image embedding is ``pooler_output``. The old code ran SigLIP through
+        _pool_features too, taking last_hidden_state[:, 0] = an arbitrary FIRST
+        PATCH token (a degenerate embedding), which made the DINOv2-vs-SigLIP
+        appearance ablation (E4) unfair to SigLIP. Use the MAP head instead."""
+        if self._encoder_type == "siglip":
+            pooled = getattr(outputs, "pooler_output", None)
+            if pooled is not None:
+                return pooled
+            # Defensive fallback: mean over patch tokens (NEVER CLS[:,0] for a
+            # model without a CLS token).
+            return outputs.last_hidden_state.mean(dim=1)
+        return self._pool_features(outputs.last_hidden_state)
 
     def _pool_features(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
         """Pool patch tokens into a single feature vector.
@@ -319,7 +338,9 @@ class DINOReRanker:
         fp = self._dir_fingerprint(ref_dir)
         if self._encoder_type == "siglip":
             model_tag = self.config.siglip_model_name.replace("/", "_")
-            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_vall_{fp}.pt")
+            # "_map" marks the MAP-head (pooler_output) embeddings introduced
+            # 2026-08-25; a pre-existing patch-0-token cache must NOT be reused.
+            return os.path.join(ref_dir, f".siglip_cache_{model_tag}_vall_map_{fp}.pt")
         model_tag = self.config.dino_model_name.replace("/", "_")
         # Pooling mode MUST be part of the cache key: query and gallery must be
         # pooled identically, so a CLS-pooled cache is invalid for a mean run.
