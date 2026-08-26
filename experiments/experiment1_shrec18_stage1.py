@@ -220,7 +220,9 @@ GEDI_FULL_DB_PAIRS = N_QUERIES_TOTAL * N_CADS
 # dataset); this only trims the top-k_v pooling input.  16 is sufficient for
 # the first experiment and matches the DINO/CNOS view budget; set to None to
 # aggregate over every cached view.
-SHAPE_AGG_VIEWS = 16
+SHAPE_AGG_VIEWS = 42   # shape gallery views pooled = DINOv2's 42 (parity with the
+                       # appearance channel and with Stage-2/MI3DOR, which pools all 42).
+                       # Was 16 (a Stage-1-script-only cap); back-ported to 42 2026-08-26.
 
 ULIP_CKPT_DEFAULT = "/ulip/checkpoints/ulip2_pointbert_10k.pt"
 # O5 XYZ-only arm uses the released ULIP-2 *xyz* PointBERT (8,192 pts, no RGB,
@@ -993,6 +995,27 @@ PASS_DEFS: "OrderedDict[str, dict]" = OrderedDict([
                            partial=False, overrides={})),
     ("ulip_pc_rgb",   dict(channels=("shape",), ulip2_mode="pc",
                            partial=True, overrides={})),
+    # ULIP-2 shape channel scored in CROSS mode: the query IMAGE is encoded by
+    # ULIP-2's image tower against the SAME partial-view CAD gallery, instead
+    # of the query point cloud.  Reuses the ulip_pc_rgb gallery cache unchanged
+    # (mode only affects the query side), so it just encodes the query images.
+    # Isolated arm E7_ulip2_cross_shape_only so pc-vs-cross is the only
+    # variable — this is the mode Stage-2/MI3DOR must use (no depth), measured
+    # here on SHREC for a direct comparison against ulip_pc_rgb.
+    ("ulip_cross_rgb", dict(channels=("shape",), ulip2_mode="cross",
+                           partial=True, overrides={})),
+    # A7: ULIP-2 shape gallery-view aggregation sweep (pc-mode). Same encoder
+    # and caches as ulip_pc_rgb; only the number of FPS-ordered gallery views
+    # pooled differs (shape_agg_views). Gallery embeddings already hold all 42,
+    # so these just re-pool cached sims — no re-encode. (v16 == ulip_pc_rgb.)
+    ("ulip_pc_rgb_v8",  dict(channels=("shape",), ulip2_mode="pc", partial=True,
+                           shape_agg_views=8,  overrides={})),
+    ("ulip_pc_rgb_v16", dict(channels=("shape",), ulip2_mode="pc", partial=True,
+                           shape_agg_views=16, overrides={})),
+    ("ulip_pc_rgb_v32", dict(channels=("shape",), ulip2_mode="pc", partial=True,
+                           shape_agg_views=32, overrides={})),
+    ("ulip_pc_rgb_v42", dict(channels=("shape",), ulip2_mode="pc", partial=True,
+                           shape_agg_views=42, overrides={})),
     ("ulip_pc_xyz",   dict(channels=("shape",), ulip2_mode="pc",
                            partial=True,
                            overrides={"ulip2_use_colors": False,
@@ -1389,7 +1412,7 @@ def run_pass(pass_key: str, paths: dict, index: List[dict],
             # encoded; full-mesh refs have a single embedding per object.
             rec["shape"] = _aggregate_groups(
                 sims, shape_ranges,
-                SHAPE_AGG_VIEWS if pdef["partial"] else None,
+                pdef.get("shape_agg_views", SHAPE_AGG_VIEWS) if pdef["partial"] else None,
                 pipe_cfg.ulip_view_aggregation if pdef["partial"] else "max",
                 pipe_cfg.ulip_view_topk, pipe_cfg.ulip_view_temperature)
 
@@ -1455,6 +1478,13 @@ class AblationSpec:
 _BASE_CH = {"clip": ("base", None), "dino": ("base", 42),
             "shape": ("ulip_pc_rgb", None)}
 _TV_CH = {"clip": ("base", None), "dino": ("base", 42)}   # text+view only
+# A7f: BASE fusion but the S_shape channel pools all 42 partial views instead
+# of the frozen SHAPE_AGG_VIEWS=16.  Reuses the same 42-view gallery cache
+# (only the pooled count differs), so it re-pools cached sims — no re-encode.
+# Sensitivity arm for "does feeding the shape channel 42 views move the frozen
+# BASE?"  Isolated A7 gave shape-only +0.013 (16->42); this measures fusion.
+_BASE_CH_V42 = {"clip": ("base", None), "dino": ("base", 42),
+                "shape": ("ulip_pc_rgb_v42", None)}
 
 
 def _spec(name, group, question, **kw) -> Tuple[str, AblationSpec]:
@@ -1492,6 +1522,10 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           "full fusion (S_text, S_view, S_shape) — OSCAR+ BASE config",
           bib="pulliOSCAROpenSetCAD2025, zhouCrossModal3DRepresentation",
           channels=dict(_BASE_CH)),
+    _spec("A7f_full_fusion_shape_V42", "E1",
+          "BASE fusion, S_shape pools 42 partial views (vs frozen 16) — "
+          "fusion sensitivity of the shape view budget",
+          channels=dict(_BASE_CH_V42)),
     _spec("E1d_clip_pruned", "E1",
           "S_view/S_shape scored only on the CLIP top-20 shortlist",
           bib="pulliOSCAROpenSetCAD2025",
@@ -1544,6 +1578,18 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("E2b_fullmesh", "E2b", "full-mesh S_shape reference",
           bib="diUREDUnsupervised3D2023",
           channels={**_TV_CH, "shape": ("ulip_pc_fullmesh", None)}),
+    # Isolated (shape-only) counterparts: the partial-vs-fullmesh effect read
+    # on the shape channel ALONE, not masked by the shared text+view fusion.
+    # E2b_partial_shape_only == E1_shape_only (pc-mode partial views).
+    _spec("E2b_partial_shape_only", "E2b",
+          "partial-view S_shape ALONE (isolated) = E1_shape_only",
+          channels={"shape": ("ulip_pc_rgb", None)}, weights=(0.0, 0.0, 1.0),
+          alias_of="E1_shape_only"),
+    _spec("E2b_fullmesh_shape_only", "E2b",
+          "full-mesh S_shape ALONE (isolated)",
+          bib="diUREDUnsupervised3D2023",
+          channels={"shape": ("ulip_pc_fullmesh", None)},
+          weights=(0.0, 0.0, 1.0)),
     # --- E4: appearance encoder ------------------------------------------
     _spec("E4_dinov2", "E4", "DINOv2 appearance channel (= BASE)",
           bib="nguyenCNOSStrongBaseline2023",
@@ -1551,6 +1597,17 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("E4_siglip", "E4", "SigLIP appearance channel",
           bib="zhaiSigmoidLossLanguage2023, nguyenSHREC2025Retrieval2025",
           channels={**_BASE_CH, "dino": ("siglip", 42)}),
+    # Isolated appearance arms: DINOv2 ALONE vs SigLIP ALONE (MAP-pooled, the
+    # pooler_output fix f50a844f), so the encoder swap is compared with no
+    # text/shape fusion masking it.  E4_dino_only == E1_view_only.
+    _spec("E4_dino_only", "E4",
+          "DINOv2 appearance ALONE (isolated) = E1_view_only",
+          channels={"dino": ("base", 42)}, weights=(0.0, 1.0, 0.0),
+          alias_of="E1_view_only"),
+    _spec("E4_siglip_only", "E4",
+          "SigLIP appearance ALONE (isolated, MAP-pooled)",
+          bib="zhaiSigmoidLossLanguage2023",
+          channels={"dino": ("siglip", 42)}, weights=(0.0, 1.0, 0.0)),
     # --- E6: fusion strategy ---------------------------------------------
     _spec("E6_weighted", "E6", "weighted-sum fusion (= BASE)",
           channels=dict(_BASE_CH), alias_of="E1c_full_fusion"),
@@ -1574,6 +1631,26 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           bib="zhouUni3DExploringUnified2023, "
               "vandenherrewegenFinetuning3DFoundation2024",
           channels={**_TV_CH, "shape": ("uni3d", None)}),
+    # Isolated shape-encoder arms: ULIP-2(pc) vs Uni3D(pc) vs ULIP-2(cross),
+    # each scored ALONE so the encoder / query-mode is the only variable and
+    # the number is directly comparable to the fused E7 arms above.  The fused
+    # E7_uni3d confounds encoder-swap with the text+view floor; these isolate
+    # it (resolves the solo-uni3d-vs-ulip2 question).  E7_ulip2_pc_shape_only
+    # == E1_shape_only.
+    _spec("E7_ulip2_pc_shape_only", "E7",
+          "ULIP-2 shape ALONE, pc-mode (isolated) = E1_shape_only",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={"shape": ("ulip_pc_rgb", None)}, weights=(0.0, 0.0, 1.0),
+          alias_of="E1_shape_only"),
+    _spec("E7_uni3d_shape_only", "E7",
+          "Uni3D shape ALONE, pc-mode (isolated)",
+          bib="zhouUni3DExploringUnified2023",
+          channels={"shape": ("uni3d", None)}, weights=(0.0, 0.0, 1.0)),
+    _spec("E7_ulip2_cross_shape_only", "E7",
+          "ULIP-2 shape ALONE, cross-mode query image (isolated)",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={"shape": ("ulip_cross_rgb", None)},
+          weights=(0.0, 0.0, 1.0)),
     # --- O1: is S_shape redundant once S_GeDi exists? --------------------
     _spec("O1a_no_geometry", "O1", "neither S_shape nor S_GeDi",
           channels=dict(_TV_CH), weights=(0.43, 0.57, 0.0),
@@ -1664,6 +1741,34 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           alias_of="E7_ulip2_pc"),
     _spec("O5_xyz_only", "O5", "XYZ-only query point cloud (colors zeroed)",
           channels={**_TV_CH, "shape": ("ulip_pc_xyz", None)}),
+    # Isolated colour ablation: XYZ+RGB vs XYZ-only query PC, shape channel
+    # ALONE, so the colour effect is not diluted by the text+view fusion.
+    # O5_xyzrgb_shape_only == E1_shape_only.
+    _spec("O5_xyzrgb_shape_only", "O5",
+          "XYZ+RGB query PC, S_shape ALONE (isolated) = E1_shape_only",
+          channels={"shape": ("ulip_pc_rgb", None)}, weights=(0.0, 0.0, 1.0),
+          alias_of="E1_shape_only"),
+    _spec("O5_xyz_shape_only", "O5",
+          "XYZ-only query PC, S_shape ALONE (isolated)",
+          channels={"shape": ("ulip_pc_xyz", None)}, weights=(0.0, 0.0, 1.0)),
+    # === A2: appearance view count, ISOLATED (view-only, no fusion) ========
+    # DINOv2 alone at each render budget, so the view-count effect is read on
+    # the appearance channel itself (the O4_V* arms measure it inside fusion).
+    # V=42 == E1_view_only. Pure Tier-2 derivation from scores_base.pt.
+    *[_spec(f"A2_view_only_V{v}", "A2",
+            f"DINOv2 appearance ALONE, V={v} FPS-ordered views (isolated)",
+            channels={"dino": ("base", v)}, weights=(0.0, 1.0, 0.0),
+            **({"alias_of": "E1_view_only"} if v == 42 else {}))
+      for v in VIEW_BUDGETS],
+    # === A7: ULIP-2 shape gallery-view count, ISOLATED (shape-only) ========
+    # ULIP-2 shape alone, sweeping how many FPS-ordered gallery partial-views
+    # are pooled. V=42 == E1_shape_only (BASE SHAPE_AGG_VIEWS=42).
+    *[_spec(f"A7_shape_only_V{v}", "A7",
+            f"ULIP-2 shape ALONE, {v}-view gallery aggregation (isolated, pc)",
+            channels={"shape": (f"ulip_pc_rgb_v{v}", None)},
+            weights=(0.0, 0.0, 1.0),
+            **({"alias_of": "E1_shape_only"} if v == 42 else {}))
+      for v in (8, 16, 32, 42)],
 ])
 
 
@@ -2682,6 +2787,101 @@ def apply_geometry(spec: AblationSpec, qid: str, npz_path: str,
 # 8. Per-ablation evaluation loop
 # ===========================================================================
 
+def _simplex_grid(step: float) -> List[Tuple[float, float, float]]:
+    """All (w_text, w_view, w_shape) on the probability simplex at ``step``
+    (weights sum to 1). Includes the corners (single-channel) and edges
+    (two-channel), so the sweep also re-derives the E1 baselines."""
+    n = int(round(1.0 / step))
+    pts = []
+    for i in range(n + 1):
+        for j in range(n + 1 - i):
+            k = n - i - j
+            pts.append((round(i * step, 4), round(j * step, 4),
+                        round(k * step, 4)))
+    return pts
+
+
+def run_weight_sweep(paths: dict, index: List[dict], object_ids: List[str],
+                     cad_labels: Dict[str, tuple], freqs: Dict[str, int],
+                     stores: Dict[str, dict], step: float,
+                     limit: Optional[int],
+                     shape_pass: str = "ulip_pc_rgb") -> List[dict]:
+    """Fusion-weight SENSITIVITY sweep on the cached BASE score vectors.
+
+    Reuses derive_ranking + score_official, so the fusion and official scoring
+    are byte-identical to the grid — the only thing that varies is (w_text,
+    w_view, w_shape). Each point drops its zero-weight channels from
+    ``channels`` so a corner maps exactly onto E1a/E1_view_only/E1_shape_only
+    and an edge onto E1b, i.e. the sweep reproduces those arms at its extremes.
+
+    Reported as a sensitivity surface (span of nDCG across the plausible region
+    around BASE). NOT a selection procedure: choosing the argmax here and then
+    reporting SHREC with it would be tuning on the SHREC test set. BASE
+    (0.3/0.4/0.3) stays the frozen choice; the sweep only shows how flat/peaked
+    the surface around it is."""
+    cad_dir = os.path.join(paths["data_root"], "cad")
+    qlist = index[:limit] if limit else index
+    full = {"clip": ("base", None), "dino": ("base", 42),
+            "shape": (shape_pass, None)}
+    mode = "cross-mode (query image)" if shape_pass == "ulip_cross_rgb" else "pc-mode (query point cloud)"
+    grid = _simplex_grid(step)
+    print(f"[wsweep] S_shape pass = {shape_pass} — {mode}")
+    print(f"[wsweep] {len(grid)} weight points (step={step}) x {len(qlist)} queries")
+    rows = []
+    for (wt, wv, ws) in grid:
+        chan = {ch: full[ch] for ch, w in
+                zip(("clip", "dino", "shape"), (wt, wv, ws)) if w > 0}
+        spec = AblationSpec(name=f"W_{wt:.2f}_{wv:.2f}_{ws:.2f}", group="WSWEEP",
+                            question="fusion-weight sensitivity",
+                            channels=chan, weights=(wt, wv, ws))
+        fusion_mod = make_fusion_module(spec)
+        sums = defaultdict(float)
+        nq = 0
+        for q in qlist:
+            q_label = tuple(q["category"])
+            if freqs.get(q_label[0], 0) == 0:
+                continue
+            ranking = derive_ranking(spec, q["id"], stores, object_ids,
+                                     fusion_mod, cad_dir, None)
+            m = score_official([object_ids[i] for i in ranking], q_label,
+                               cad_labels, freqs)
+            if m is None:
+                continue
+            for k, v in m.items():
+                sums[k] += v
+            nq += 1
+        row = {"w_text": wt, "w_view": wv, "w_shape": ws, "n": nq,
+               "nDCG": round(sums["nDCG"] / nq, 4) if nq else float("nan"),
+               "mAP": round(sums["AP"] / nq, 4) if nq else float("nan")}
+        rows.append(row)
+        print(f"[wsweep] w=({wt:.2f},{wv:.2f},{ws:.2f})  "
+              f"nDCG={row['nDCG']:.4f}  mAP={row['mAP']:.4f}")
+
+    import csv
+    os.makedirs(paths["results_root"], exist_ok=True)
+    out = os.path.join(paths["results_root"], "weight_sweep.csv")
+    with open(out, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["w_text", "w_view", "w_shape",
+                                          "n", "nDCG", "mAP"])
+        w.writeheader()
+        w.writerows(rows)
+
+    nd = [r["nDCG"] for r in rows if r["nDCG"] == r["nDCG"]]  # drop nan
+    best = max(rows, key=lambda r: (r["nDCG"] if r["nDCG"] == r["nDCG"] else -1))
+    base = next((r for r in rows if (r["w_text"], r["w_view"], r["w_shape"])
+                 == (0.3, 0.4, 0.3)), None)
+    print(f"\n[wsweep] nDCG over {len(nd)} points: "
+          f"[{min(nd):.4f}, {max(nd):.4f}]  span={max(nd) - min(nd):.4f}")
+    if base:
+        gap = best["nDCG"] - base["nDCG"]
+        print(f"[wsweep] BASE (0.3,0.4,0.3): nDCG={base['nDCG']:.4f}")
+        print(f"[wsweep] argmax: w=({best['w_text']},{best['w_view']},"
+              f"{best['w_shape']}) nDCG={best['nDCG']:.4f}  "
+              f"(argmax-BASE = {gap:+.4f} — SENSITIVITY only, not a selection)")
+    print(f"[wsweep] -> {out}")
+    return rows
+
+
 def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
                  stores: Dict[str, dict], object_ids: List[str],
                  cad_labels: Dict[str, tuple], freqs: Dict[str, int],
@@ -3174,6 +3374,18 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                          "full-database S_GeDi, then exit (see thesis O1)")
     ap.add_argument("--viz-check", type=int, default=0, metavar="N",
                     help="save a contact sheet of N query crops")
+    ap.add_argument("--weight-sweep", action="store_true",
+                    help="fusion-weight SENSITIVITY sweep over the simplex on "
+                         "the cached BASE score vectors (Tier-2, no GPU). "
+                         "Writes weight_sweep.csv. Report as sensitivity, do "
+                         "NOT select weights on it (would be tuning on test).")
+    ap.add_argument("--weight-step", type=float, default=0.1, metavar="S",
+                    help="grid step for --weight-sweep (default 0.1)")
+    ap.add_argument("--sweep-shape-pass", default="ulip_pc_rgb",
+                    choices=["ulip_pc_rgb", "ulip_cross_rgb", "ulip_pc_xyz", "uni3d"],
+                    help="which S_shape pass the weight sweep fuses (default "
+                         "ulip_pc_rgb = pc-mode BASE; ulip_cross_rgb = cross-mode "
+                         "query image, the Stage-2/MI3DOR depth-free setting)")
     ap.add_argument("--data-root", default=DEFAULTS["data_root"])
     ap.add_argument("--images-dir", default=DEFAULTS["images_dir"])
     ap.add_argument("--desc-file", default=DEFAULTS["desc_file"])
@@ -3260,6 +3472,21 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         gt = load_official_gt(paths["data_root"], paths["stage1_root"])
         index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
         bench_gedi(paths, index, object_ids, args.bench_gedi)
+        return
+
+    # ---- fusion-weight sensitivity sweep (Tier-2 only) and exit ----------
+    if args.weight_sweep:
+        object_ids = validate_inputs(paths, args.allow_partial_gallery)
+        gt = load_official_gt(paths["data_root"], paths["stage1_root"])
+        cad_labels, freqs = gt["cad"], gt["freqs"]
+        index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
+        stores = {}
+        for pkey in ("base", args.sweep_shape_pass):   # BASE config's passes
+            stores[pkey] = run_pass(pkey, paths, index, object_ids,
+                                    args.limit_queries, resume=True)
+        run_weight_sweep(paths, index, object_ids, cad_labels, freqs, stores,
+                         args.weight_step, args.limit_queries,
+                         shape_pass=args.sweep_shape_pass)
         return
 
     specs = select_ablations(args.ablations, args.all, args.with_geometry)

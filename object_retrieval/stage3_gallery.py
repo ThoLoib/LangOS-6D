@@ -179,9 +179,21 @@ def _pose_mesh_path(ds: str, obj_id: str):
     return (os.path.abspath(path), lay["units_m"])
 
 
-def _base_cfg(ds: str, extra_overrides=None) -> EvalConfig:
-    """EvalConfig seeded to one dataset, with the frozen base-pass overrides."""
+def _base_cfg(ds: str, extra_overrides=None, weights=None,
+              use_partial: bool = True, oscar_cascade: bool = False) -> EvalConfig:
+    """EvalConfig seeded to one dataset, with the frozen base-pass overrides.
+
+    ``weights`` = (w_clip, w_dino, w_ulip); default is the BASE (0.3,0.4,0.3).
+    ``use_partial`` toggles partial-view vs full-mesh shape references
+    (A4-transfer). ``oscar_cascade`` reproduces OSCAR's *actual* mechanism for
+    the E5 baseline: CLIP-text threshold pruning (τ=0.37, top-20 fallback) then
+    DINOv2 best-view re-rank within the shortlist, **no shape** — the driver
+    ranks this by the ``oscar_maxview`` arm, so weights are unused here.
+    """
     lay = DATASET_LAYOUT[ds]
+    wc, wd, wu = weights if weights is not None else (0.3, 0.4, 0.3)
+    prune = (dict(clip_prune_mode="threshold", clip_tau=0.37, clip_fallback_k=20)
+             if oscar_cascade else {})
     overrides = {
         "num_views": 42,
         "dino_view_aggregation": "topk_softmax",
@@ -211,9 +223,10 @@ def _base_cfg(ds: str, extra_overrides=None) -> EvalConfig:
         # Frozen Stage-1 E2 full-fusion weights (best_config.json). MUST be set
         # explicitly: EvalConfig defaults to 0/0.5/0.5 (CLIP off), which would
         # silently make Stage-3 a DINO+ULIP run, not full fusion (audit P0.1).
-        weight_clip=0.3, weight_dino=0.4, weight_ulip=0.3,
-        ulip2_use_partial_views=True,   # base pass = ULIP-2 partial-view shape
+        weight_clip=wc, weight_dino=wd, weight_ulip=wu,
+        ulip2_use_partial_views=use_partial,   # partial views (base) / full mesh (A4)
         pipeline_overrides=overrides,
+        **prune,                               # OSCAR-cascade τ-pruning (E5 baseline)
     )
 
 
@@ -237,9 +250,13 @@ def _mesh_items(ds: str):
     return items
 
 
-def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master):
+def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master, use_partial=True):
     """Load one dataset's cached stores and merge into the master dicts
-    under namespaced ids. Reuses the already-loaded encoders."""
+    under namespaced ids. Reuses the already-loaded encoders.
+
+    ``use_partial=False`` loads whole-mesh ULIP embeddings (A4 full-mesh
+    transfer) via ``load_cad_models`` instead of the per-view partial cache.
+    """
     lay = DATASET_LAYOUT[ds]
     ref_dir = os.path.join(_THIS, lay["ref_dir"])
     desc_file = os.path.join(_THIS, lay["desc_file"])
@@ -259,17 +276,33 @@ def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master):
         master["clip_txt"].append(txt)
         master["clip_lbl"].append(namespaced_id(ds, lbl))
 
-    # --- ULIP-2 partial-view shape embeddings ---
+    # --- ULIP-2 shape embeddings (partial-view base, or full-mesh for A4) ---
     if shape_m is not None:
-        partial_items = shape_m._collect_partial_items(ref_dir)
-        if partial_items:
-            shape_m._partial_view_paths = dict(partial_items)
-            cache_path = shape_m._get_partial_cache_path(ref_dir, partial_items)
-            if shape_m._try_load_partial_cache(cache_path):
-                for oid, emb in shape_m._cad_embeddings.items():
-                    nsid = namespaced_id(ds, oid)
-                    master["cad_emb"][nsid] = emb.detach().cpu()
-                    master["cad_path"][nsid] = shape_m._cad_paths.get(oid, "")
+        if use_partial:
+            partial_items = shape_m._collect_partial_items(ref_dir)
+            if partial_items:
+                shape_m._partial_view_paths = dict(partial_items)
+                cache_path = shape_m._get_partial_cache_path(ref_dir, partial_items)
+                if shape_m._try_load_partial_cache(cache_path):
+                    for oid, emb in shape_m._cad_embeddings.items():
+                        nsid = namespaced_id(ds, oid)
+                        master["cad_emb"][nsid] = emb.detach().cpu()
+                        master["cad_path"][nsid] = shape_m._cad_paths.get(oid, "")
+        else:
+            # A4 full-mesh transfer: whole-mesh ULIP embeddings (cache or sample).
+            # load_cad_models scans a dir and keys by mesh label; the render-dir
+            # gallery ids must line up with those labels — VERIFY per dataset
+            # (n_absorbed logged) before trusting the numbers.
+            cad_dir = os.path.dirname(os.path.join(_THIS, lay["mesh_glob"]))
+            shape_m.config.ulip2_use_partial_views = False
+            shape_m.load_cad_models(cad_dir=cad_dir)
+            n0 = len(master["cad_emb"])
+            for oid, emb in shape_m._cad_embeddings.items():
+                nsid = namespaced_id(ds, oid)
+                master["cad_emb"][nsid] = emb.detach().cpu()
+                master["cad_path"][nsid] = shape_m._cad_paths.get(oid, "")
+            print(f"[stage3][fullmesh] {ds}: absorbed "
+                  f"{len(master['cad_emb'])-n0} full-mesh ULIP embeddings")
 
     # --- pose-mesh map (native scale) keyed by the GALLERY ids (render-dir
     # names = obj_XXXXXX / gso ids), NOT the fullmesh glob stem (which is
@@ -280,12 +313,16 @@ def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master):
 
 
 def assemble_gallery(target_datasets=(), proxy_ds=PROXY_DATASETS,
-                     extra_overrides=None):
+                     extra_overrides=None, weights=None, use_partial=True,
+                     oscar_cascade=False):
     """Build the union gallery = G_proxy ∪ (exact CADs of each target dataset).
 
     3a (one big DB): assemble_gallery(TARGET_DATASETS) -> proxies + ALL targets;
         every query dataset retrieves against this single combined gallery.
     3b:              assemble_gallery(())              -> G_proxy only.
+
+    ``oscar_cascade`` = E5 OSCAR baseline (τ-prune + DINO cascade, no shape);
+    ``use_partial=False`` = A4 full-mesh shape references.
     """
     target_datasets = tuple(d for d in target_datasets)
     # targets first so the encoders/models are constructed once against a target
@@ -293,7 +330,8 @@ def assemble_gallery(target_datasets=(), proxy_ds=PROXY_DATASETS,
                                         if d not in target_datasets]
 
     seed_ds = datasets[0]
-    cfg = _base_cfg(seed_ds, extra_overrides)
+    cfg = _base_cfg(seed_ds, extra_overrides, weights=weights,
+                    use_partial=use_partial, oscar_cascade=oscar_cascade)
     # Build components ONCE (loads CLIP/DINO/ULIP models + seed dataset caches).
     config, clip_retr, dino_rer, fusion_mod, shape_m = build_pipeline(
         cfg, cad_mesh_items=_mesh_items(seed_ds))
@@ -301,7 +339,8 @@ def assemble_gallery(target_datasets=(), proxy_ds=PROXY_DATASETS,
     master = {"dino": {}, "clip_emb": [], "clip_txt": [], "clip_lbl": [],
               "cad_emb": {}, "cad_path": {}, "pose_mesh": {}}
     for ds in datasets:
-        _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master)
+        _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master,
+                        use_partial=use_partial)
 
     # --- write merged stores back into the (single) component objects ---
     dino_rer._ref_embeddings = master["dino"]

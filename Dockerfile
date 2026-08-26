@@ -44,7 +44,11 @@ RUN mkdir -p /blender && \
     unzip blender.zip && \
     rm blender.zip
 
-# Expose needed ports   
+# Stage-5 grasping demo (grasping/): PyBullet physics sim + rtree (trimesh ray/AABB).
+# Late layer so it doesn't invalidate the heavy base layers on rebuild.
+RUN pip install --no-cache-dir pybullet rtree
+
+# Expose needed ports
 EXPOSE 11434
 
 # Copy and prepare startup script

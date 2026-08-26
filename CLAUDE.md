@@ -104,9 +104,8 @@ Claude should optimize for reproducibility and low fragility.
 
 ### Git
 
-- Push only to `feat/stage1-official-eval-precompute` or `thesis-approach`. **Never push to
-  `tessa-pc` or `main`** — `tessa-pc` is the other machine's branch and pushing to it will
-  collide with work done there.
+- **This machine is tessa's PC; its working branch is `tessa-pc` — push there.** Never push to
+  `main`.
 - Commit only when asked.
 
 ### Experiment scripts

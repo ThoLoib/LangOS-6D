@@ -69,7 +69,7 @@ _OSCAR_ROOT = os.path.abspath(os.path.join(_THIS_DIR, ".."))
 if _OSCAR_ROOT not in sys.path:
     sys.path.insert(0, _OSCAR_ROOT)
 
-from eval_common import run_query, fusion_ranking, crop_by_bbox
+from eval_common import run_query, fusion_ranking, crop_by_bbox, _arm_rankings
 from query_cloud import backproject_masked
 from dgedi_bridge import dgedi_rerank, dgedi_health
 from stage3_gallery import (assemble_gallery, TARGET_DATASETS, UNI3D_OVERRIDES,
@@ -489,7 +489,8 @@ def _eval_3c_dataset(dataset, records_3a, refine_iter, max_targets, gt_by_key,
 def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
                             refine_iter, prx_samples, gt_by_key,
                             use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
-                            use_pc_query=False, dgedi_repo=False):
+                            use_pc_query=False, dgedi_repo=False,
+                            oscar_baseline=False):
     """3a: retrieval only. 3b: retrieval (proxy gallery) + FP top-1 + D_sym."""
     pcfg, clip_retr, dino_rer, fusion_mod, shape_m = components
     cfg = gallery.eval_cfg
@@ -560,7 +561,12 @@ def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
                             roi, cfg, ulip_query_emb=ulip_q_emb,
                             dino_full_top_k=top_k, ulip_full_top_k=top_k,
                             clip_full_top_k=clip_rows)
-            fused_ranking = fusion_ranking(out["fused_full"])
+            # E5 OSCAR baseline: rank by the faithful cascade (CLIP-τ shortlist
+            # -> DINOv2 best-view, no shape). Else the OSCAR+ full 3-way fusion.
+            if oscar_baseline:
+                fused_ranking = _arm_rankings(out)["oscar_maxview"]
+            else:
+                fused_ranking = fusion_ranking(out["fused_full"])
 
             ranking = fused_ranking
             geo_applied = False
@@ -743,7 +749,7 @@ def run_stage3(datasets, mode="3a", max_targets=0,
                output_dir="results_bop_stage3", refine_iter=5,
                use_uni3d=False, use_dgedi=False, dgedi_top_k=10,
                use_pc_query=False, dgedi_repo=False, gt_records=None,
-               from_3a=None):
+               from_3a=None, oscar_baseline=False, use_fullmesh=False):
     for d in datasets:
         if d not in DATASET_TEST:
             raise ValueError(f"Unknown dataset {d}; choose {list(DATASET_TEST)}")
@@ -826,7 +832,9 @@ def run_stage3(datasets, mode="3a", max_targets=0,
           f"{list(target_datasets) or 'none (proxy-only)'})"
           f"{'  [shape arm: Uni3D]' if use_uni3d else ''}...")
     gallery = assemble_gallery(target_datasets=target_datasets,
-                               extra_overrides=(UNI3D_OVERRIDES if use_uni3d else None))
+                               extra_overrides=(UNI3D_OVERRIDES if use_uni3d else None),
+                               oscar_cascade=oscar_baseline,
+                               use_partial=(not use_fullmesh))
     components = gallery.components()
     G = len(gallery.gallery_ids)
     print(f"[stage3] |gallery| = {G}  clip_rows = {len(components[1]._desc_labels)}")
@@ -844,7 +852,7 @@ def run_stage3(datasets, mode="3a", max_targets=0,
             dataset, gallery, components, mode, max_targets, refine_iter,
             prx_samples, gt_by_key, use_uni3d=use_uni3d, use_dgedi=use_dgedi,
             dgedi_top_k=dgedi_top_k, use_pc_query=use_pc_query,
-            dgedi_repo=dgedi_repo)
+            dgedi_repo=dgedi_repo, oscar_baseline=oscar_baseline)
         s = res["summary"]
         per_dataset[dataset] = s
         rdir = os.path.join(output_dir, f"{dataset}_stage{mode}")
@@ -903,6 +911,13 @@ def main():
                          "results_bop_stage3_v2/3a_cross).")
     ap.add_argument("--uni3d", action="store_true",
                     help="swap the shape arm ULIP-2 -> Uni3D (pc-query).")
+    ap.add_argument("--oscar-baseline", action="store_true",
+                    help="E5: OSCAR's actual mechanism — CLIP-text threshold "
+                         "prune (tau=0.37, top-20 fallback) then DINOv2 best-view "
+                         "cascade, NO shape (ranked by the oscar_maxview arm).")
+    ap.add_argument("--fullmesh", action="store_true",
+                    help="A4 transfer: whole-mesh ULIP shape references instead "
+                         "of partial views (verify absorbed counts in the log).")
     ap.add_argument("--pc-query", action="store_true",
                     help="point-cloud query for the shape arm (else ULIP-2 "
                          "image-cross query).")
@@ -925,7 +940,8 @@ def main():
                use_uni3d=args.uni3d, use_dgedi=args.dgedi,
                dgedi_top_k=args.dgedi_top_k, use_pc_query=args.pc_query,
                dgedi_repo=args.dgedi_repo, gt_records=args.gt_records,
-               from_3a=args.from_3a)
+               from_3a=args.from_3a, oscar_baseline=args.oscar_baseline,
+               use_fullmesh=args.fullmesh)
 
 
 if __name__ == "__main__":

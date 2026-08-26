@@ -1025,6 +1025,19 @@ class ShapeMatcher:
             cad_dir, partial_pc_dir,
         )
 
+        # Restored-from-Drive shortcut: force-load a prebuilt partial-view cache
+        # when the raw *_partial.npz are absent. The cache already holds every
+        # per-view embedding; the .npz are only needed to fingerprint the cache
+        # name, so with them gone the normal path can't find it and falls back
+        # to full-mesh. Point SHREC_FORCE_PARTIAL_CACHE at the cache .pt to
+        # bypass discovery + fingerprint entirely.
+        _forced = os.environ.get("SHREC_FORCE_PARTIAL_CACHE", "").strip()
+        if _forced and os.path.isfile(_forced) and self._try_load_partial_cache(_forced):
+            logger.warning(
+                "Partial-view cache force-loaded (npz discovery bypassed): %s", _forced)
+            self._apply_partial_view_limit()
+            return
+
         # Discover objects and their partial .npz files (also stored for rotation eval)
         partial_items = self._collect_partial_items(partial_pc_dir)
         self._partial_view_paths = dict(partial_items)

@@ -38,7 +38,7 @@ log "run E4_siglip (fresh MAP-pooled SigLIP) + E1c_full_fusion (DINOv2 ref)"
 docker compose run --rm oscar bash -lc \
   "cd /app && PYTHONHASHSEED=0 SHREC_DINO_POOLING=mean \
    python3 -u experiments/experiment1_shrec18_stage1.py \
-   --ablations E4_siglip E1c_full_fusion $S1COMMON \
+   --ablations E4_siglip,E1c_full_fusion $S1COMMON \
    --results-root $OUT --resume --allow-partial-gallery" > logs/stage1_siglipfix.log 2>&1
 rc=$?; if [ $rc -ne 0 ]; then log "HARD FAIL: SigLIP rerun exited $rc"; exit "$rc"; fi
 

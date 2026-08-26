@@ -148,7 +148,9 @@ class PipelineConfig:
     # Multi-view aggregation for ULIP-2 partial views (inspired by OPEN, Chu et al. 2024)
     # Same modes as dino_view_aggregation. Only applies when ulip2_use_partial_views=True.
     ulip_view_aggregation: str = "topk_softmax"
-    ulip_view_topk: int = 8
+    ulip_view_topk: int = 5   # equalised to DINOv2's k_v=5 (CNOS, thesis Table 4.1);
+                              # was 8 — back-ported to Stage 1 on 2026-08-26 to match
+                              # Stage 2 and the dino_view_topk spec.
     ulip_view_temperature: float = 0.5
 
     # Rotation sensitivity evaluation for ULIP Top-K candidates
