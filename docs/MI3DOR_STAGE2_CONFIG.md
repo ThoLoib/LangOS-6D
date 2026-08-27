@@ -15,8 +15,11 @@ Run date: **2026-08-05**. Results: `object_retrieval/results_mi3dor_oscarplus_f2
 ## 0. TL;DR
 
 The **only intentional change from the frozen SHREC'18 Stage-1 winner** is
-`ulip_view_topk: 8 → 5` (equalise the ULIP/shape view aggregation to DINO's,
-per user request 2026-08-04). Everything else is the pinned SHREC-winner /
+`ulip_view_topk: 8 → 5` (equalise the ULIP/shape view aggregation to DINO's).
+**KORREKTUR 2026-08-27:** die Umstellung wurde erst mit `ea84ffb8` am **2026-08-07 11:17**
+wirksam (bei `c2e21202`, 08-04, stand noch **8**). Der hier dokumentierte Lauf `f20_3` vom
+**2026-08-05 lief daher bei `ulip_view_topk = 8`**, nicht bei 5. Erst die Läufe ab dem
+07.08. (`_dinomean`) nutzen k=5. Everything else is the pinned SHREC-winner /
 OSCAR-baseline config. Geometry re-ranking is **not run** on MI3DOR (retrieval-
 only benchmark, no query point clouds). The driver runs **both** shape modes
 (`fullmesh` + `partial`) and reports **six** ranking arms.

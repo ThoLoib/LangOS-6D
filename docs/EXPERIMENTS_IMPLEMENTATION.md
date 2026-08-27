@@ -128,7 +128,9 @@ for img in mi3dor.queries:                          # ~10.5k, monocular
 ### 2.2 What is fed / which parts are used
 - **S_text** ← `roi` (CLIP), **S_view** ← `roi` (DINOv2).
 - **S_shape** ← `roi` via **ULIP-2's image tower** (Step 5, **cross-mode**) — the same aligned
-  space, scored against the partial-view CAD gallery.
+  space, scored against the **full-mesh** CAD gallery — the MI3DOR `*_partial.npz` are absent on this
+  machine, so the shape channel falls back to full-mesh (logged). In cross-mode that is also the
+  *better* reference (see EVALUATION_STORY_AND_PLAN §4.1).
 - **Fusion** (Step 6). **No geometry** (retrieval-only benchmark, no query clouds). No pose.
 
 ### 2.3 Seven arms in one pass

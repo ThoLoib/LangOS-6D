@@ -13,7 +13,7 @@ ts(){ date -Is; }; log(){ echo "[$(ts)] $*" | tee -a "$LOG"; }
 : > "$LOG"
 
 log "waiting for Stage-1 (run_stage1_full DONE) ..."
-for i in $(seq 1 600); do
+for i in $(seq 1 5760); do
   grep -q "run_stage1_full DONE" logs/run_stage1_full.log 2>/dev/null && break
   sleep 30
 done

@@ -17,7 +17,7 @@ S2OUT=results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix
 
 # --- 1. wait for the Stage-1 consolidated folder to finish -------------------
 log "waiting for Stage-1 (run_stage1_full DONE) ..."
-for i in $(seq 1 600); do            # up to ~5h
+for i in $(seq 1 5760); do            # up to ~5h
   grep -q "run_stage1_full DONE" logs/run_stage1_full.log 2>/dev/null && break
   sleep 30
 done

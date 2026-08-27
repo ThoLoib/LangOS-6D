@@ -55,9 +55,32 @@ def boot_ci(da, n=N_BOOT, seed=0):
     return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
+def verdict(ci_sig: bool, w_sig: bool, wins_a: int, wins_b: int) -> str:
+    """Combine the two tests honestly.
+
+    The bootstrap CI tests the **mean** difference; Wilcoxon tests whether one arm
+    wins *consistently* (signed ranks). They disagree when the per-query deltas are
+    heavy-tailed: a handful of huge swings can move the mean while the win/loss
+    split is ~50/50. For the near-ties this grid is full of, the **sign-consistency
+    (Wilcoxon + the win counts) is the meaningful verdict** — a "win" carried by a
+    few outliers is not a design argument.
+    """
+    if ci_sig and w_sig:
+        return "REAL"                    # both agree
+    if not ci_sig and not w_sig:
+        return "tie"                     # both agree
+    if w_sig and not ci_sig:
+        return "CONSISTENT (small, systematic; mean noisy)"
+    # ci_sig and not w_sig
+    split = f"{wins_a}:{wins_b}"
+    return f"outlier-driven ({split}) -> treat as tie"
+
+
 def main():
     print(f"[sig] folder={FOLDER} metric={METRIC} boot={N_BOOT} "
           f"scipy={'yes' if HAVE_SCIPY else 'no (bootstrap only)'}")
+    print("[sig] CI = mean test · Wilcoxon = sign-consistency test; for near-ties "
+          "the sign split is authoritative.")
     rows = []
     for label, (fa, aa), (fb, ab) in PAIRS:
         A = load(fa or FOLDER, aa, METRIC)
@@ -70,20 +93,27 @@ def main():
             print(f"[skip] {label}: only {len(ids)} paired queries")
             continue
         da = np.array([A[i] - B[i] for i in ids])
-        mean = float(da.mean())
+        mean, med = float(da.mean()), float(np.median(da))
         lo, hi = boot_ci(da)
-        sig = (lo > 0 or hi < 0)
+        ci_sig = (lo > 0 or hi < 0)
         p = (float(wilcoxon(da).pvalue) if (HAVE_SCIPY and np.any(da)) else float("nan"))
-        rows.append((label, aa, ab, round(mean, 4), round(lo, 4), round(hi, 4),
-                     (round(p, 4) if p == p else ""), "YES" if sig else "no", len(ids)))
+        w_sig = (p == p and p < 0.05)
+        wins_a, wins_b, tied = int((da > 0).sum()), int((da < 0).sum()), int((da == 0).sum())
+        v = verdict(ci_sig, w_sig, wins_a, wins_b)
+        rows.append((label, aa, ab, round(mean, 4), round(med, 4), round(lo, 4), round(hi, 4),
+                     (round(p, 4) if p == p else ""), wins_a, wins_b, tied,
+                     "YES" if ci_sig else "no", "YES" if w_sig else "no", v, len(ids)))
         pstr = f"{p:.4f}" if p == p else "  n/a "
-        print(f"{'SIG ' if sig else '    '}{label:42s} "
-              f"Δ{METRIC}={mean:+.4f} 95%CI[{lo:+.4f},{hi:+.4f}] p={pstr} n={len(ids)}")
+        flag = "REAL" if v == "REAL" else ("~~~ " if v.startswith("outlier") else
+                                           ("CONS" if v.startswith("CONSISTENT") else "    "))
+        print(f"{flag} {label:42s} Δ={mean:+.4f} med={med:+.4f} "
+              f"CI[{lo:+.4f},{hi:+.4f}] p={pstr} wins {wins_a}:{wins_b} -> {v}")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["comparison", "armA", "armB", f"mean_d_{METRIC}",
-                    "ci_lo", "ci_hi", "wilcoxon_p", "significant", "n_paired"])
+        w.writerow(["comparison", "armA", "armB", f"mean_d_{METRIC}", f"median_d_{METRIC}",
+                    "ci_lo", "ci_hi", "wilcoxon_p", "n_A_better", "n_B_better", "n_tied",
+                    "ci_significant", "wilcoxon_significant", "verdict", "n_paired"])
         w.writerows(rows)
     print(f"\n[sig] wrote {len(rows)} comparisons -> {OUT}")
 

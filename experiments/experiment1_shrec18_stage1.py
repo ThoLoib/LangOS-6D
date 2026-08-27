@@ -220,6 +220,13 @@ GEDI_FULL_DB_PAIRS = N_QUERIES_TOTAL * N_CADS
 # dataset); this only trims the top-k_v pooling input.  16 is sufficient for
 # the first experiment and matches the DINO/CNOS view budget; set to None to
 # aggregate over every cached view.
+# Optionaler Query-Filter: JSON-Datei mit einer Liste von qids. Damit laesst
+# sich die Auswertung auf eine Teilmenge einschraenken — z. B. den
+# rekonstruierten SHREC'18-TEST-Split (649 Queries; die Trainings-Queries sind
+# daran erkennbar, dass fuer sie eine Beispiel-Rangliste veroeffentlicht wurde).
+# Reine Tier-2-Einschraenkung: die Score-Caches bleiben unveraendert.
+SHREC_QUERY_SUBSET = os.environ.get("SHREC_QUERY_SUBSET", "").strip()
+
 SHAPE_AGG_VIEWS = 42   # shape gallery views pooled = DINOv2's 42 (parity with the
                        # appearance channel and with Stage-2/MI3DOR, which pools all 42).
                        # Was 16 (a Stage-1-script-only cap); back-ported to 42 2026-08-26.
@@ -2903,6 +2910,11 @@ def run_ablation(spec: AblationSpec, paths: dict, index: List[dict],
     shortlist_sizes: List[int] = []    # |S'| for the threshold scope
     n_fallback = 0
     per_query = []
+    if SHREC_QUERY_SUBSET:
+        _keep = set(json.load(open(SHREC_QUERY_SUBSET)))
+        qlist = [q for q in qlist if q["id"] in _keep]
+        print(f"[subset] eingeschraenkt auf {len(qlist)} Queries "
+              f"<- {os.path.basename(SHREC_QUERY_SUBSET)}")
     for q in qlist:
         qid = q["id"]
         q_label = tuple(q["category"])          # (category, subcategory)

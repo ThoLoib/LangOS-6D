@@ -45,13 +45,13 @@ shared `pipeline/config.py`, compared across Stage 1 (SHREC'18), Stage 2 (MI3DOR
 | ulip_view_aggregation | topk_softmax | topk_softmax | topk_softmax | ✅ |
 | ulip_view_topk | **5** *(was 8; fixed 2026-08-26)* | **5** | **5** | ✅ |
 | ulip_view_temperature | 0.5 | 0.5 | 0.5 | ✅ |
-| shape views pooled | `SHAPE_AGG_VIEWS = 42` *(was 16; fixed)* | 42 (prod `step5`) | 42 (prod `step5`) | ✅ |
+| shape views pooled | `SHAPE_AGG_VIEWS = 42` *(was 16; fixed)* | *n/a (Full-Mesh)* ⚠️ | 42 (prod `step5`) | ⚠️ |
 
 ## 4 · Shape mode & reference
 | param | S1 | S2 | S3 | |
 |---|---|---|---|---|
 | ulip2_mode | **pc** (query point cloud) | **cross** (query image) | **cross** (pc via `--pc-query`) | ◆ depth availability |
-| ulip2_use_partial_views | True | True | True | ✅ (full-mesh via A4 / `--fullmesh`) |
+| ulip2_use_partial_views | True | **False (stiller Fallback)** ⚠️ | True | ⚠️ MI3DOR hat keine `*_partial.npz` → Full-Mesh; s. EVALUATION_STORY §4/§4.1 |
 | S_text aggregation | max over 42 view descriptions | max | max | ✅ (OSCAR original; not softmax) |
 
 ## 5 · Fusion & scope
@@ -113,13 +113,19 @@ Stage-1 shape ran at **16 views + top-8**, now corrected to **42 + top-5** to ma
 
 **Intended differences (◆):** shape mode (pc/cross), dataset, and the presence of a pose stage.
 
-**Two differences to state explicitly in the thesis (⚠️):**
+**Three differences to state explicitly in the thesis (⚠️):**
 1. **Geometry shortlist depth K = 50 (S1) vs 5 (S3).** Deliberate: S3 has 6× the queries (K=50
    would be impractical) *and* geometry is net-negative for pose, so a shallow re-rank limits the
    damage. Everything else in the dGeDi config is identical.
 2. **CLIP-pruning expression.** S1/S2 carry `clip_top_k = 20` for their OSCAR-cascade arms; S3's
    BASE is full-DB (`10⁶`) with τ-pruning only in the E5 baseline. The threshold **τ = 0.37 is
-   the same**; it is just applied per-arm rather than as a global scope.
+   the same**; it is just applied per-arm rather than as a global scope. *Wirksamkeit:* τ prunt
+   auf **beiden** Datensätzen fast immer auf leer (SHREC 98,3 % · MI3DOR 96,9 % Fallback-Rate) →
+   die Kaskade ist faktisch „CLIP-Top-20 → DINO".
+3. **Stage-2 Shape-Referenz ist Full-Mesh, nicht Partial** (entdeckt 2026-08-27). Die MI3DOR
+   `*_partial.npz` fehlen; `build_pipeline` fällt still auf Full-Mesh zurück und protokolliert
+   es. Inhaltlich unkritisch — im cross-Modus ist Full-Mesh die *bessere* Referenz (isoliert
+   NN 78.1 vs 68.1, EVALUATION_STORY §4.1) — aber es war eine Nebenwirkung, keine Entscheidung.
 
 ## Loose ends
 - **⚠️ ULIP checkpoint pinning.** S1 sets `ulip2_checkpoint = ulip2_pointbert_10k.pt` explicitly;

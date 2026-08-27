@@ -19,7 +19,7 @@ GT=results_bop_stage3_v2/gt
 BASE=0.482          # ULIP-2 cross R@1 (OSCAR+ 3a_cross) — the bar to beat
 
 log "waiting for Stage-2 (run_stage2_after_stage1 DONE) ..."
-for i in $(seq 1 720); do
+for i in $(seq 1 5760); do
   grep -q "run_stage2_after_stage1 DONE" logs/run_stage2_after_stage1.log 2>/dev/null && break
   sleep 30
 done
@@ -40,18 +40,16 @@ sane(){ awk -v x="$1" 'BEGIN{exit !(x+0>0.05 && x+0<0.95)}'; }   # plausible R@1
 
 # --- Phase R: 3a retrieval on all three -------------------------------------
 s3 3a_oscar    "--oscar-baseline" 3a
-s3 3a_uni3d    "--uni3d"          3a
 s3 3a_fullmesh "--fullmesh"       3a
 OSC=$(r1 "object_retrieval/$OUT/3a_oscar/combined_stage3a.json")
-UNI=$(r1 "object_retrieval/$OUT/3a_uni3d/combined_stage3a.json")
+UNI=""
 FUL=$(r1 "object_retrieval/$OUT/3a_fullmesh/combined_stage3a.json")
-log "3a R@1 — OSCAR=$OSC | Uni3D=$UNI | full-mesh=$FUL   (ULIP-2 cross BASE=$BASE, pc=0.464)"
+log "3a R@1 — OSCAR=$OSC | full-mesh=$FUL   (ULIP-2 cross BASE=$BASE, pc=0.464)"
+log "  (Uni3D gestrichen: Stage 1 zeigt ULIP-2 >= Uni3D, hit@1 +0.018 p=0.038, und Uni3D kann kein cross-mode)"
 grep -h "\[stage3\]\[fullmesh\]" logs/stage3_3a_fullmesh.log 2>/dev/null | tee -a "$LOG"
 
 # --- pick the single best of {Uni3D, full-mesh} that beats the BASE ---------
 WINNER=""; WFLAG=""; WSCORE=$BASE
-if sane "$UNI" && awk -v x="$UNI" -v b="$WSCORE" 'BEGIN{exit !(x+0>b+0)}'; then
-  WINNER=uni3d; WFLAG="--uni3d"; WSCORE=$UNI; fi
 if sane "$FUL" && awk -v x="$FUL" -v b="$WSCORE" 'BEGIN{exit !(x+0>b+0)}'; then
   WINNER=fullmesh; WFLAG="--fullmesh"; WSCORE=$FUL; fi
 
@@ -65,7 +63,7 @@ if [ -n "$WINNER" ]; then
   log "best alt = $WINNER (3a R@1 $WSCORE > BASE $BASE) -> posing it"
   s3 "3b_$WINNER" "$WFLAG --gt-records $GT" 3b
 else
-  log "neither Uni3D ($UNI) nor full-mesh ($FUL) beats ULIP-2 cross ($BASE) in 3a -> no extra pose run"
+  log "full-mesh ($FUL) schlaegt ULIP-2 cross ($BASE) in 3a nicht -> kein zusaetzlicher Pose-Lauf"
 fi
 
 # --- Phase C: 3c substitution-cost decomposition for runs that beat cross ----

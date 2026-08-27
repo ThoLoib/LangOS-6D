@@ -60,6 +60,13 @@ ulip_query_cache_path = "ulip_query_cache_mi3dor.pt"
 # cache is keyed by pooling (step4._cache_path), so the two never collide.
 dino_pooling = os.environ.get("MI3DOR_DINO_POOLING", "mean")
 
+# Number of gallery views. Default 42 (our config). MI3DOR_NUM_VIEWS=8 gives the
+# **OSCAR legacy baseline**: the published cascade is described with 8 rendered
+# views, so the clip-pruned/oscar_maxview arms are re-run at V=8 for a like-for-
+# like mechanism comparison. The DINO gallery cache holds all 42 views and
+# step4._apply_view_limit() trims to the first N, so this needs NO re-encoding.
+num_views = int(os.environ.get("MI3DOR_NUM_VIEWS", "42"))
+
 
 cfg = EvalConfig(
     ref_dir=ref_dir,
@@ -90,7 +97,7 @@ cfg = EvalConfig(
     # at V=42 (nDCG 0.597; V8 0.580 < V16 0.593 < V42 0.597), with topk_softmax
     # over the top-5 views (the pipeline default used there). Pinned explicitly.
     pipeline_overrides={
-        "num_views": 42,
+        "num_views": num_views,
         "dino_view_aggregation": "topk_softmax",
         "dino_view_topk": 5,
         "dino_view_temperature": 0.5,

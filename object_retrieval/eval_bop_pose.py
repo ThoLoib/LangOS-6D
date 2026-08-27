@@ -232,10 +232,22 @@ class _ModelCache:
 # and trimmed Chamfer)
 # ============================================================================
 
-def _geo_rerank(fused_ranking, geo, top_k):
-    """Re-rank the fused top-K by dGeDi geometry (Borda mean-rank of RANSAC
-    fitness and trimmed distance). Failed/uncached candidates sort to the back
-    of the shortlist; the tail past top_k is untouched."""
+GEO_SIGNAL = os.environ.get("STAGE3_GEO_SIGNAL", "distance")   # distance | borda | fitness
+
+
+def _geo_rerank(fused_ranking, geo, top_k, signal: str = None):
+    """Re-rank the fused top-K by the dGeDi geometry signal.
+
+    ``signal`` (default ``STAGE3_GEO_SIGNAL`` = **distance**):
+      * ``distance`` — rank by the trimmed surface distance after alignment.
+        This is the Stage-1 C1 winner (0.6405 vs 0.6362 Borda vs 0.6251 fitness)
+        and therefore the **cross-stage-consistent** criterion.
+      * ``borda``    — mean-rank of fitness and distance (the pre-2026-08-27
+        behaviour; kept so the earlier runs remain reproducible).
+      * ``fitness``  — RANSAC inlier fraction only.
+    Failed/uncached candidates sort to the back of the shortlist; the tail past
+    top_k is untouched."""
+    signal = signal or GEO_SIGNAL
     head = fused_ranking[:top_k]
     tail = fused_ranking[top_k:]
     ids = [oid for oid, _ in head]
@@ -254,9 +266,16 @@ def _geo_rerank(fused_ranking, geo, top_k):
         return np.argsort(np.argsort(-np.asarray(vals), kind="stable"),
                           kind="stable").astype(float)
 
-    mean_rank = (_ranks(fit) + _ranks(dst)) / 2.0
-    order = list(np.argsort(mean_rank, kind="stable"))
-    head_re = [(ids[i], -float(mean_rank[i])) for i in order]
+    if signal == "distance":
+        key = _ranks(dst)
+    elif signal == "fitness":
+        key = _ranks(fit)
+    elif signal == "borda":
+        key = (_ranks(fit) + _ranks(dst)) / 2.0
+    else:
+        raise ValueError(f"unknown STAGE3_GEO_SIGNAL {signal!r}")
+    order = list(np.argsort(key, kind="stable"))
+    head_re = [(ids[i], -float(key[i])) for i in order]
     return head_re + tail
 
 
@@ -582,6 +601,14 @@ def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
                     if dgedi_n_ok > 0:
                         ranking = _geo_rerank(fused_ranking, geo, dgedi_top_k)
                         geo_applied = True
+                        # Rohwerte mitschreiben: damit ist das Rangkriterium
+                        # spaeter offline ableitbar (Tier-2, wie in Stage 1) und
+                        # ein Wechsel kostet keine neuen Registrierungen.
+                        geo_raw = {oid: {"fitness": float(g.get("ransac_fitness", 0.0)),
+                                         "d_ransac": (float(g["d_ransac"])
+                                                      if g.get("d_ransac") is not None else None),
+                                         "ok": bool(g.get("ok"))}
+                                   for oid, g in geo.items()}
 
             r = rank_of_target(ranking, target_nsid) if include_target else None
             if include_target:
@@ -597,6 +624,9 @@ def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
                              for oid, s in ranking[:10]]}
             if use_uni3d or use_pc_query:
                 rec["pc_query_fallback"] = pc_query_fallback
+            if geo_applied:
+                rec["geo_raw"] = geo_raw
+                rec["geo_signal"] = GEO_SIGNAL
             if use_dgedi:
                 rec["fused_rank"] = (rank_of_target(fused_ranking, target_nsid)
                                      if include_target else None)
