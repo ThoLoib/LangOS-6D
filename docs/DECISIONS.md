@@ -1,6 +1,25 @@
 # Decisions
 
-## 2026-07-31 Add a depth-matched metric table so the geometry stage is measurable
+## 2026-08-31 Gallery assembly verifies its own coverage and aborts, instead of documenting the risk
+
+Decision
+- Every gallery-assembly branch that maps embeddings onto gallery ids **measures the intersection and raises below 95 %**, naming the missing ids. The full-mesh branch of `stage3_gallery._absorb_dataset` implements this now; the partial branch follows once no run depends on it.
+- Object ids for the full-mesh arm come from an explicit per-dataset rule (`_FULLMESH_ID_MODE`), never from directory-structure inference. `load_cad_models` gained a `mesh_items` parameter so callers that know their ids state them.
+- Kept separate from `DATASET_LAYOUT["id_mode"]`, which serves `build_pipeline`'s `cad_mesh_items` fallback: correcting the two together would have altered a code path with runs in flight.
+
+Rationale
+- This is the **second instance of the same failure class** in two weeks. Stage 2 fell back to full-mesh encoding silently because no partial clouds existed for MI3DOR, and the numbers were interpreted as partial-view for days. The full-mesh id collapse on HouseCat6D (2026-08-31 log entry) would have removed 15 % of the gallery's shape channel with equally plausible output. Both were *detectable* from log lines nobody had reason to read.
+- The shared property is that a misconfiguration degrades a channel rather than breaking it, so the run completes and the result looks like a finding. Wall-clock cost is the smaller loss — a wrong number that survives into the thesis is the real one.
+- A guard is cheap where the ground truth is already in hand: gallery ids are known at assembly time, so coverage is one set intersection. The existing comment at the same site ("VERIFY per dataset before trusting the numbers") shows that documenting the hazard does not catch it.
+- 95 % rather than 100 %: mesh directories legitimately carry extras (`bg/`, `collision/`, `models_orig/`) and the occasional object may lack a mesh, but a genuine id-scheme mismatch fails catastrophically — 0–10 % — so the threshold separates the two cleanly without being brittle.
+
+Alternatives considered
+- Log coverage without aborting — rejected: the failure mode is precisely that plausible output goes unexamined; a warning in a 30 000-line log is the status quo that failed twice.
+- Fix `_collect_mesh_items` to handle category-grouped layouts — rejected: it would have to infer intent from the directory tree, which is what produced the defect. Callers know their ids; the loader should not guess.
+- Correct `DATASET_LAYOUT["id_mode"]` for tless/lmo/itodd (`"stem"` yields `"model"` for every object under `*/model.ply`) — deferred, not dismissed. It is latent rather than active, since the affected fallback is overwritten downstream, but it is the same class of trap and should be closed once no run is in flight.
+- A post-hoc audit script over finished results — rejected as the primary control: it detects the same problem strictly later and only if someone runs it. Useful as a supplement, not a substitute for failing at assembly time.
+
+Detail: `docs/AI_LOG.md`, entry 2026-08-31.
 
 Decision
 - Keep the official scorer as **Table A** (unchanged, per the 2026-07-30 entry) and add **Table B**: `NN_cat`, `NN_sub`, `hit@K`, `MRR@K`, `mAP@K` and a *corrected* `nDCG@K`, computed at the geometry depth K for **every** arm. `NN_sub` is the headline for the geometry cells.

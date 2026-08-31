@@ -47,3 +47,27 @@ blender-*/
 # Stage-3: vendored external deps (reproducible, see third_party/SETUP.md)
 third_party/bop_toolkit/
 third_party/pylibs/
+
+# dGeDi descriptor caches — 6.8 GB across the four galleries (2026-08-31).
+# These were untracked but NOT ignored; a `git add -A` would have tried to
+# commit all of it. Regenerable via tools/precompute_gedi_descriptors.py.
+/object_retrieval/.dgedi_gallery*/
+
+# Query-embedding dumps from the ULIP/Uni3D comparison runs
+/object_retrieval/rq_*/
+
+# Accidental nested copy (wrong cwd during a container run)
+/object_retrieval/object_retrieval/
+
+# Scratch at the repo root: ad-hoc run logs, status files and probes
+/_*.log
+/_*.sh
+/_*.status
+/scratch_*.py
+
+# Stage-4 work directory (renders/clouds written outside object_images/)
+/.stage4_work/
+
+# Grasping demo renders (regenerable via grasping/stage5_demo.py)
+/grasping/*.png
+/grasping/demo_grasps.json

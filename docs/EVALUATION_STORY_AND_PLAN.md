@@ -5,7 +5,8 @@ why, the shape-channel mode per stage, which metric/config is reported where, ev
 result we have so far, and the runs still outstanding. Numbers are mean-pooling, τ=0.37,
 at the **audited config (42 views · top-k-softmax k=5)** unless stated. Companion docs:
 the pipeline & preprocessing implementation in `PIPELINE_IMPLEMENTATION.md`, and the
-three experiments in `EXPERIMENTS_IMPLEMENTATION.md`. Last updated 2026-08-26.*
+experiments in `EXPERIMENTS_IMPLEMENTATION.md`. Last updated 2026-08-31 — Stages 1–3 are
+complete, Stage 4 (latency) is implemented and awaiting its full run.*
 
 > **Config correction — COMPLETE (2026-08-27).** A comparability audit found Stage-1's shape
 > channel ran at **16 gallery views + top-8**, while DINOv2 (all stages) and Stages 2–3's shape
@@ -30,7 +31,7 @@ of losing depth. **Stage 3 (BOP: YCB-V, T-LESS, LM-O)** asks the downstream ques
 better retrieval actually yield a CAD that can be **posed**? We do **not** carry a single
 frozen "winner" forward: Stages 2–3 re-report the relevant configurations and their
 **spread** (channel set, shape mode, geometry on/off), because the Stage-1-best choice does
-not transfer uniformly — mode, geometry, and pooling all flip sign downstream (§7).
+not transfer uniformly — mode, geometry, and pooling all flip sign downstream (§8).
 
 ---
 
@@ -46,7 +47,7 @@ not transfer uniformly — mode, geometry, and pooling all flip sign downstream 
 every ablation varies exactly one axis against it — the design choices are *characterized*,
 not silently re-tuned per stage. But the BASE is a reference point, not a locked deployment
 config: Stages 2–3 report the **spread** of configurations (channel set, shape mode,
-geometry on/off), because the Stage-1-optimal choice does not transfer uniformly (§7). The
+geometry on/off), because the Stage-1-optimal choice does not transfer uniformly (§8). The
 weight sweep is likewise a **robustness** result, never a selection procedure.
 
 **Gallery in Stage 3.** `G_proxy = GSO(1030) ∪ HouseCat6D(199) ∪ ITODD(28)`; setting **3a**
@@ -268,55 +269,88 @@ Schwellwert-Pruning. Konsistent mit SHREC (98,3 %, B4).
 Settings: **3a** retrieval into `G_proxy ∪ G_target` (exact CAD present) · **3b** proxy-only
 pose + D_sym · **3c** next-best-non-GT diagnostic · **gt** oracle (exact CAD, exact pose).
 
-**3a — retrieval (Recall@1 / MRR):**
+**Status: complete** (chain finished 2026-08-30 21:41). Full write-up with per-dataset splits:
+`docs/STAGE3_RESULTS_SUMMARY.md`.
 
-| Config | R@1 | R@5 | R@10 | MRR |
-|---|---|---|---|---|
-| cross (no geo) | **0.482** | 0.733 | 0.812 | 0.597 |
-| pc (no geo) | 0.464 | 0.726 | 0.808 | 0.584 |
-| cross + geometry | 0.458 | — | — | 0.579 |
-| pc + geometry | 0.413 | — | — | 0.547 |
+**3a — retrieval (Recall@1 / MRR), all arms:**
 
-Per-dataset (cross, no-geo) R@1: **YCB-V 0.732 · LM-O 0.464 · T-LESS 0.332** (T-LESS is the
-hard, texture-less case).
+| Arm | R@1 | R@5 | R@10 | MRR | YCB-V | T-LESS | LM-O |
+|---|---|---|---|---|---|---|---|
+| **cross, partial (frozen)** | **0.482** | 0.733 | 0.812 | 0.597 | **0.732** | 0.332 | 0.464 |
+| pc, partial | 0.464 | 0.726 | 0.808 | 0.584 | 0.671 | 0.350 | 0.400 |
+| cross, full mesh | 0.464 | **0.768** | **0.835** | **0.602** | 0.566 | **0.396** | **0.490** |
+| pc, full mesh | 0.350 | 0.579 | 0.696 | 0.459 | 0.635 | 0.157 | 0.436 |
+| OSCAR baseline (E5, no shape) | 0.320 | 0.492 | 0.542 | 0.404 | 0.498 | 0.214 | 0.304 |
+| cross + geo (distance / fitness) | 0.423 / 0.428 | 0.733 | 0.812 | 0.558 / 0.557 | — | — | — |
+| pc + geo (distance / fitness) | 0.373 / 0.382 | 0.726 | 0.808 | 0.522 / 0.525 | — | — | — |
 
 **3b / 3c / gt — pose (D_sym, mm):**
 
-| Setting | D_sym median | D_sym mean | F@5% | note |
+| Setting | D_sym median | D_sym mean | Delta median | note |
 |---|---|---|---|---|
-| **gt** (oracle exact CAD) | **1.72** | 4.87 | — | sanity floor — pose stage is near-perfect with the right model |
-| **3b** proxy pose | 18.37 | 33.6 | 0.313 | Δ vs oracle ≈ **+16.6 mm** = the cost of a proxy |
-| 3b + geometry | 28.79 | 44.0 | 0.319 | geometry **hurts** |
-| **3c** next-best-non-GT | 15.34 | 28.1 | 0.410 | real-CAD-of-another-object 10.35 vs proxy 20.10 → ~half the error is gallery foreignness, half is substitution loss |
+| **gt** (oracle exact CAD) | **1.72** | 4.87 | — | sanity floor — the pose stage is near-perfect with the right model |
+| **3b** OSCAR+ proxy | 18.37 | 33.6 | **15.79** | the cost of a proxy |
+| 3b OSCAR baseline | 21.73 | 36.0 | 18.86 | +3.4 mm worse than OSCAR+ |
+| 3b + geometry | 28.79 | 44.0 | 26.07 | geometry **hurts**, +57 % |
+| **3c** next-best-non-GT | 15.34 | 28.1 | — | real CAD of another object 10.35 vs proxy gallery 20.10 → ~half the error is gallery foreignness, half is substitution loss |
 
-**Two significant cross-stage findings:**
-1. **Geometry re-ranking that helps on SHREC *hurts* on BOP** — 3a R@1 0.482→0.458 (cross),
-   0.464→0.413 (pc); 3b D_sym 18.4→28.8 mm. Clean scans (SHREC) reward alignment; cluttered
-   partial BOP depth against *proxy* geometry misleads it. → **geometry should be OFF in the
-   pose pipeline**, and the thesis can state this with evidence.
-2. **cross ≥ pc in the pose setting** (3a R@1 0.482 > 0.464) — the opposite of SHREC —
-   because BOP query depth/masks are noisy, so the image is the more reliable shape cue.
-
-**Planned Stage-3 additions (implemented + queued 2026-08-26; see `EXPERIMENTS_IMPLEMENTATION.md` §3.4):**
-- **E5 — OSCAR vs OSCAR+ → pose.** The OSCAR baseline is OSCAR's *actual* mechanism — CLIP-τ=0.37
-  threshold prune → DINOv2 best-view cascade, **no shape** (`--oscar-baseline`, ranked by
-  `oscar_maxview`) — run for 3a (retrieval) and 3b (pose), diffed against OSCAR+ (0.482 / 18.37 mm).
-  Closes *"does the shape channel's retrieval gain reach pose?"*.
-- **A3/A4 transfer to pose.** Uni3D (`--uni3d`, pc-only) and full-mesh (`--fullmesh`) shape arms:
-  **3a on all three**; **3b/3c only for whichever out-retrieves ULIP-2 cross** (0.482) — no point
-  posing an arm that doesn't even retrieve better.
-- **3c decomposition** is added for any arm that beats cross, to compare its
-  foreignness-vs-substitution split (BASE: real-CAD 10.35 vs proxy 20.10 mm) against the winner's.
-- **Geometry stays OFF** in the pose pipeline (finding 1 above). E3 (a ROCA-style alignability
-  metric) is approximated by 3a ± geometry — optional.
+**Four cross-stage findings:**
+1. **The shape channel is the contribution, in both directions.** +0.162 R@1 over the faithful
+   OSCAR cascade (0.482 vs 0.320) **and** −3.4 mm pose error (18.37 vs 21.73 mm). The retrieval
+   gain reaches pose — that was the open question E5 was built to answer.
+2. **Geometry re-ranking that helps on SHREC hurts on BOP** — all four clean cells lose, and pose
+   loses hardest (+57 %). Not an implementation fault: at 98 % coverage geometry puts the right CAD
+   first in 58 % of cases (chance 20 %), but the fusion score it *replaces* achieves 66 %.
+   Re-ranking is displacement, so it pays only where it beats the incumbent score. → **geometry OFF
+   in the pose pipeline**, stated with a mechanism rather than an observation.
+3. **Fitness beats distance on BOP, inverting Stage 1.** SHREC is scale-invariant, so alignment
+   distance is meaningful there; with true metric scale the pure overlap measure wins.
+4. **cross ≥ pc in the pose setting** (0.482 > 0.464) — the opposite of SHREC — because BOP query
+   depth/masks are noisy, so the image is the more reliable shape cue. The partial-vs-full-mesh
+   advantage is likewise **YCB-V's alone**: full mesh wins T-LESS and LM-O and wins R@5/R@10/MRR
+   overall. Report the split, not the aggregate.
 
 ---
 
-## 6. Runs still outstanding (by stage)
+## 6. Stage 4 — onboarding and query latency
 
-*A four-job pipeline is running end-to-end (2026-08-26): Stage-1 42v/k5 re-run → Stage-2
-(full-mesh + heatmap) → Stage-3 (E5/Uni3D/full-mesh, gated), plus the significance test after
-Stage-1. `[~]` = implemented and queued; `[ ]` = still open.*
+Stages 1–3 answer *how well*. Stage 4 answers *at what cost* — the practical question a reader
+asks once the accuracy case is made, and the one that decides whether the system is deployable.
+
+**4a — onboarding.** A user has a CAD file and wants the object findable. Base gallery is the
+**3b database** (G_proxy = 1257); each of the **59 target CADs** is onboarded individually and the
+distribution over those 59 cases is reported. Steps measured separately: mesh preparation ·
+Blender render (42 icosphere views, FPS-ordered) · partial clouds (HPR) · LLaVA descriptions ·
+DINOv2 / CLIP-text / ULIP-2 encoding · dGeDi descriptors (optional) · cache write. Model load time
+is reported apart — it is a system start-up cost, not an onboarding cost.
+
+**4b — query.** Language prompt → GroundingDINO box → SAM2.1 mask → back-projected cloud →
+CLIP / DINOv2 / ULIP-2 → fusion → geometry at K=5 (optional) → FoundationPose. Cold and warm are
+separated: loading the five models costs a multiple of one query, so a figure mixing both only
+reports how many queries were averaged.
+
+**The open design question this exposes.** The cache key is a fingerprint over the *whole*
+inventory (`_get_partial_cache_path`: one line per object per view). One new object changes the
+hash and invalidates everything — onboarding really costs **O(gallery)**, not O(1). The incremental
+cost is measured directly (encode only the new object's views with models already loaded, which is
+the work an append-only cache would do); `--measure-invalidation` measures the surcharge the
+current fingerprint forces on top. Both numbers are reported side by side.
+
+**16 vs 42 views.** Stage 1 measures the quality side and it is flat past 16 — V8 0.5714 ·
+**V16 0.5820** · V32 0.5800 · **V42 0.5868** nDCG, with V32 *below* V16. If onboarding scales
+linearly with view count, 42 views cost 2.6× for 0.005 nDCG. Both scripts take a view-count list
+and print a cost-benefit table with the Stage-1 quality next to the measured cost.
+
+Scripts: `experiments/experiment4_onboarding.py`, `experiments/experiment4_query_latency.py`,
+shared timing in `experiments/stage4_common.py`. Both are flag-based CLIs; see
+`EXPERIMENTS_IMPLEMENTATION.md` §4.
+
+---
+
+## 7. Runs still outstanding (by stage)
+
+*Stages 1–3 are complete as of 2026-08-30; nothing is queued. `[~]` = implemented and queued;
+`[ ]` = still open.*
 
 ### Stage 1
 - [x] **A2 / A7** isolated view sweeps (done): A2 42 best, flat past 16; A7 monotone, more views help.
@@ -333,21 +367,29 @@ Stage-1. `[~]` = implemented and queued; `[ ]` = still open.*
   `_dinomean`-Lauf, dem einzigen mit tatsächlich aktivem `partial`. Full-mesh gewinnt im
   cross-Modus auf jeder Metrik (NN +9.99). Der 2026-08-27 gefahrene `fullmesh`-Arm war
   **redundant** (stiller Full-Mesh-Fallback → bitidentisch zum bestehenden Lauf).
-- [~] **Cross-mode weight heatmap** (`mi3dor_weight_sweep.py`, Tier-2 re-fuse, BASE self-check
-  FT≈0.682) — läuft seit 2026-08-27 11:57.
-- [~] **OSCAR-Legacy-Baseline V=8** (`scripts/run_mi3dor_oscar_legacy.sh`) — CLIP-τ-Kaskade →
-  DINO Best-View bei 8 Views, unser Evaluator/Gallery; eingereiht hinter der Heatmap.
+- [x] **Cross-mode weight heatmap** (`mi3dor_weight_sweep.py`) — **DONE**: optimum at
+  (0.45 text, 0.35 view, 0.20 shape), BASE only +0.005 FT away. Without depth, shape belongs
+  down-weighted and the weight moves to text.
+- [x] **OSCAR-Legacy-Baseline V=8** (`scripts/run_mi3dor_oscar_legacy.sh`) — **DONE**,
+  `results_mi3dor_oscar_legacy_v8/fullmesh/`.
 - [ ] Reporting stance (BASE + cross-heatmap explanation vs down-weighted-shape appendix); NN/FT/ANMRR↔nDCG mapping note.
 
 ### Stage 3 (pose)
-- [~] **E5 (OSCAR cascade → pose) + A3/A4 transfer** — `--oscar-baseline`/`--uni3d`/`--fullmesh` + 3c
-  implemented; queued after Stage 2 with the gated selection (§5): 3a on all, 3b/3c only for runs
-  that beat ULIP-2 cross.
-- [ ] Confirm geometry-OFF for the pose pipeline as one documented decision; E3 alignability (optional).
+- [x] **E5 (OSCAR cascade → pose)** — **DONE**: 3a R@1 0.320, 3b D_sym 21.73 mm. OSCAR+ wins both.
+- [x] **A4 transfer (full mesh)** — **DONE** in both query modes (0.464 cross / 0.350 pc). Uni3D
+  was dropped: Stage 1 showed ULIP-2 ≥ Uni3D and Uni3D has no cross-modal branch.
+- [x] **Geometry, signals separated** — **DONE**: distance and fitness as own arms in both modes.
+- [x] **Gate** — no arm beat the frozen cross config (0.482), so no additional 3b/3c fired.
+- [x] **Geometry-OFF confirmed** as a documented decision, with the displacement mechanism (§5).
+
+### Stage 4 (latency)
+- [~] **4a onboarding / 4b query latency** — scripts implemented, smoke-tested on the light path
+  (`--stages mesh`). The heavy path (Blender, LLaVA, encoders, FoundationPose) is not yet run.
+- [ ] Run both at full scale and report the 16-vs-42-view cost-benefit table.
 
 ---
 
-## 7. Master table — every experiment, why, result
+## 8. Master table — every experiment, why, result
 
 | ID | Stage | Experiment | Why we ran it | Result (headline) | Status |
 |---|---|---|---|---|---|

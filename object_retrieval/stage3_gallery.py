@@ -250,6 +250,45 @@ def _mesh_items(ds: str):
     return items
 
 
+# Wie die full-mesh-ID aus dem Mesh-Pfad zu bilden ist, damit sie mit den
+# Gallery-IDs (= Render-Ordnernamen unter object_images/<ds>/) zusammenfaellt.
+# BEWUSST getrennt von DATASET_LAYOUT["id_mode"]: das steuert _mesh_items und
+# damit den cad_mesh_items-Fallback von build_pipeline — daran wird hier nichts
+# geaendert, um die laufenden partial-Arme nicht zu stoeren.
+#
+# Warum ueberhaupt noetig (Bug, gefunden 2026-08-29 vor dem 3a_fullmesh-Lauf):
+# load_cad_models -> _collect_mesh_items bildet die ID aus dem ORDNERNAMEN.
+# Fuer obj_XXXXXX/model.ply stimmt das. HouseCat6D liegt aber als
+# <kategorie>/<objekt>.obj vor, d.h. alle 199 Objekte kollabierten auf 12
+# Kategorie-IDs, die auf KEINE Gallery-ID passen -> 199/1316 (15 %) der Gallery
+# waeren ohne Shape-Embedding in den Lauf gegangen, ohne Fehlermeldung.
+_FULLMESH_ID_MODE = {
+    "ycbv": "parent",        # <obj_id>/textured_simple.obj
+    "tless": "parent",       # <obj_id>/model.ply   (NICHT stem -> waere "model")
+    "lmo": "parent",
+    "itodd": "parent",
+    "gso": "grandparent",    # <obj_id>/meshes/model.obj
+    "housecat6d": "stem",    # <kategorie>/<obj_id>.obj
+}
+
+
+def _fullmesh_items(ds: str):
+    """(gallery_id, mesh_path) fuer den full-mesh-Arm, IDs = Render-Ordnernamen."""
+    import glob as _glob
+    lay = DATASET_LAYOUT[ds]
+    mode = _FULLMESH_ID_MODE[ds]
+    items = []
+    for p in sorted(_glob.glob(os.path.join(_THIS, lay["mesh_glob"]))):
+        if mode == "stem":
+            oid = os.path.splitext(os.path.basename(p))[0]
+        elif mode == "parent":
+            oid = os.path.basename(os.path.dirname(p))
+        else:
+            oid = os.path.basename(os.path.dirname(os.path.dirname(p)))
+        items.append((oid, p))
+    return items
+
+
 def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master, use_partial=True):
     """Load one dataset's cached stores and merge into the master dicts
     under namespaced ids. Reuses the already-loaded encoders.
@@ -290,19 +329,41 @@ def _absorb_dataset(ds, clip_retr, dino_rer, shape_m, master, use_partial=True):
                         master["cad_path"][nsid] = shape_m._cad_paths.get(oid, "")
         else:
             # A4 full-mesh transfer: whole-mesh ULIP embeddings (cache or sample).
-            # load_cad_models scans a dir and keys by mesh label; the render-dir
-            # gallery ids must line up with those labels — VERIFY per dataset
-            # (n_absorbed logged) before trusting the numbers.
-            cad_dir = os.path.dirname(os.path.join(_THIS, lay["mesh_glob"]))
+            # IDs kommen explizit aus _fullmesh_items, NICHT aus dem
+            # ordnernamen-basierten _collect_mesh_items — siehe den Kommentar
+            # bei _FULLMESH_ID_MODE (HouseCat6D-Kollaps, 2026-08-29).
+            # cad_dir wird trotzdem gebraucht: er geht in den Cache-Pfad ein.
+            # Basisordner = Glob bis zum ersten Wildcard; os.path.dirname() waere
+            # falsch, bei ".../ycbv/*/textured_simple.obj" bliebe das "*" stehen
+            # (FileNotFoundError, Fehler vom 2026-08-28).
+            cad_dir = os.path.join(_THIS, lay["mesh_glob"].split("*")[0]).rstrip("/")
+            items = _fullmesh_items(ds)
             shape_m.config.ulip2_use_partial_views = False
-            shape_m.load_cad_models(cad_dir=cad_dir)
+            shape_m.load_cad_models(cad_dir=cad_dir, mesh_items=items)
+
+            # --- Deckungspruefung: JEDE Gallery-ID braucht ein Embedding. ---
+            # Ohne diesen Riegel laeuft eine ID-Fehlzuordnung stumm durch: der
+            # Arm liefert plausible Zahlen, denen ein Teil des Shape-Kanals
+            # fehlt. Lieber hier hart abbrechen als 3 h spaeter Muell auswerten.
+            gal = set(ds_gallery_ids)
+            hit = gal & set(shape_m._cad_embeddings)
             n0 = len(master["cad_emb"])
             for oid, emb in shape_m._cad_embeddings.items():
+                if oid not in gal:
+                    continue            # bg/collision/models_orig etc.
                 nsid = namespaced_id(ds, oid)
                 master["cad_emb"][nsid] = emb.detach().cpu()
                 master["cad_path"][nsid] = shape_m._cad_paths.get(oid, "")
+            cov = len(hit) / max(len(gal), 1)
             print(f"[stage3][fullmesh] {ds}: absorbed "
-                  f"{len(master['cad_emb'])-n0} full-mesh ULIP embeddings")
+                  f"{len(master['cad_emb'])-n0}/{len(gal)} full-mesh ULIP "
+                  f"embeddings (Deckung {100*cov:.1f}%)")
+            if cov < 0.95:
+                raise RuntimeError(
+                    f"[stage3][fullmesh] {ds}: nur {100*cov:.1f}% der Gallery-IDs "
+                    f"haben ein full-mesh Embedding ({len(hit)}/{len(gal)}). "
+                    f"Fehlend z.B. {sorted(gal - hit)[:5]}. "
+                    f"_FULLMESH_ID_MODE['{ds}'] passt nicht zum Mesh-Layout.")
 
     # --- pose-mesh map (native scale) keyed by the GALLERY ids (render-dir
     # names = obj_XXXXXX / gso ids), NOT the fullmesh glob stem (which is

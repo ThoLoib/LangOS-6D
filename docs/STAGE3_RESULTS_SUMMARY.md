@@ -1,23 +1,30 @@
 # Stage 3 — Proxy-CAD Pose Evaluation: Results Summary
 
-**Status:** complete (run `results_bop_stage3_v2`, finished 2026-08-20). All results synced to
-`gdrive:Masterthesis/OSCAR/object_retrieval/results_bop_stage3_v2`.
+**Status:** complete. Final run chain finished **2026-08-30 21:41**; all 16 result directories
+synced to `gdrive:Masterthesis/OSCAR/object_retrieval/results_bop_stage3_v2`.
+Artifact: <https://claude.ai/code/artifact/280da703-95e6-461e-832a-1fdd92c24ab8>
 
 Stage 3 tests the core OSCAR+ hypothesis for downstream pose: **does the retrieved CAD support
 6-DoF pose estimation, and how much accuracy is lost when the retrieved model is a *proxy* rather
 than the object's own CAD?** Pose is estimated with **FoundationPose**; retrieval and pose are
 isolated from segmentation by using the BOP ground-truth visible bounding box + mask.
 
+> **Supersedes the 2026-08-24 version of this file.** The geometry numbers there came from a single
+> combined-signal run (`3a_cross_geo` = 0.458) predating the signal separation. Distance and fitness
+> are now measured as separate arms (0.423 / 0.428), and the per-dataset conclusions are weaker than
+> that run suggested — see §3.
+
 ## Setup at a glance
 
 | | |
 |---|---|
 | **Datasets** | YCB-V, T-LESS, LM-O (`test_targets_bop19`) — **12,284 instances** (ycbv 4123, tless 6716, lmo 1445) |
-| **Modes** | `3a` retrieval only · `gt` exact-CAD FP benchmark → `D_posed_gt` · `3b` proxy pose → `D_posed` + `Delta` |
-| **Gallery** | `3a`: G_proxy (GSO ∪ HouseCat6D ∪ ITODD) ∪ all target CADs = **1316**;  `3b`: G_proxy only (targets removed → top-1 is always a proxy) |
+| **Modes** | `3a` retrieval only · `gt` exact-CAD FP benchmark → `D_posed_gt` · `3b` proxy pose → `D_posed` + `Delta` · `3c` decomposition of `Delta` |
+| **Gallery** | `3a`: G_proxy (GSO ∪ HouseCat6D ∪ ITODD) ∪ all target CADs = **1316**;  `3b`: G_proxy only = **1257** (targets removed → top-1 is always a proxy) |
 | **Query modes** | `pc` = partial point cloud (ULIP PointBERT) · `cross` = RGB crop (ULIP image encoder) |
-| **Fusion** | CLIP + DINOv2 + ULIP-2, weights **0.3 / 0.4 / 0.3**, DINO mean pooling, 42 views |
-| **Geometry** | dGeDi re-rank, repo config (6000 keypoints / 10k RANSAC / +ICP), top-5 shortlist |
+| **Gallery representation** | partial views (42 per CAD, base) · full mesh (A4 ablation) |
+| **Fusion** | CLIP + DINOv2 + ULIP-2, weights **0.3 / 0.4 / 0.3**, DINO mean pooling, 42 views, top-k-softmax k=5 τ=0.5 — identical to Stage 1 and Stage 2 |
+| **Geometry** | dGeDi re-rank, repo config (6000 keypoints / 10k RANSAC / +ICP), top-5 shortlist, signal ∈ {distance, fitness} |
 | **Pose metric** | `D_sym` = symmetric mean surface distance (mm and /diameter) + F-score @1% and @5% of diameter |
 | **Substitution cost** | `Delta = D_posed − D_posed_gt`, paired per instance on `(dataset, scene, image, obj, gt_idx)` |
 
@@ -26,41 +33,97 @@ isolated from segmentation by using the BOP ground-truth visible bounding box + 
 ## 1. Retrieval (3a)
 
 Recall@k / MRR over all 12,284 instances. The single relevant item is the exact target CAD
-(present in the 3a gallery). Four variants: query mode {pc, cross} × geometry {off, dGeDi}.
+(present in the 3a gallery).
 
-| Variant | R@1 | R@5 | R@10 | MRR |
-|---|---|---|---|---|
-| pc | 0.464 | 0.726 | 0.808 | 0.584 |
-| pc + geo | 0.413 | 0.726 | 0.808 | 0.547 |
-| **cross ✅ (best)** | **0.482** | **0.733** | **0.812** | **0.597** |
-| cross + geo | 0.458 | 0.733 | 0.812 | 0.579 |
+| Arm | R@1 | R@5 | R@10 | MRR | YCB-V | T-LESS | LM-O |
+|---|---|---|---|---|---|---|---|
+| **cross, partial ✅ (frozen config)** | **0.4818** | 0.7330 | 0.8120 | 0.5971 | **0.732** | 0.332 | 0.464 |
+| pc, partial | 0.4636 | 0.7258 | 0.8080 | 0.5844 | 0.671 | 0.350 | 0.400 |
+| cross, full mesh | 0.4639 | **0.7680** | **0.8353** | **0.6021** | 0.566 | **0.396** | **0.490** |
+| pc, full mesh | 0.3504 | 0.5793 | 0.6955 | 0.4592 | 0.635 | 0.157 | 0.436 |
+| OSCAR baseline (E5, no shape) | 0.3198 | 0.4923 | 0.5418 | 0.4043 | 0.498 | 0.214 | 0.304 |
 
-**Per-dataset R@1** (pre-geometry → post-geometry where geometry applies):
-
-| Variant | YCB-V | T-LESS | LM-O |
-|---|---|---|---|
-| pc | 0.671 | 0.350 | 0.400 |
-| pc + geo | 0.534 | 0.336 | 0.426 |
-| cross | 0.732 | 0.332 | 0.464 |
-| cross + geo | 0.602 | 0.360 | 0.504 |
+The three right-hand columns are per-dataset R@1. The OSCAR baseline is the faithful cascade:
+CLIP-text threshold τ=0.37 shortlist → DINOv2 best-view re-rank, **no shape channel**.
 
 **Findings**
-- **Cross query wins overall** (R@1 0.482 vs 0.464), winning YCB-V (+0.061) and LM-O (+0.064).
-  **pc wins T-LESS** (0.350 vs 0.332) — the texture-less objects favour the point-cloud query
-  over the appearance-based image query.
-- **Geometry re-ranking is net-negative for retrieval**, but the effect is dataset-dependent:
-  it **helps where semantics are weak** (LM-O both modes: 0.400→0.426, 0.464→0.504; T-LESS-cross:
-  0.332→0.360) and **hurts where semantics are already strong** (YCB-V cross: 0.732→0.602). The
-  YCB-V drop dominates the instance-weighted mean. R@5/R@10 are unchanged by geometry — it only
-  reorders within the top-5 shortlist, so it can move a correct top-1 down but never change set
-  membership.
+
+- **The shape channel is worth +0.162 R@1** over the OSCAR cascade (0.4818 vs 0.3198). The margin
+  holds on all three datasets and is relatively largest on T-LESS (0.214 → 0.332), i.e. exactly
+  where texture and language carry least information.
+- **Cross query beats pc overall** (0.4818 vs 0.4636), winning YCB-V (+0.061) and LM-O (+0.064);
+  **pc wins T-LESS** (0.350 vs 0.332) — texture-less objects favour the point-cloud query over the
+  appearance-based image query.
 
 ---
 
-## 2. Exact-CAD pose benchmark (`D_posed_gt`)
+## 2. Gallery representation — partial views vs full mesh
 
-FoundationPose with each object's **own** CAD (BOP `models_eval`), same GT pose target. This is
-the upper bound and the reference for the substitution cost. `n = 12,284`, 0 failures, coverage 1.0.
+The 2×2 of gallery representation × query modality, R@1:
+
+| Query | partial | full mesh | Δ |
+|---|---|---|---|
+| cross | **0.4818** | 0.4639 | −0.018 |
+| pc | **0.4636** | 0.3504 | −0.113 |
+
+Partial views win in both modes, and the margin is **six times larger** with a point-cloud query.
+This is the mechanism, not a coincidence: pc-vs-partial matches observation to observation, while a
+full mesh compares a partial query against a complete surface. Stage 1 (SHREC'18, pc-mode
+throughout) shows the same sign at +0.0495 nDCG, so the finding transfers to BOP and strengthens.
+
+**But the aggregate hides a reversal.** Per dataset, full mesh is *better* on
+**T-LESS (0.332 → 0.396)** and **LM-O (0.464 → 0.490)**; the overall partial advantage comes
+entirely from YCB-V (0.732 → 0.566). YCB-V is textured household objects whose appearance the
+partial renders capture; T-LESS are texture-less industrial parts where complete geometry carries
+more than viewpoint. Full mesh additionally wins **R@5, R@10 and MRR** — it is worse at rank 1 and
+better in depth.
+
+Both full-mesh arms logged 100.0 % gallery coverage on all six datasets, verified per dataset by
+the coverage gate added on 2026-08-31 (see `DECISIONS.md`).
+
+---
+
+## 3. Geometric re-ranking
+
+dGeDi descriptors + RANSAC over the top-5, with the two signals measured separately:
+**distance** = registration distance after alignment, **fitness** = inlier-radius overlap fraction.
+
+| Query · signal | R@1 | Δ R@1 | MRR | R@5 | R@10 | coverage | YCB-V | T-LESS | LM-O |
+|---|---|---|---|---|---|---|---|---|---|
+| cross, none | **0.4818** | — | **0.5971** | 0.7330 | 0.8120 | — | 0.732 | 0.332 | 0.464 |
+| cross, distance | 0.4229 | −0.059 | 0.5576 | 0.7330 | 0.8120 | 98 % | 0.542 | 0.338 | 0.480 |
+| cross, fitness | 0.4278 | −0.054 | 0.5569 | 0.7330 | 0.8120 | 98 % | 0.558 | 0.337 | 0.480 |
+| pc, none | **0.4636** | — | **0.5844** | 0.7258 | 0.8080 | — | 0.671 | 0.350 | 0.400 |
+| pc, distance | 0.3725 | −0.091 | 0.5215 | 0.7258 | 0.8080 | 98 % | 0.477 | 0.305 | 0.387 |
+| pc, fitness | 0.3820 | −0.082 | 0.5249 | 0.7258 | 0.8080 | 98 % | 0.490 | 0.314 | 0.390 |
+
+**R@5 and R@10 are identical across every row.** Re-ranking only reorders within the top-5, so it
+cannot change set membership at K≥5. Same structural blindness as Stage 1, where five of the seven
+official metrics could not see the geometry stage at all.
+
+**Findings**
+
+- **Geometry loses in all four clean cells**, and loses harder in pc-mode (−0.09 vs −0.06) —
+  consistent with the shape channel already carrying the depth information the re-rank re-derives.
+- **This is not an implementation fault.** At 98 % registration coverage the geometry demonstrably
+  fires, and it is informative in absolute terms: it puts the correct CAD at rank 1 in **58 %** of
+  cases against 20 % chance with five candidates. But the fusion score it *replaces* achieves
+  **66 %** within the same shortlist. Re-ranking is displacement, not addition — it pays only when
+  it beats the score it overwrites. On SHREC'18 it does (47 % vs 34 %), on BOP it does not.
+- **Fitness beats distance on BOP in both modes**, inverting Stage 1 (distance 0.6405 > fitness
+  0.6251 nDCG). SHREC'18 is scale-invariant (`diameters.json` all 1.0), so the alignment distance is
+  meaningful there; on BOP with true metric scale (0.024–1.54 m) the pure overlap measure wins.
+- The per-dataset pattern survives but is **much weaker than the 2026-08-24 legacy run suggested**:
+  geometry still helps slightly where semantics are weak (LM-O +0.016, T-LESS +0.005 for both
+  signals) and hurts badly where they are strong (YCB-V −0.19). The legacy combined-signal run
+  reported LM-O +0.040; that magnitude does not reproduce.
+
+---
+
+## 4. Exact-CAD pose benchmark (`D_posed_gt`)
+
+FoundationPose with each object's **own** CAD (BOP `models_eval`), same GT pose target. This is the
+upper bound and the reference for the substitution cost. `n = 12,284`, 0 failures, coverage 1.0.
 
 | | D_sym mean | D_sym median | /diam mean | /diam median | F@1% | F@5% |
 |---|---|---|---|---|---|---|
@@ -74,58 +137,80 @@ benchmark and pose harness are sound.
 
 ---
 
-## 3. Proxy pose (3b): `D_posed` + substitution cost `Delta`
+## 5. Proxy pose (3b): `D_posed` + substitution cost `Delta`
 
-Gallery is proxies only, so the top-1 is never the exact CAD. Two runs: the best retrieval config
-(**cross**) with and without dGeDi geometry. Both paired against the same `D_posed_gt`.
+Gallery is proxies only (1257), so the top-1 is never the exact CAD. Three arms, all paired against
+the same `D_posed_gt`.
 
-### 3b — cross (no geometry)
+| Arm | D_sym median | /diam median | Delta median | coverage | YCB-V | T-LESS | LM-O |
+|---|---|---|---|---|---|---|---|
+| **OSCAR+ cross ✅** | **18.37 mm** | 0.139 | **15.79 mm** | 1.000 | 23.59 | **13.57** | 28.54 |
+| OSCAR baseline (E5) | 21.73 mm | 0.173 | 18.86 mm | 0.9996 | 24.38 | 18.43 | 31.22 |
+| OSCAR+ cross + geometry | 28.79 mm | 0.253 | 26.07 mm | 1.000 | — | — | — |
 
-| | D_sym mean | D_sym median | F@5% | Delta median |
-|---|---|---|---|---|
-| **Combined** | 33.6 mm | **18.4 mm** | **0.302** | **15.8 mm** |
-| YCB-V | 31.8 | 23.6 | 0.359 | 20.8 |
-| T-LESS | 32.3 | 13.6 | 0.283 | 11.6 |
-| LM-O | 45.0 | 28.5 | 0.223 | 24.6 |
-
-### 3b — cross + geometry (dGeDi)
-
-| | D_sym mean | D_sym median | F@5% | Delta median |
-|---|---|---|---|---|
-| **Combined** | 44.0 mm | 28.8 mm | 0.254 | 26.1 mm |
-| YCB-V | 33.8 | **21.6** | 0.411 | **18.9** |
-| T-LESS | 46.3 | 29.1 | 0.176 | 26.5 |
-| LM-O | 62.3 | 45.9 | 0.168 | 41.4 |
+Right-hand columns are per-dataset `D_sym` medians in mm. The OSCAR baseline had 5 failures out of
+12,284.
 
 **Findings**
-- The proxy imposes a **large, quantified pose penalty**: combined proxy median 18.4 mm vs exact-CAD
-  1.7 mm, F@5% 0.302 vs 0.944. The substitution cost `Delta` is **15.8 mm median** (11.6–24.6 mm
-  per dataset) — the tax for posing with a stand-in CAD instead of the true one.
-- **Geometry hurts proxy pose overall** (combined median 18.4 → 28.8 mm, F@5% 0.302 → 0.254). It
-  **helps only YCB-V** (median 23.6 → 21.6, Delta 20.8 → 18.9, F@5% 0.359 → 0.411) and **hurts
-  T-LESS and LM-O** substantially.
-- **Notable cross-mode nuance:** in *retrieval* (3a) geometry *helped* LM-O and T-LESS-cross, yet in
-  *pose* (3b) it *hurts* them. The reason is that 3b's gallery is proxies-only — a *different*
-  retrieval task than 3a — so a proxy the geometry re-rank judges "more geometrically similar" is
-  not necessarily a better CAD for FoundationPose to refine against.
+
+- **The retrieval margin carries through to pose.** OSCAR+ beats the OSCAR baseline by **3.4 mm**
+  median (18.37 vs 21.73 mm) and does so on all three datasets. The +0.162 R@1 is therefore not an
+  isolated retrieval number — it converts into a usable pose improvement.
+- The proxy imposes a **large, quantified penalty**: 18.4 mm median vs 1.7 mm with the exact CAD,
+  F@5% 0.302 vs 0.944. `Delta` = **15.8 mm median** is the headline substitution cost.
+- **Geometry hurts pose even more than retrieval**: +57 % error against the same arm without
+  re-ranking (18.37 → 28.79 mm). Combined with §3, the geometry axis is of no benefit anywhere in
+  the BOP chain.
 
 ---
 
-## 4. Key takeaways
+## 6. Decomposition (3c) — where the 15 mm come from
 
-1. **Cross (image-query) is the best retrieval configuration** overall; the exception is the
-   texture-less T-LESS, where the point-cloud query is better.
-2. **Geometric re-ranking (dGeDi) does not help in the BOP setting** — net-negative for both
-   retrieval R@1 and proxy pose — despite helping SHREC'18's category retrieval (Stage 1). Its value
-   is confined to weak-semantics cases (LM-O, texture-less T-LESS) in *retrieval*, and even there it
-   does not translate into better *pose*. Geometry belongs in the pose stage, not retrieval re-ranking.
-3. **Exact-CAD pose is excellent; the proxy is the bottleneck.** The 15.8 mm median substitution
-   cost is the headline number quantifying "how much does using a retrieved proxy cost you."
-4. Best headline configuration: **cross query, no geometry** (used for the reported 3b).
+Only the exact GT model is removed from the gallery; everything else stays. This separates the case
+where the best remaining substitute is a real CAD of a *different* object from the case where it
+comes from the external proxy gallery.
+
+| Case | n | share | D_sym median | D_sym mean |
+|---|---|---|---|---|
+| All | 12,284 | 100 % | 15.34 mm | 28.05 mm |
+| Substitute is a real CAD (different object) | 6,742 | 54.9 % | **10.35 mm** | 16.86 mm |
+| Substitute from the proxy gallery | 5,542 | 45.1 % | 20.10 mm | 41.67 mm |
+| — YCB-V | 4,123 | — | 19.11 mm | 28.59 mm |
+| — T-LESS | 6,716 | — | **8.75 mm** | 24.91 mm |
+| — LM-O | 1,445 | — | 24.25 mm | 41.15 mm |
+
+`n_target_was_top1 = 5,918`; `n_same_dataset = 6,216`.
+
+**Findings**
+
+- **Roughly half the substitution error is addressable.** A real CAD of another object costs
+  10.35 mm; a proxy-gallery model costs 20.10 mm — nearly double. Gallery composition is therefore
+  its own lever: part of the error disappears with better-matched proxies, the rest is intrinsic
+  substitution loss.
+- **T-LESS has the best pose median (8.75 mm) despite the worst retrieval (R@1 0.332).** Not a
+  contradiction: the objects are geometrically so similar that a *wrongly* chosen CAD still supports
+  a good pose. Retrieval accuracy and pose usefulness are not the same quantity — a point worth
+  making explicitly in the thesis.
 
 ---
 
-## 5. Metric definitions
+## 7. Key takeaways
+
+1. **The shape channel is the contribution**: +0.162 R@1 over the faithful OSCAR cascade, and
+   −3.4 mm pose error. Both directions of the claim are now measured.
+2. **Best configuration: cross query, partial-view gallery, no geometry.** It is also the fastest —
+   the stage that was switched off was the most expensive one.
+3. **Geometric re-ranking does not help in the BOP setting**, for retrieval or for pose, despite
+   helping SHREC'18. The criterion is general: geometry pays only where it beats the score it
+   replaces. It belongs in the pose stage, not as blanket retrieval re-ranking.
+4. **Partial views beat full mesh in aggregate but not per dataset** — the advantage is YCB-V's
+   alone, and full mesh wins the depth metrics. Report the split, not the aggregate.
+5. **Exact-CAD pose is excellent; the proxy is the bottleneck.** 15.8 mm median substitution cost,
+   of which roughly half is attributable to the proxy gallery rather than to substitution as such.
+
+---
+
+## 8. Metric definitions
 
 - **Recall@k / MRR** — standard retrieval metrics; the one relevant item is the exact target CAD
   (in the 3a gallery only).
@@ -139,14 +224,21 @@ Gallery is proxies only, so the top-1 is never the exact CAD. Two runs: the best
 - **Delta = D_posed − D_posed_gt** — paired per instance; the pose accuracy lost by substituting a
   retrieved proxy for the object's own CAD.
 
-## 6. Provenance & reproducibility
+## 9. Provenance & reproducibility
 
-- **Best-variant selection** (3a → 3b) is automatic by combined Recall@1 → **cross**.
+- **Gate:** the run chain promotes an arm to 3b/3c only if its 3a R@1 beats the frozen cross config
+  (0.482). No arm did, so no additional pose runs were triggered — `3b_oscar` was run
+  unconditionally as the baseline comparison.
 - **Deterministic:** RNG seeding (`PYTHONHASHSEED=0`, seeded surface sampling), fused ranking, dGeDi
-  Borda re-rank. **Not bit-reproducible:** FoundationPose GPU hypothesis sampling and open3d RANSAC —
-  so the raw per-instance R/t poses are **stored** in every `records.json`, making all pose metrics
+  re-rank. **Not bit-reproducible:** FoundationPose GPU hypothesis sampling and open3d RANSAC — so
+  the raw per-instance R/t poses are **stored** in every `records.json`, making all pose metrics
   reproducible from the stored poses. See `object_retrieval/STAGE3_DETERMINISM.md`.
 - **Units:** FoundationPose works in metres; BOP meshes scaled 0.001 (mm→m) and returned t×1000.
-- **Result files:** `object_retrieval/results_bop_stage3_v2/{3a_pc,3a_pc_geo,3a_cross,3a_cross_geo,
-  gt,3b_cross,3b_cross_geo}/` — each with `combined_*.json`, per-dataset dirs, and `records.json`
-  (raw poses + retrieved shortlist top-10).
+- **Result directories** under `object_retrieval/results_bop_stage3_v2/`:
+  `3a_cross`, `3a_pc`, `3a_fullmesh`, `3a_pc_fullmesh`, `3a_oscar`,
+  `3a_cross_geo{,_distance,_fitness,_borda}`, `3a_pc_geo{,_distance,_fitness}`,
+  `gt`, `3b_cross`, `3b_cross_geo`, `3b_oscar`, `3c_cross` — each with `combined_*.json`,
+  per-dataset dirs, and `records.json` (raw poses + retrieved shortlist top-10).
+- **Superseded arms:** `3a_cross_geo` and `3a_pc_geo` are the pre-separation combined-signal runs;
+  `3a_cross_geo_borda` fell through with 0 % coverage (arm deliberately killed) and equals
+  `3a_cross`. Use the `_distance` / `_fitness` arms for the geometry conclusion.

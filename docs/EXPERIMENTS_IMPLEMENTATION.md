@@ -1,10 +1,10 @@
-# OSCAR+ — Experiments 1–3 Implementation
+# OSCAR+ — Experiments 1–4 Implementation
 
 *Thesis-input reference for the evaluation code. For each experiment it makes explicit:
 **how the queries were produced**, **what was fed into the pipeline**, **which pipeline parts
 were exercised**, and **what came out**. Pseudo-code mirrors the actual drivers; the metric and
 config rationale live in `EVALUATION_STORY_AND_PLAN.md`, the pipeline itself in
-`PIPELINE_IMPLEMENTATION.md`. Last updated 2026-08-26.*
+`PIPELINE_IMPLEMENTATION.md`. Last updated 2026-08-31 — added Experiment 4 (latency).*
 
 The three experiments map to the three evaluation stages and share one retrieval stack at an
 **identical, audited configuration** (42 views · top-k-softmax k=5 · mean DINO pooling ·
@@ -222,7 +222,119 @@ python eval_bop_pose.py --datasets all --mode 3c --from-3a <3a-dir>
 
 ---
 
-## 4. Validation instrumentation (cross-experiment)
+## 4. Experiment 4 — onboarding and query latency
+
+Experiments 1–3 answer *how well*. Experiment 4 answers *at what cost*: what it takes to make a
+new object findable, and how long one query takes end to end. Both are wall-clock measurements
+with the same gallery as Stage 3, so the numbers sit next to the accuracy numbers without
+re-explaining the setup.
+
+**Measurement harness** (`experiments/stage4_common.py`). CUDA kernels are asynchronous, so a
+bare `perf_counter()` around an encoder call measures time-to-enqueue, not time-to-finish —
+every measurement synchronises before and after. Statistics are **median + IQR + p95**, not
+mean + stdev: latency distributions are right-skewed, a single outlier (swap, cache miss,
+thermal throttling) moves the mean and not the median, and for an interactive system the bad
+case is the relevant quantity. Repeated measurements of one step within one item are summed
+before aggregation, so the statistics run over items and not over individual calls.
+
+### 4.1 Experiment 4a — onboarding a CAD
+
+**What is onboarded.** Base gallery = the **3b database** (`G_proxy` = gso 1030 + housecat6d 199
++ itodd 28 = 1257). The **59 target CADs** (ycbv 21 + tless 30 + lmo 8) are exactly the objects
+that database is missing, so each is onboarded individually and the distribution over the 59
+real CADs is the result. Vertex count, face count and file size are recorded per object so the
+spread is explainable rather than just reported.
+
+**Steps, each timed separately** — and within the encode steps, I/O is separated from
+computation, otherwise `embed_dino` silently contains PNG decoding, which has nothing to do
+with the encoder and scales differently on other hardware:
+
+```
+mesh        trimesh load → merge_vertices → fix_normals → bbox diameter
+render      blender -b -P rendering/rendering.py   with RENDER_ONLY=<obj>, NUM_VIEWS=V
+partial     generate_partial_pointclouds.py        (HPR per view)
+describe    generate_descriptions.py               (LLaVA, one caption per view)
+io_load_images / embed_dino    DINOv2 over the V renders
+embed_clip                     CLIP text over the V captions
+io_load_clouds / embed_ulip    ULIP-2 over the V partial clouds
+dgedi                          GeDi descriptors (optional; only if geometry is used)
+cache_write                    serialise the cache entry
+```
+
+Renders go to a **work directory**, never into `object_images/` — the experiment must not
+overwrite the gallery it is measuring against.
+
+**The cache-invalidation finding.** `_get_partial_cache_path` fingerprints the *entire*
+inventory (one line per object per view). Adding one object changes the hash and invalidates
+everything, so onboarding really costs **O(gallery)**, not O(1). Two numbers are therefore
+reported:
+
+- **incremental** — encode only the new object's views with models already loaded. This is
+  measured directly, not simulated: it is exactly the work an append-only cache would do.
+- **invalidation surcharge** (`--measure-invalidation`) — the full-gallery re-encode the current
+  fingerprint forces on top.
+
+Model load time is reported apart from both; it is a system start-up cost, not an onboarding cost.
+
+### 4.2 Experiment 4b — query latency
+
+**Query production.** N BOP instances drawn with a fixed seed. The language prompt is the
+target object's **first stored description** — deliberately the same source the text channel
+uses, because a hand-written prompt would make the segmentation better or worse than the system
+could manage in operation and would mix a quality question into a latency measurement.
+
+```
+io_load        RGB + depth read and decode, K and depth_scale from scene_camera.json
+segment        ObjectLocalizer.localize(rgb, prompt)   GroundingDINO box → SAM2.1 mask
+pointcloud     backproject_masked(depth·scale, mask, K)
+encode_query   ULIP-2 over the query cloud
+clip / dino / ulip / fusion    run_query(...)          one pass, channels timed individually
+geometry       GeDi + RANSAC over top-K              (only with --geometry, K=5)
+pose           FoundationPose on the top-1 CAD       (unless --no-pose)
+```
+
+The per-channel timings come from wrapping `retrieve` / `rerank` / `match` / `fuse` on the
+component objects **inside the experiment script**. `run_query` executes all channels in one
+pass, and the modules are shared by all four experiments — a measurement run must not modify
+them.
+
+**Cold and warm are separated.** Loading GroundingDINO, SAM2.1, CLIP, DINOv2, ULIP-2 and
+FoundationPose costs a multiple of one query; a figure that mixes both only reports how many
+queries were averaged.
+
+### 4.3 The 16-vs-42-view cost/benefit
+
+Stage 1 already measured the quality side, and it is flat past 16 views:
+
+| views | nDCG (Stage-1 O4) | vs V42 |
+|---|---|---|
+| 8 | 0.5714 | −0.0154 |
+| 16 | **0.5820** | −0.0048 |
+| 32 | 0.5800 | −0.0068 |
+| 42 | 0.5868 | — |
+
+V32 lands *below* V16, so beyond 16 views there is no reliable gain. Both scripts accept a
+view-count list (`--num-views 16,42` / `--views 16,42`) and print a cost/benefit table with the
+measured cost next to this quality column. On the query side the sweep is nearly free: gallery
+embeddings are always cached for all 42 views and `_apply_view_limit()` only filters — nothing
+is re-encoded. Steps that do not depend on view count (`mesh`) are excluded from the comparison,
+since their difference would be pure measurement noise.
+
+### 4.4 What comes out
+
+```
+results_stage4/onboarding.json      per_step stats by view count, per-object records with
+                                    vertex/face counts, model_load_once_s, invalidation
+results_stage4/query_latency.json   per_step stats by view count, cold_start_s, per-query
+                                    records with prompt and top-1
+```
+
+Both payloads carry `provenance` (GPU model, VRAM, torch version, git commit) — a latency figure
+without the machine it was produced on is not citable.
+
+---
+
+## 5. Validation instrumentation (cross-experiment)
 
 - **Paired significance test** — `object_retrieval/paired_significance.py`: pairs
   `results_per_query.json` by query id, reports paired mean Δ + **95% bootstrap CI (10k)** +

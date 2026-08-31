@@ -1,5 +1,52 @@
 # AI Log
 
+## 2026-08-31 Full-mesh IDs collapsed on HouseCat6D — caught before the run, contained to Stage 3
+
+Goal
+- Audit the queued Stage-3 arms (`3a_fullmesh`, `3a_pc_fullmesh`) before launching them, after the Stage-2 silent full-mesh fallback showed that configuration errors in this pipeline do not announce themselves.
+
+The defect
+- `stage3_gallery._absorb_dataset` loaded full-mesh shape references via `load_cad_models(cad_dir=…)`, which resolves object ids through `_collect_mesh_items`. That helper derives the id from the **directory name**, which is correct only while every object owns a directory.
+- HouseCat6D is grouped by category — `object_database/housecat6d/<category>/<object>.obj` — so all **199 objects collapsed onto 12 category ids** (`bottle`, `box`, `cup`, …). None of them matches a gallery id, since gallery ids are the render-directory names (`bottle-85_alcool`).
+- Consequence had it run: **199 of 1316 gallery entries (15 %) without a shape embedding**, and 199 of 1257 (16 %) of the *proxy* gallery, which 3b/3c depend on. No exception, no warning — the arm would have completed and produced plausible numbers with a partially amputated shape channel.
+- The code carried a comment demanding exactly this check ("VERIFY per dataset (n_absorbed logged) before trusting the numbers"). A comment is not a check; nobody had run it.
+
+Blast radius — no other run was affected
+- `load_cad_models` has exactly one caller in the evaluation code (`stage3_gallery.py:342`); the other two are in the interactive `run_pipeline.py`. Stage 1 and Stage 2 never reach `_collect_mesh_items`: both pass explicit `cad_mesh_items` built from the **file stem** (`eval_common.py:413`, `retrieval_mi3dor_eval_oscarplus.py:157`), which is the correct rule for their flat layouts.
+- Verified empirically rather than by reading, by intersecting the cached embedding ids with the render directories:
+
+| run | cache ids | gallery ids | matched |
+|---|---|---|---|
+| MI3DOR full-mesh (Stage 2, all of it) | 3848 | 3848 | **3848** |
+| MI3DOR category-filtered | 1817 | — | **1817** |
+| SHREC'18 (Stage 1, three caches) | 3308 | 3308 | **3308** |
+
+- No completed Stage-3 run had used the broken branch either: the single earlier `3a_fullmesh` attempt (2026-08-28) died with `FileNotFoundError` from the unrelated wildcard-path bug before producing output. The defect therefore never reached a published number.
+
+The fix
+- `_FULLMESH_ID_MODE` states the id rule per dataset explicitly, and `load_cad_models` accepts a resolved `mesh_items` list instead of inferring one. Kept deliberately separate from `DATASET_LAYOUT["id_mode"]`, which feeds `build_pipeline`'s `cad_mesh_items` fallback and was not touched while the partial arms were mid-run.
+- A **hard coverage gate** replaces the comment: below 95 % of gallery ids carrying an embedding, the assembly raises with the missing ids instead of continuing.
+- Two independent confirmations before launch: 1316/1316 coverage against the render directories, and the derived ids reproduce the *precomputed* full-mesh caches exactly (ycbv 21, gso 1030, housecat6d 199, all `identisch=True`) — so the precompute path had always used the correct convention and only the Stage-3 runtime path deviated. Post-run both arms logged `Deckung 100.0%` on all six datasets.
+
+Stage-3 results these arms produced
+- Gallery representation × query modality (R@1):
+
+| query | partial | full-mesh | Δ |
+|---|---|---|---|
+| cross | **0.4818** | 0.4639 | −0.018 |
+| pc | **0.4636** | 0.3504 | −0.113 |
+
+- Partial views win in both modes, and the margin is **six times larger** when the query is itself a partial cloud. That is the mechanism, not a coincidence: pc-vs-partial matches observation to observation, while a full mesh compares a partial query against a complete surface. Stage 1 (SHREC, pc-mode) showed the same sign at +0.0495 nDCG, so the finding transfers to BOP and strengthens.
+- Geometry re-ranking, all four clean cells, at 98 % registration coverage:
+
+| query | no geometry | distance | fitness |
+|---|---|---|---|
+| cross | **0.4818** | 0.4229 | 0.4278 |
+| pc | **0.4636** | 0.3725 | 0.3820 |
+
+- Geometry loses in every configuration on BOP, and loses harder in pc-mode — consistent with the shape channel already carrying the depth information the re-rank re-derives. **Fitness beats distance on BOP in both modes**, inverting Stage 1 (distance 0.6405 > fitness 0.6251): the registration distance is the better signal where it operates scale-invariantly, the pure overlap measure wins once real metric scale is in play.
+- OSCAR baseline (E5, τ-pruned CLIP → DINO best-view, no shape): R@1 **0.3198** vs 0.4818 for the full fusion, **+0.162**.
+
 ## 2026-07-30 Geometry cells landed; re-ranking is invisible to five of the seven metrics
 
 Goal

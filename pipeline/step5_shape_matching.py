@@ -948,6 +948,7 @@ class ShapeMatcher:
         cad_dir: Optional[str] = None,
         partial_pc_dir: Optional[str] = None,
         allowed_extensions: Tuple[str, ...] = (".obj", ".ply", ".glb", ".gltf"),
+        mesh_items: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         """Lädt und encodiert CAD-Modelle als Punktwolken.
 
@@ -969,6 +970,13 @@ class ShapeMatcher:
                             (same as reference_images_dir). Falls None, wird
                             config.reference_images_dir verwendet.
             allowed_extensions: Erlaubte Dateierweiterungen.
+            mesh_items: Optionale, bereits aufgeloeste (object_id, mesh_path)-Liste.
+                Umgeht ``_collect_mesh_items``, dessen ID = Ordnername ist. Das
+                stimmt nur, solange jedes Objekt einen eigenen Ordner hat; bei
+                nach Kategorien gruppierten Datensaetzen (HouseCat6D:
+                ``<kategorie>/<objekt>.obj``) faellt sonst die GANZE Kategorie
+                auf EINE ID zusammen. Aufrufer, die ihre IDs kennen, geben sie
+                hier explizit vor.
         """
         if self._encoder_type == "uni3d":
             if self._uni3d is None:
@@ -989,7 +997,8 @@ class ShapeMatcher:
 
         # --- Full mesh path (legacy) ---
         logger.info(f"Lade CAD-Modelle aus: {cad_dir}")
-        mesh_items = self._collect_mesh_items(cad_dir, allowed_extensions)
+        if mesh_items is None:
+            mesh_items = self._collect_mesh_items(cad_dir, allowed_extensions)
         if not mesh_items:
             logger.warning("Keine CAD-Meshes im Ordner gefunden: %s", cad_dir)
             return

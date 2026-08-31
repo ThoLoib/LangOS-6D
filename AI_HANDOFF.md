@@ -1,9 +1,68 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-08-07 (merge of `origin/tessa-pc` and the laptop Stage-1
-> geometry run into `feat/stage1-official-eval-precompute`; entries below are
+> Last updated: 2026-08-31 (Stage-3 run chain complete; entries below are
 > newest-first and the two 2026-07-3x updates come from the two machines
 > independently)
+
+## Update 2026-08-31 (Stage 3 complete — nothing queued)
+
+Both chains finished: `run_stage3_rest.sh` at 2026-08-30 19:16, the appended
+`run_stage3_pc_fullmesh.sh` at 21:41. **No evaluation run is in flight.**
+All results in `object_retrieval/results_bop_stage3_v2/`, synced to Drive.
+
+Retrieval, R@1 over 12 284 BOP instances (ycbv + tless + lmo, GT `mask_visib`):
+
+| arm | R@1 | note |
+|---|---|---|
+| `3a_cross` (frozen config) | **0.4818** | reference; the gate's `BASE` |
+| `3a_pc` | 0.4636 | point-cloud query |
+| `3a_fullmesh` | 0.4639 | cross query, full-mesh gallery |
+| `3a_pc_fullmesh` | 0.3504 | pc query, full-mesh gallery |
+| `3a_oscar` (E5 baseline) | 0.3198 | τ-pruned CLIP → DINO best-view, no shape |
+| geometry, cross | 0.4229 / 0.4278 | distance / fitness, 98 % coverage |
+| geometry, pc | 0.3725 / 0.3820 | distance / fitness, 98 % coverage |
+
+Three findings, all with the mechanism identified (details in `docs/AI_LOG.md`):
+- **Partial > full-mesh in both modes**, six times stronger in pc-mode
+  (−0.113 vs −0.018) — observation-to-observation matching. Same sign as
+  Stage 1 (+0.0495 nDCG), so the finding transfers to BOP.
+- **Geometry loses in all four cells** despite 98 % registration coverage. It is
+  informative in absolute terms but weaker than the fusion score it *replaces*
+  (58 % vs 66 % top-1 within the shortlist); on SHREC the ordering is reversed.
+- **Fitness > distance on BOP**, inverting Stage 1 — scale-invariance is what
+  made the registration distance the better signal there.
+
+The gate did not fire (no arm beat 0.482), so no further 3b/3c runs were
+triggered. `3b_oscar` completed; D_sym numbers are in its output.
+
+Changed on the way in, and required by anything that touches the full-mesh arm:
+`stage3_gallery` now resolves full-mesh ids through `_FULLMESH_ID_MODE` and
+**aborts below 95 % gallery coverage**. See `DECISIONS.md` 2026-08-31 — the id
+inference it replaces would have silently dropped HouseCat6D's 199 objects.
+
+Write-up: `docs/STAGE3_RESULTS_SUMMARY.md` (rewritten 2026-08-31 — the 08-24
+version quoted the pre-separation geometry run and is superseded), artifact at
+<https://claude.ai/code/artifact/280da703-95e6-461e-832a-1fdd92c24ab8>.
+
+**Stage 4 (latency) implemented, not yet run.** Two flag-based CLIs plus a shared
+timing harness: `experiments/experiment4_onboarding.py` (cost of onboarding one
+CAD, over the 59 target CADs against the 3b database),
+`experiments/experiment4_query_latency.py` (prompt → segmentation → retrieval →
+FoundationPose), `experiments/stage4_common.py`. Cold and warm are separated;
+`--num-views 16,42` prints a cost/benefit table against the Stage-1 quality
+column (V16 0.5820 vs V42 0.5868, and V32 *below* V16). Smoke-tested on the light
+path only (`--stages mesh`); Blender, LLaVA, the encoders and FoundationPose have
+not been exercised, so expect one or two field names to need fixing on the first
+real run. Design and rationale: `EXPERIMENTS_IMPLEMENTATION.md` §4.
+
+Open (nothing blocking):
+- Run Stage 4 at full scale; report the 16-vs-42-view cost/benefit.
+- Coverage guard for the *partial* branch — deliberately deferred while runs
+  were live, safe to add now.
+- `DATASET_LAYOUT["id_mode"]` is `"stem"` for tless/lmo/itodd, which yields
+  `"model"` for every object under `*/model.ply`. Latent (the affected fallback
+  is overwritten downstream), same trap class, should be closed.
+- Stage-5 grasping: perception chain runs, grasp execution does not lift yet.
 
 ## Update 2026-07-31 (Stage-1 evaluation redesign — agreed, partially implemented)
 
