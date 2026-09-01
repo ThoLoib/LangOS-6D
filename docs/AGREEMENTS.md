@@ -11,6 +11,27 @@ gegenlesen, ob er noch dem entspricht, was hier steht.
 
 ---
 
+## 2026-09-01 (Nachtrag)
+
+- **Gemessen wird der Pfad, den die Pipeline nimmt** — nicht ein dafür erfundener.
+  `embed_clip` fehlte, weil ich nach einem `encode_text` griff, das es nie gab, statt
+  `_encode_texts_batch` zu nehmen, das `load_descriptions` selbst aufruft. Nebenwirkung:
+  meine Einzelstring-Schleife hätte eine lineare Skalierung gezeigt, die es wegen des
+  Batchings gar nicht gibt (4,6 ms bei 16 wie bei 42 Views).
+- **Die Onboarding-Kette ist mesh → render → partial → describe → embed → cache**,
+  gemäß `docs/PREPROCESSING.md` §1. `partial` fehlte in allen Läufen bis zum 2026-09-01,
+  weil `reuse_renders` die Kameramatrizen nicht mitkopierte. SYNC und VERIFY (rclone) bleiben
+  draußen — Thomas: "Sync ist unwesentlich". Netzzeit, keine Eigenschaft der
+  Pipeline.
+- **Schritt 7 (Skalenbestimmung) fehlt in der Query-Kette bewusst** und wird als
+  Auslassung benannt — er wurde als eigenständige Komponente verworfen und läuft auch
+  in der Stage-3-Konfiguration nicht.
+- **Jede Unterprozess-Stufe prüft ihr Ergebnis, nicht den Rückgabewert.** `render` zählt
+  erzeugte Bilder, `partial` erzeugte Wolken. Beide hatten `rc=0` bzw. plausible Zeiten
+  gemeldet und nichts produziert.
+- **Ein Aufruf je Seite:** `scripts/stage4_onboarding.sh` und `scripts/stage4_query.sh`.
+  Der Onboarding-Wrapper teilt sich auf Host (Blender) und Container (Rest) auf.
+
 ## 2026-09-01
 
 - **Stage 4a simuliert einen inkrementellen Cache — und zwar echt.** Gemessen wird, was
@@ -58,23 +79,3 @@ gegenlesen, ob er noch dem entspricht, was hier steht.
 - **Geometrie bleibt in der Pose-Pipeline aus** (Stage-3-Befund, alle vier Zellen).
 - **τ = 0.37 und Mittelwert-Pooling sind fix**, nicht Teil der Ablationen.
 - **Auf `tessa-pc` pushen, nie auf `main`. Nur committen, wenn danach gefragt wird.**
-
-## 2026-09-01 (Nachtrag)
-
-- **Gemessen wird der Pfad, den die Pipeline nimmt** — nicht ein dafür erfundener.
-  `embed_clip` fehlte, weil ich nach einem `encode_text` griff, das es nie gab, statt
-  `_encode_texts_batch` zu nehmen, das `load_descriptions` selbst aufruft. Nebenwirkung:
-  meine Einzelstring-Schleife hätte eine lineare Skalierung gezeigt, die es wegen des
-  Batchings gar nicht gibt (4,6 ms bei 16 wie bei 42 Views).
-- **Die Onboarding-Kette ist mesh → render → partial → describe → embed → cache**,
-  gemäß `docs/PREPROCESSING.md` §1. `partial` fehlte in allen Läufen bis zum 2026-09-01,
-  weil `reuse_renders` die Kameramatrizen nicht mitkopierte. SYNC und VERIFY (rclone)
-  bleiben draußen: Netzzeit, keine Eigenschaft der Pipeline.
-- **Schritt 7 (Skalenbestimmung) fehlt in der Query-Kette bewusst** und wird als
-  Auslassung benannt — er wurde als eigenständige Komponente verworfen und läuft auch
-  in der Stage-3-Konfiguration nicht.
-- **Jede Unterprozess-Stufe prüft ihr Ergebnis, nicht den Rückgabewert.** `render` zählt
-  erzeugte Bilder, `partial` erzeugte Wolken. Beide hatten `rc=0` bzw. plausible Zeiten
-  gemeldet und nichts produziert.
-- **Ein Aufruf je Seite:** `scripts/stage4_onboarding.sh` und `scripts/stage4_query.sh`.
-  Der Onboarding-Wrapper teilt sich auf Host (Blender) und Container (Rest) auf.
