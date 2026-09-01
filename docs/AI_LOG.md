@@ -1,5 +1,66 @@
 # AI Log
 
+## 2026-09-01 Textured meshes lost their colour in the full-mesh path — and the hypothesis it inspired was wrong
+
+Goal
+- Check whether the partial-vs-full-mesh gap in Stage 3 (−0.113 R@1 in pc-mode) is a configuration
+  artefact, prompted by the size of the difference.
+
+The defect
+- `sample_pointcloud_from_mesh` read colour only from `mesh.visual.face_colors`. Textured meshes
+  carry their colour in an image plus UV coordinates, where that attribute is `None`; the caller
+  then substitutes `np.zeros_like(points)`, so the *coloured* ULIP-2 backbone received three dead
+  channels. Measured per dataset (std of sampled RGB): SHREC'18 `None`, GSO `None`, YCB-V `None`,
+  LM-O 0.04, while the corresponding partial clouds carry 0.18–0.28.
+- Scope is the full-mesh path only, i.e. Stage-1 arm `E2b_fullmesh*`, the Stage-3 full-mesh arms,
+  and **all of Stage 2**, which ran full-mesh throughout via the silent fallback. Every partial-view
+  arm — including the headline configurations of Stages 1 and 3 — is unaffected.
+- Separate from the code defect: **MI3DOR, T-LESS, ITODD and HouseCat6D carry no colour in the
+  files at all**. MI3DOR returns a uniform (0.4, 0.4, 0.4) for every one of the 3848 meshes, which
+  is trimesh's default, i.e. the files are colourless. No sampler fix can recover that; only the
+  renders have colour. Stage 2's shape channel therefore ran colour-blind over the whole gallery —
+  a plausible contributing reason for ULIP-2 being its weakest channel (FT 0.510 vs DINO 0.629),
+  which had been attributed to cross-modal difficulty alone.
+
+The hypothesis was wrong, and that is the more useful finding
+- The obvious conclusion — "the full-mesh arms lost their colour, hence the gap" — does not
+  survive contact with the data. Three independent counter-arguments:
+  1. **The damage does not track the colour.** YCB-V loses real colour (0.21 → none) and drops
+     0.036. T-LESS loses none (both sides are 0.0) and drops 0.193.
+  2. **The query-mode asymmetry rules it out.** The gallery is point-cloud-encoded in *both* modes,
+     so a gallery-only property must affect them equally. It affects pc six times more
+     (−0.113 vs −0.018). That points at the *relation* between query and gallery, not the gallery.
+  3. A discriminability probe I ran was **worthless and is recorded as such**: it compared a max
+     over 42×42 view pairs (partial) against a single cosine (full mesh), which is structurally
+     larger and measures nothing.
+- What the gap actually is: query–gallery domain match. In pc-mode the query is a partial cloud and
+  the partial gallery consists of exactly those, with 42 chances per object to match the viewpoint;
+  a full mesh offers one embedding of a complete surface on the same unit sphere as the query
+  patch. The per-dataset staggering follows from how much the shape channel must carry alone.
+- Target-rank distribution on T-LESS (pc): partial median 2, full mesh median 8, **no shape channel
+  median 24**. Full mesh lifts the ranking well above the no-shape baseline — it is informative and
+  fails only at rank 1, which is precisely what Recall@1 measures.
+
+A trap in the fix
+- The cache fingerprint (`_get_cache_path`) hashes config flags and **file sizes**, not the sampled
+  colour values, and `ulip2_use_colors` was already `True`. The hash is therefore unchanged by the
+  fix: without moving the old caches aside, the re-run would have silently loaded the colourless
+  embeddings and produced identical numbers. Four caches (gso, ycbv, housecat6d, shrec18) are
+  stashed rather than deleted by `scripts/run_fullmesh_color_redo.sh`.
+
+Changes
+- `_sample_face_colors` resolves colour in three steps: `face_colors` → `to_color().vertex_colors`
+  averaged over each sampled triangle → `None`. Verified after the fix: GSO 40/40 objects coloured,
+  YCB-V 0.21–0.28, SHREC 41/60 (≈30 % of its CADs have unresolvable textures and stay colourless —
+  a documented limitation of that arm).
+- `eval_bop_pose` now records `arm_ranks`, the target's rank **per channel**. `run_query` already
+  computes those arms in the same pass, so the isolated shape channel (`ulip_only_full`) now falls
+  out of every run for free — previously it would have required separate runs with weights (0,0,1),
+  and the partial-vs-full-mesh effect stayed hidden behind a fusion that absorbs 70 % of it.
+- Prediction recorded before the re-run so the result cannot be fitted afterwards: **GSO and YCB-V
+  should improve slightly, T-LESS should not move, and the overall finding should stand.** If that
+  does not hold, something else is still unaccounted for.
+
 ## 2026-08-31 Full-mesh IDs collapsed on HouseCat6D — caught before the run, contained to Stage 3
 
 Goal

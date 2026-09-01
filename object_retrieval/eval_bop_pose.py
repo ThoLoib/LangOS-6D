@@ -622,6 +622,20 @@ def _eval_retrieval_dataset(dataset, gallery, components, mode, max_targets,
                    # displaced the removed exact target.
                    "top10": [{"id": oid, "score": round(s, 5)}
                              for oid, s in ranking[:10]]}
+            # Rang des Ziels je EINZELKANAL. run_query berechnet diese Arme
+            # ohnehin in demselben Durchlauf (_arm_rankings); sie kosten hier
+            # nur die Rangsuche. Damit liefert jeder Lauf den isolierten
+            # Shape-Kanal (`ulip_only_full`) gratis mit — sonst braeuchte man
+            # dafuer eigene Laeufe mit Gewichten (0,0,1), und der
+            # partial-vs-full-mesh-Effekt bliebe hinter der Fusion verborgen,
+            # die ihn zu 70 % abfedert.
+            if include_target:
+                try:
+                    rec["arm_ranks"] = {
+                        arm: rank_of_target(rk, target_nsid)
+                        for arm, rk in _arm_rankings(out).items()}
+                except Exception as exc:            # nie den Lauf abbrechen
+                    rec["arm_ranks_error"] = str(exc)[:120]
             if use_uni3d or use_pc_query:
                 rec["pc_query_fallback"] = pc_query_fallback
             if geo_applied:

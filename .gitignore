@@ -71,3 +71,9 @@ third_party/pylibs/
 # Grasping demo renders (regenerable via grasping/stage5_demo.py)
 /grasping/*.png
 /grasping/demo_grasps.json
+
+# Beiseitegeraeumte Full-Mesh-Caches (regenerierbar)
+/.ulip_cache_stash_*/
+
+# Stage-4-Messergebnisse
+/results_stage4/

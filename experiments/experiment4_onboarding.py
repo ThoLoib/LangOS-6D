@@ -62,9 +62,16 @@ import sys
 
 _THIS = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_THIS)
+sys.path.insert(0, _THIS)
 for p in (_ROOT, os.path.join(_ROOT, "object_retrieval")):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# Wie in experiment4_query_latency.py: relative Datenpfade ("../object_database/…")
+# loesen gegen das Arbeitsverzeichnis auf. Alle Pfade dieses Skripts sind gegen
+# _ROOT absolut gebildet, die Subprozesse bekommen ihr cwd explizit — der Wechsel
+# betrifft also nur den Pipeline-Code.
+os.chdir(os.path.join(_ROOT, "object_retrieval"))
 
 from stage4_common import (Timings, aggregate, host_provenance,  # noqa: E402
                            print_table, summarize, write_results)
@@ -127,7 +134,14 @@ def stage_render(mesh_path, out_dir, obj_id, num_views, blender, t: Timings) -> 
         r = subprocess.run(cmd, env=env, capture_output=True, text=True,
                            cwd=os.path.join(_ROOT, "rendering"))
     n = len(glob.glob(os.path.join(out_dir, obj_id, "*.png")))
-    return {"render_rc": r.returncode, "render_views": n}
+    # Blender beendet sich bei einem Python-Fehler mit rc=0 (beobachtet
+    # 2026-08-31: fehlendes PIL -> Traceback, rc=0, 250 ms, null Bilder).
+    # Der Rueckgabewert taugt hier also nicht als Erfolgspruefung; die Zahl der
+    # erzeugten Bilder tut es.
+    out = {"render_rc": r.returncode, "render_views": n}
+    if n == 0:
+        out["render_error"] = (r.stderr or r.stdout or "")[-300:]
+    return out
 
 
 def stage_partial(mesh_path, out_dir, num_points, t: Timings) -> dict:
@@ -142,15 +156,49 @@ def stage_partial(mesh_path, out_dir, num_points, t: Timings) -> dict:
     return {"partial_rc": r.returncode}
 
 
-def stage_describe(out_dir, obj_id, t: Timings) -> dict:
+def reuse_renders(ds, oid, obj_dir, num_views) -> dict:
+    """Vorhandene Renderings ins Arbeitsverzeichnis kopieren.
+
+    Blender ist auf dieser Maschine nicht installiert (die Gallery wurde auf dem
+    zweiten PC gerendert), damit faellt die render-Stufe aus — und mit ihr die
+    Eingabe fuer describe und embed. Die Kosten von LLaVA und den Encodern
+    haengen aber nicht davon ab, WOHER ein Bild kommt, nur davon, wie viele es
+    sind. Die ersten V Renderings zu kopieren macht diese Stufen also ehrlich
+    messbar; nur die Renderzeit selbst fehlt und wird als solche berichtet.
+    """
+    import shutil
+    src = os.path.join(_ROOT, "object_images", ds, oid)
+    if not os.path.isdir(src):
+        return {"reuse_renders": f"keine Renderings unter {src}"}
+    imgs = [p for p in sorted(glob.glob(os.path.join(src, "*.png")))
+            if not p.endswith("_bg.png")][:num_views]
+    npz = sorted(glob.glob(os.path.join(src, "*_partial.npz")))[:num_views]
+    for p in imgs + npz:
+        dst = os.path.join(obj_dir, os.path.basename(p))
+        if not os.path.exists(dst):
+            shutil.copy2(p, dst)
+    return {"reused_images": len(imgs), "reused_clouds": len(npz)}
+
+
+def stage_describe(obj_root, t: Timings) -> dict:
+    """LLaVA-Beschreibung je View.
+
+    ``--images_dir`` muss der Ordner sein, der die OBJEKTORDNER enthaelt, nicht
+    der Objektordner selbst — sonst meldet das Skript "Total objects: 0" und
+    kehrt in Millisekunden mit rc=0 zurueck (Fehler vom 2026-08-31). Deshalb
+    liegt je Objekt ein eigener Wurzelordner mit genau einem Unterordner darin.
+    """
+    out_json = os.path.join(obj_root, "descriptions.json")
     cmd = [sys.executable, os.path.join(_ROOT, "rendering",
                                         "generate_descriptions.py"),
-           "--images_dir", os.path.join(out_dir, obj_id),
-           "--output", os.path.join(out_dir, obj_id, "descriptions.json"),
-           "--overwrite"]
+           "--images_dir", obj_root, "--output", out_json, "--overwrite"]
     with t.measure("describe"):
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=_ROOT)
-    return {"describe_rc": r.returncode}
+    info = {"describe_rc": r.returncode,
+            "describe_json": os.path.isfile(out_json)}
+    if not info["describe_json"]:
+        info["describe_error"] = (r.stderr or r.stdout or "")[-300:]
+    return info
 
 
 class Encoders:
@@ -161,20 +209,19 @@ class Encoders:
     """
 
     def __init__(self, t: Timings):
-        from pipeline.config import PipelineConfig
-        from pipeline.step3_clip_retrieval import CLIPRetriever
-        from pipeline.step4_dino_reranking import DINOReRanker
-        from pipeline.step5_shape_matching import ShapeMatcher
-        cfg = PipelineConfig()
-        with t.measure("load_clip"):
-            self.clip = CLIPRetriever(cfg)
-            self.clip._load_model() if hasattr(self.clip, "_load_model") else None
-        with t.measure("load_dino"):
-            self.dino = DINOReRanker(cfg)
-            self.dino._load_model() if hasattr(self.dino, "_load_model") else None
-        with t.measure("load_ulip"):
-            self.ulip = ShapeMatcher(cfg)
-            self.ulip._load_model() if hasattr(self.ulip, "_load_model") else None
+        # Ueber build_pipeline, NICHT ueber ein blankes PipelineConfig(): dessen
+        # ulip_repo_path ist "" und der Encoder bricht ab. Wichtiger noch — nur
+        # so sind Backbone, Checkpoint, Punktzahl und Farbmodus identisch mit der
+        # Pipeline, die in Stage 1–3 gemessen wurde. Eine Latenzzahl aus einer
+        # anders konfigurierten Encoder-Instanz waere nicht vergleichbar.
+        from eval_common import build_pipeline
+        from stage3_gallery import _base_cfg
+        with t.measure("load_encoders"):
+            cfg = _base_cfg("ycbv")
+            _, self.clip, self.dino, _, self.ulip = build_pipeline(cfg)
+        if self.ulip is None:
+            raise RuntimeError("ShapeMatcher nicht verfuegbar — "
+                               "ULIP-Repo/Checkpoint pruefen.")
 
     def embed_object(self, obj_dir, num_views, t: Timings) -> dict:
         """Inkrementelle Kosten: nur die Views DIESES Objekts.
@@ -206,7 +253,7 @@ class Encoders:
                     self.dino.encode_image(im)
             info["n_views_dino"] = len(imgs)
 
-        desc = os.path.join(obj_dir, "descriptions.json")
+        desc = os.path.join(os.path.dirname(obj_dir), "descriptions.json")
         if os.path.isfile(desc):
             try:
                 texts = _json.load(open(desc))
@@ -300,14 +347,26 @@ def main(argv=None):
                          "ersten 16 von 42 sind also ein gueltiges 16-View-Set "
                          "(Stage-1 O4: 0.5820 bei V16 vs 0.5868 bei V42).")
     ap.add_argument("--num-points", type=int, default=8192)
-    ap.add_argument("--blender", default=os.environ.get("BLENDER_BIN", "blender"))
+    ap.add_argument("--blender", default=os.environ.get(
+                        "BLENDER_BIN",
+                        "/home/tessa/Cap3D/captioning_pipeline/"
+                        "blender-3.4.1-linux-x64/blender"),
+                    help="Blender-Binary. Die 3.3.1-Installation hat KEIN PIL "
+                         "und scheitert still; 3.4.1 hat es.")
     ap.add_argument("--work-dir", default=os.path.join(_ROOT, ".stage4_work"),
                     help="Renders/Wolken landen HIER, nicht in object_images/.")
+    ap.add_argument("--reuse-renders", action="store_true",
+                    help="Vorhandene Renderings/Wolken ins Arbeitsverzeichnis "
+                         "kopieren, statt sie zu erzeugen. Noetig, wo kein "
+                         "Blender installiert ist — describe und embed werden "
+                         "dann echt gemessen, nur die Renderzeit fehlt.")
     ap.add_argument("--measure-invalidation", action="store_true",
                     help="Zusaetzlich den Aufschlag der Cache-Invalidierung messen.")
     ap.add_argument("--out", default=os.path.join(_ROOT, "results_stage4",
                                                   "onboarding.json"))
     args = ap.parse_args(argv)
+    if not os.path.isabs(args.out):
+        args.out = os.path.join(_ROOT, args.out)
 
     stages = (ALL_STAGES if args.stages == "all"
               else [s.strip() for s in args.stages.split(",") if s.strip()])
@@ -341,19 +400,24 @@ def main(argv=None):
             t = Timings()
             rec = {"dataset": ds, "object_id": oid, "num_views": V,
                    "mesh": os.path.relpath(mesh, _ROOT)}
-            out_dir = os.path.join(args.work_dir, f"v{V}", ds)
-            obj_dir = os.path.join(out_dir, oid)
+            # Zwei Ebenen: obj_root enthaelt genau EINEN Objektordner, weil
+            # generate_descriptions.py ueber Unterordner iteriert. Ein flaches
+            # Layout wuerde bei jedem Objekt alle vorherigen mitbeschreiben.
+            obj_root = os.path.join(args.work_dir, f"v{V}", ds, oid)
+            obj_dir = os.path.join(obj_root, oid)
             os.makedirs(obj_dir, exist_ok=True)
             try:
                 if "mesh" in stages:
                     rec.update(stage_mesh(mesh, t))
+                if args.reuse_renders:
+                    rec.update(reuse_renders(ds, oid, obj_dir, V))
                 if "render" in stages:
-                    rec.update(stage_render(mesh, out_dir, oid, V,
+                    rec.update(stage_render(mesh, obj_root, oid, V,
                                             args.blender, t))
                 if "partial" in stages:
-                    rec.update(stage_partial(mesh, out_dir, args.num_points, t))
+                    rec.update(stage_partial(mesh, obj_root, args.num_points, t))
                 if "describe" in stages:
-                    rec.update(stage_describe(out_dir, oid, t))
+                    rec.update(stage_describe(obj_root, t))
                 if "embed" in stages and enc is not None:
                     src = obj_dir if os.path.isdir(obj_dir) else None
                     # Ohne render/describe liegen die Views in der bestehenden

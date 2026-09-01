@@ -1,5 +1,36 @@
 # Decisions
 
+## 2026-09-01 Report the partial-vs-full-mesh result per dataset, never as an aggregate
+
+Decision
+- The gallery-representation comparison is reported **per dataset and per query mode**, with the
+  instance shares alongside. The aggregate number is not quoted as the headline.
+- The stated cause is **query–gallery domain match**, supported by the pc-vs-cross asymmetry
+  (−0.113 vs −0.018), not "partial views cover the surface better".
+- The isolated shape channel is obtained from per-channel target ranks recorded in every Stage-3
+  run (`arm_ranks`), not from dedicated runs with weights (0, 0, 1).
+
+Rationale
+- The aggregate hides three reversals: on LM-O full mesh wins in both modes, in cross mode it also
+  wins T-LESS and all of R@5/R@10/MRR, and **T-LESS alone carries 93 %** of the pc-mode drop.
+  "Partial beats full mesh by 0.113" is in substance a statement about one dataset.
+- The pc-vs-cross asymmetry is the only piece of evidence that discriminates between candidate
+  causes, because the gallery is point-cloud-encoded in both modes: any gallery-only property
+  (colour, coverage, normalisation) must affect them equally, and this one does not. A conclusion
+  drawn from the aggregate alone would have picked the wrong mechanism — as one did, see the
+  2026-09-01 log entry.
+- Per-channel ranks cost one rank lookup over arms `run_query` already computes, and they expose an
+  effect the fusion absorbs 70 % of. Dedicated shape-only runs would have cost hours per arm.
+
+Alternatives considered
+- Report the aggregate with a per-dataset appendix — rejected: the aggregate would still be the
+  quoted number, and it points the wrong way for two of three datasets.
+- Attribute the gap to the colour defect found the same day — rejected on the evidence: the damage
+  does not track colour availability (YCB-V loses the most and is barely affected; T-LESS loses
+  none and collapses).
+
+Detail: `docs/AI_LOG.md`, entry 2026-09-01; `docs/STAGE3_RESULTS_SUMMARY.md` §2.
+
 ## 2026-08-31 Gallery assembly verifies its own coverage and aborts, instead of documenting the risk
 
 Decision

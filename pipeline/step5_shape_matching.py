@@ -219,6 +219,38 @@ def normalize_pointcloud(
     return result_xyz  # (N, 3)
 
 
+def _sample_face_colors(mesh, face_indices) -> Optional[np.ndarray]:
+    """Farbe je gesampeltem Punkt, aus der besten verfuegbaren Quelle.
+
+    Drei Faelle, in dieser Reihenfolge:
+
+    1. ``face_colors`` direkt — Meshes mit Flaechenfarben (BOP-PLYs).
+    2. **Texturierte Meshes** (SHREC'18, GSO, YCB-V): die Farbe steckt in einer
+       Bilddatei plus UV-Koordinaten, ``face_colors`` ist dort ``None``.
+       ``to_color()`` sampelt die Textur an den UVs, liefert aber nur
+       ``vertex_colors`` — die drei Eckfarben je getroffenem Dreieck werden hier
+       gemittelt. Ohne diesen Weg bekaeme der farbige ULIP-2-Backbone fuer genau
+       diese Datensaetze Nullen statt Farbe.
+    3. Kein Farbtraeger vorhanden (T-LESS, ITODD, MI3DOR — uniform grau):
+       ``None``, der Aufrufer setzt dann Nullen ein. Das ist eine Eigenschaft
+       der Dateien, nicht des Samplers.
+    """
+    fc = getattr(mesh.visual, "face_colors", None)
+    if fc is not None:
+        return (np.asarray(fc)[face_indices][:, :3] / 255.0).astype(np.float32)
+
+    if type(mesh.visual).__name__ == "TextureVisuals":
+        try:
+            vc = getattr(mesh.visual.to_color(), "vertex_colors", None)
+            if vc is not None:
+                vcol = np.asarray(vc)[:, :3]
+                tri = mesh.faces[face_indices]           # (n, 3) Vertexindizes
+                return (vcol[tri].mean(axis=1) / 255.0).astype(np.float32)
+        except Exception:
+            pass
+    return None
+
+
 def sample_pointcloud_from_mesh(
     mesh_path: str,
     num_points: int = 10000,
@@ -246,9 +278,8 @@ def sample_pointcloud_from_mesh(
         points, face_indices = trimesh.sample.sample_surface(mesh, num_points)
         points = points.astype(np.float32)
 
-        if with_colors and hasattr(mesh.visual, 'face_colors'):
-            face_colors = mesh.visual.face_colors[face_indices][:, :3]
-            colors = (face_colors / 255.0).astype(np.float32)
+        if with_colors:
+            colors = _sample_face_colors(mesh, face_indices)
 
         return points, colors
 

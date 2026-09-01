@@ -62,9 +62,16 @@ import sys
 
 _THIS = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_THIS)
+sys.path.insert(0, _THIS)
 for p in (_ROOT, os.path.join(_ROOT, "object_retrieval")):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# DATASET_LAYOUT und EvalConfig fuehren relative Datenpfade ("../object_database/…"),
+# die gegen das ARBEITSVERZEICHNIS aufgeloest werden, nicht gegen den Modulpfad.
+# Alle bestehenden Treiber laufen aus object_retrieval/; ohne diesen Wechsel
+# scheitert schon load_descriptions. Vor jedem Import von Pipeline-Code.
+os.chdir(os.path.join(_ROOT, "object_retrieval"))
 
 from stage4_common import (Timings, aggregate, host_provenance,  # noqa: E402
                            print_table, summarize, write_results)
@@ -102,40 +109,79 @@ def scene_camera(test_root, scene, im_id):
             float(cam.get("depth_scale", 1.0)))
 
 
-def prompt_for(dataset, obj_id, _cache={}):
-    """Sprachprompt = erste Beschreibung des Zielobjekts.
+# LLaVA beginnt praktisch jede Beschreibung mit derselben Floskel. Fuer CLIP ist
+# das harmlos, fuer eine Detektion nicht: GroundingDINO sucht nach dem Substantiv
+# im Prompt, und "image" ist im Bild nun mal nicht zu finden.
+_LLAVA_OPENERS = (
+    "the image features a ", "the image features an ", "the image features ",
+    "the image shows a ", "the image shows an ", "the image shows ",
+    "the image depicts a ", "the image depicts an ", "the image depicts ",
+    "this image features ", "in the image, there is a ", "in the image, there is ",
+    "the object in the image is a ", "the object in the image is an ",
+    "the object in the image is ",
+)
 
-    Bewusst aus derselben Quelle wie der Textkanal: ein handgeschriebener
-    Prompt wuerde die Segmentierung besser oder schlechter machen, als das
-    System es im Betrieb koennte, und wuerde die Latenzmessung mit einer
-    Qualitaetsfrage vermischen.
+
+def prompt_for(dataset, obj_id, mode="phrase", _cache={}):
+    """Sprachprompt aus der gespeicherten Beschreibung des Zielobjekts.
+
+    Bewusst dieselbe Quelle wie der Textkanal: ein handgeschriebener Prompt
+    wuerde die Segmentierung besser oder schlechter machen, als das System es im
+    Betrieb koennte, und wuerde die Latenzmessung mit einer Qualitaetsfrage
+    vermischen.
+
+    Die Datei liegt als {obj_id: {"image_descriptions": {bild: text}}} vor.
+    ``mode="phrase"`` nimmt den ERSTEN SATZ ohne die LLaVA-Floskel — GroundingDINO
+    erwartet eine kurze Nominalphrase, ein 300-Zeichen-Absatz laeuft in die
+    Token-Grenze des Textencoders und detektiert schlechter. ``mode="full"``
+    reicht die ganze Beschreibung durch, als Kontrolle.
     """
     if dataset not in _cache:
         f = os.path.join(_ROOT, "object_database", dataset,
                          "descriptions_attributes.json")
         _cache[dataset] = json.load(open(f)) if os.path.isfile(f) else {}
     entry = _cache[dataset].get(obj_id) or {}
+
+    text = ""
     if isinstance(entry, dict):
-        for k in ("description", "descriptions", "caption", "text"):
-            v = entry.get(k)
-            if isinstance(v, str) and v:
-                return v
-            if isinstance(v, list) and v:
-                return str(v[0])
-    if isinstance(entry, list) and entry:
-        return str(entry[0])
-    return f"object {obj_id}"
+        imgs = entry.get("image_descriptions")
+        if isinstance(imgs, dict) and imgs:
+            text = str(next(iter(imgs.values())))
+        else:
+            for k in ("description", "descriptions", "caption", "text"):
+                v = entry.get(k)
+                if isinstance(v, str) and v:
+                    text = v
+                    break
+                if isinstance(v, list) and v:
+                    text = str(v[0])
+                    break
+    elif isinstance(entry, list) and entry:
+        text = str(entry[0])
+
+    if not text:
+        return f"object {obj_id}"
+    if mode == "full":
+        return text
+
+    sentence = text.split(".")[0].strip()
+    low = sentence.lower()
+    for opener in _LLAVA_OPENERS:
+        if low.startswith(opener):
+            sentence = sentence[len(opener):].strip()
+            break
+    return sentence or text
 
 
-def run_one(tgt, dataset, test_root, gallery, localizer, pose_est,
-            args, sink) -> dict:
+def run_one(tgt, dataset, test_root, gallery, localizer, args, sink) -> dict:
     """Eine Query von der Platte bis zur Pose. Wirft nichts — Fehler landen
     im Datensatz, damit ein einzelner Ausfall die Messreihe nicht beendet."""
     import numpy as np
     from PIL import Image
 
-    from eval_bop_pose import backproject_masked
+    from eval_bop_pose import FP_URL, backproject_masked
     from eval_common import run_query
+    from pipeline.foundationpose_bridge import call_foundationpose
 
     t = sink["timings"]
     pcfg, clip_retr, dino_rer, fusion_mod, shape_m = gallery.components()
@@ -172,7 +218,7 @@ def run_one(tgt, dataset, test_root, gallery, localizer, pose_est,
 
     with t.measure("retrieval_total"):
         out = run_query(pcfg, clip_retr, dino_rer, fusion_mod, shape_m,
-                        loc.roi, gallery.eval_cfg, ulip_query_emb=ulip_q)
+                        loc.roi_image, gallery.eval_cfg, ulip_query_emb=ulip_q)
 
     if args.geometry and cloud is not None:
         from pipeline.step_b2_geometry_reranking import GeometryReRanker
@@ -180,35 +226,51 @@ def run_one(tgt, dataset, test_root, gallery, localizer, pose_est,
             GeometryReRanker(pcfg).rerank(out, observed_pc=cloud,
                                           top_k=args.geo_k)
 
-    if pose_est is not None:
+    if not args.no_pose:
         top1 = _top1_id(out)
-        mesh = (gallery.id_to_pose_mesh or {}).get(top1)
         rec["top1"] = top1
-        if mesh:
-            path = mesh[0] if isinstance(mesh, (tuple, list)) else mesh
+        entry = (gallery.id_to_pose_mesh or {}).get(top1)
+        if entry:
+            path, units_m = (entry if isinstance(entry, (tuple, list))
+                             else (entry, False))
+            # Genau wie Stage 3: FoundationPose rechnet in Metern. Meshes in
+            # Millimetern (BOP, ITODD) bekommen scale=0.001, Meshes in Metern
+            # (GSO, HouseCat6D) scale=1.0.
             with t.measure("pose"):
-                pose_est.estimate(np.asarray(rgb), depth_m,
-                                  np.asarray(loc.mask), cad_path=path,
-                                  fx=K[0, 0], fy=K[1, 1], cx=K[0, 2], cy=K[1, 2],
-                                  method="foundationpose")
+                call_foundationpose(FP_URL, rgb=np.asarray(rgb), depth=depth_m,
+                                    mask=np.asarray(loc.mask), K=K,
+                                    cad_path=path,
+                                    scale=1.0 if units_m else 0.001,
+                                    refine_iter=args.refine_iter)
         else:
             rec["pose_skipped"] = f"kein Pose-Mesh fuer {top1}"
     return rec
 
 
+# `retrieval_total` umschliesst clip/dino/ulip/fusion — es ist eine Klammer um
+# bereits gemessene Schritte, keine eigene Arbeit. Waere es in der Summe, zaehlte
+# die Retrieval-Zeit doppelt (im Smoke-Test 1.10 s echte Arbeit vs 1.90 s Summe).
+# Es bleibt als eigene Zeile stehen: die Differenz zu den vier Kanaelen ist der
+# Overhead von run_query selbst (~1 ms, also praktisch keiner).
+_CONTAINER_STEPS = {"retrieval_total"}
+
+
+def _wall(timings: dict) -> float:
+    """Echte Ende-zu-Ende-Zeit: Klammermessungen nicht mitzaehlen."""
+    return sum(sum(v) for k, v in timings.items() if k not in _CONTAINER_STEPS)
+
+
 def _top1_id(out):
-    """Top-1 aus dem run_query-Ergebnis, unabhaengig von der Arm-Benennung."""
-    for key in ("fused", "clip_dino_ulip_full", "ranking", "candidates"):
-        v = out.get(key) if isinstance(out, dict) else None
-        if v:
-            first = v[0]
-            for attr in ("object_id", "id", "label"):
-                if hasattr(first, attr):
-                    return getattr(first, attr)
-            if isinstance(first, (tuple, list)) and first:
-                return first[0]
-            return first
-    return None
+    """Top-1 der vollen Fusion — derselbe Pfad wie eval_bop_pose.
+
+    `run_query` liefert kein flaches Ranking, sondern die Rohergebnisse aller
+    Arme; Stage 3 zieht daraus `fusion_ranking(out["fused_full"])`. Der erste
+    Entwurf hier riet Schluesselnamen und bekam durchweg None, worauf die
+    Pose-Stufe stillschweigend uebersprungen wurde.
+    """
+    from eval_common import fusion_ranking
+    ranking = fusion_ranking(out["fused_full"])
+    return ranking[0][0] if ranking else None
 
 
 def main(argv=None):
@@ -229,9 +291,15 @@ def main(argv=None):
     ap.add_argument("--geo-k", type=int, default=5)
     ap.add_argument("--no-pose", action="store_true",
                     help="Ohne FoundationPose (nur Retrieval-Latenz).")
+    ap.add_argument("--refine-iter", type=int, default=5,
+                    help="FoundationPose-Verfeinerungsschritte (Stage-3-Default: 5).")
     ap.add_argument("--out", default=os.path.join(_ROOT, "results_stage4",
                                                   "query_latency.json"))
     args = ap.parse_args(argv)
+    # Relative --out gegen die Repo-Wurzel aufloesen, nicht gegen das durch
+    # os.chdir() gesetzte object_retrieval/ (sonst landen die Ergebnisse dort).
+    if not os.path.isabs(args.out):
+        args.out = os.path.join(_ROOT, args.out)
 
     import random
 
@@ -251,12 +319,23 @@ def main(argv=None):
     with cold.measure("load_groundingdino_sam"):
         from pipeline.step1_localization import ObjectLocalizer
         localizer = ObjectLocalizer(pcfg)
+        # ObjectLocalizer laedt LAZY (erst in localize()). Ohne diesen Aufruf
+        # landen ~25 s Modell-Ladezeit in der ERSTEN Query und verfaelschen
+        # sowohl den Kaltstart- als auch den Warm-Median.
+        localizer._load_model()
 
-    pose_est = None
     if not args.no_pose:
-        with cold.measure("load_foundationpose"):
-            from pipeline.step8_pose_estimation import PoseEstimator
-            pose_est = PoseEstimator(pcfg)
+        # FoundationPose laeuft als eigener Dienst; "laden" heisst hier
+        # Erreichbarkeit pruefen. Ohne den Test faellt ein toter Dienst erst in
+        # der ersten Query auf, und zwar als Latenz statt als Fehler.
+        with cold.measure("check_foundationpose"):
+            import urllib.request
+            try:
+                urllib.request.urlopen("http://foundationpose:5050/health",
+                                       timeout=10).read()
+            except Exception as exc:
+                print(f"[stage4] WARNUNG: FoundationPose nicht erreichbar "
+                      f"({exc}) — Pose-Stufe wird scheitern.")
 
     print(f"[stage4] |Gallery| = {len(gallery.gallery_ids)}, Views: {views}")
 
@@ -275,19 +354,32 @@ def main(argv=None):
     targets = targets[:args.n_queries + args.warmup]
 
     by_views, records = {}, []
-    for V in views:
+    # ABSTEIGEND. _apply_view_limit() ERSETZT self._ref_embeddings durch die
+    # getrimmte Fassung — der Schnitt ist destruktiv und nicht umkehrbar. In
+    # aufsteigender Reihenfolge liefe der 42er-Durchgang auf den 16 Views, die
+    # der vorige uebrig gelassen hat, und beide Zeilen waeren dieselbe Messung
+    # (im ersten Lauf: 0.866 s gegen 0.856 s, also scheinbar kein Unterschied).
+    for V in sorted(views, reverse=True):
         print(f"\n[stage4] --- {V} Views ---")
         pcfg.num_views = V
         if hasattr(dino_rer, "_apply_view_limit"):
             dino_rer.config.num_views = V
             dino_rer._apply_view_limit()
+        # Der Shape-Kanal hat kein Gegenstueck zu _apply_view_limit: seine
+        # Gallery-Embeddings sind (42, D) je Objekt und die top-k-softmax laeuft
+        # ueber alle. Ohne diesen Schnitt bliebe ULIP bei 42 Views, waehrend DINO
+        # auf V faellt — der Vergleich waere nur halb durchgefuehrt.
+        if shape_m is not None and getattr(shape_m, "_cad_embeddings", None):
+            shape_m._cad_embeddings = {
+                oid: (emb[:V] if getattr(emb, "ndim", 1) == 2 else emb)
+                for oid, emb in shape_m._cad_embeddings.items()}
         per_query = []
         for i, tgt in enumerate(targets):
             is_warmup = i < args.warmup
             sink["timings"] = Timings()
             try:
                 rec = run_one(tgt, args.dataset, test_root, gallery, localizer,
-                              pose_est, args, sink)
+                              args, sink)
             except Exception as exc:
                 rec = {"error": f"{type(exc).__name__}: {exc}"}
             rec.update(num_views=V, warmup=is_warmup,
@@ -301,8 +393,11 @@ def main(argv=None):
             print(f"  [{i + 1}/{len(targets)}] {rec['total_s']:6.2f} s{note}")
         by_views[V] = {
             "per_step": aggregate(per_query),
-            "per_query_total_s": summarize(
-                [sum(sum(v) for v in q.values()) for q in per_query]),
+            "per_query_total_s": summarize([_wall(q) for q in per_query]),
+            "n_no_detection": sum(1 for r in records
+                                  if r.get("num_views") == V
+                                  and not r.get("warmup")
+                                  and r.get("error") == "keine Detektion"),
         }
 
     payload = {

@@ -66,17 +66,52 @@ The 2×2 of gallery representation × query modality, R@1:
 | cross | **0.4818** | 0.4639 | −0.018 |
 | pc | **0.4636** | 0.3504 | −0.113 |
 
-Partial views win in both modes, and the margin is **six times larger** with a point-cloud query.
-This is the mechanism, not a coincidence: pc-vs-partial matches observation to observation, while a
-full mesh compares a partial query against a complete surface. Stage 1 (SHREC'18, pc-mode
-throughout) shows the same sign at +0.0495 nDCG, so the finding transfers to BOP and strengthens.
+> **Provisional.** The four arms in this section are being re-measured
+> (2026-09-01); the numbers may shift. The per-dataset structure and the mechanism below are
+> established independently of that and are not expected to change.
 
-**But the aggregate hides a reversal.** Per dataset, full mesh is *better* on
-**T-LESS (0.332 → 0.396)** and **LM-O (0.464 → 0.490)**; the overall partial advantage comes
-entirely from YCB-V (0.732 → 0.566). YCB-V is textured household objects whose appearance the
-partial renders capture; T-LESS are texture-less industrial parts where complete geometry carries
-more than viewpoint. Full mesh additionally wins **R@5, R@10 and MRR** — it is worse at rank 1 and
-better in depth.
+**The aggregate is not the result — report the per-dataset split.** R@1 per dataset:
+
+| query | dataset | partial | full mesh | Δ | share of instances |
+|---|---|---|---|---|---|
+| pc | YCB-V | 0.671 | 0.635 | −0.036 | 34 % |
+| pc | **T-LESS** | 0.350 | **0.157** | **−0.193** | 55 % |
+| pc | LM-O | 0.400 | 0.436 | **+0.036** | 12 % |
+| cross | YCB-V | 0.732 | 0.566 | −0.166 | 34 % |
+| cross | T-LESS | 0.332 | 0.396 | +0.064 | 55 % |
+| cross | LM-O | 0.464 | 0.490 | +0.026 | 12 % |
+
+T-LESS alone accounts for **93 %** of the pc-mode aggregate drop; on LM-O full mesh is *better* in
+both modes, and in cross mode it also wins T-LESS, R@5, R@10 and MRR. Quoting "partial beats full
+mesh by 0.113" is therefore misleading — it is in substance a statement about T-LESS.
+
+**The mechanism is query–gallery domain match, not surface coverage.** The decisive evidence is
+the asymmetry between the two query modes above: the gallery is point-cloud-encoded in *both*, so
+any property of the gallery alone would affect them equally. It affects pc **six times** more. In
+pc mode the query is a partial cloud and the partial gallery consists of exactly such clouds —
+same domain — and each gallery object gets 42 chances to match the query's viewpoint, aggregated
+by top-k-softmax over the best 5. A full mesh offers one embedding of a complete surface,
+normalised onto the same unit sphere as the query patch. In cross mode the query passes through
+the image tower, so neither representation is domain-matched and the gap collapses to 0.018.
+
+The per-dataset staggering follows from how much the shape channel has to carry: on YCB-V text and
+appearance absorb a domain-shifted shape channel, on texture-less T-LESS nothing does.
+
+**Full mesh is informative but mis-calibrated at rank 1.** Target-rank distribution on T-LESS
+(pc mode):
+
+| arm | R@1 | median rank | > rank 50 |
+|---|---|---|---|
+| partial | 0.350 | 2 | 6 % |
+| full mesh | 0.157 | 8 | 14 % |
+| no shape channel (E5) | 0.214 | 24 | 28 % |
+
+Full mesh still lifts the median rank far above the no-shape baseline (8 vs 24) — the channel is
+not uninformative. It fails specifically at the top of the list, which is what Recall@1 measures.
+
+Stage 1 (SHREC'18, pc-mode throughout) shows the same sign at +0.0495 nDCG in the isolated shape
+channel, so the direction transfers; the BOP runs additionally record the per-channel target rank,
+making the isolated comparison available there too.
 
 Both full-mesh arms logged 100.0 % gallery coverage on all six datasets, verified per dataset by
 the coverage gate added on 2026-08-31 (see `DECISIONS.md`).
@@ -203,8 +238,10 @@ comes from the external proxy gallery.
 3. **Geometric re-ranking does not help in the BOP setting**, for retrieval or for pose, despite
    helping SHREC'18. The criterion is general: geometry pays only where it beats the score it
    replaces. It belongs in the pose stage, not as blanket retrieval re-ranking.
-4. **Partial views beat full mesh in aggregate but not per dataset** — the advantage is YCB-V's
-   alone, and full mesh wins the depth metrics. Report the split, not the aggregate.
+4. **Partial views beat full mesh in aggregate but not per dataset.** T-LESS carries 93 % of the
+   difference; on LM-O full mesh is better in both modes, and in cross mode it also wins T-LESS
+   and the depth metrics. The cause is query–gallery domain match, evidenced by the pc-vs-cross
+   asymmetry (−0.113 vs −0.018), not surface coverage. Report the split, not the aggregate.
 5. **Exact-CAD pose is excellent; the proxy is the bottleneck.** 15.8 mm median substitution cost,
    of which roughly half is attributable to the proxy gallery rather than to substitution as such.
 
