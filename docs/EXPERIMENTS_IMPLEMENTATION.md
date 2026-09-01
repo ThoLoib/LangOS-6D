@@ -4,7 +4,7 @@
 **how the queries were produced**, **what was fed into the pipeline**, **which pipeline parts
 were exercised**, and **what came out**. Pseudo-code mirrors the actual drivers; the metric and
 config rationale live in `EVALUATION_STORY_AND_PLAN.md`, the pipeline itself in
-`PIPELINE_IMPLEMENTATION.md`. Last updated 2026-08-31 — added Experiment 4 (latency).*
+`PIPELINE_IMPLEMENTATION.md`. Last updated 2026-09-01 — Experiment 4 vollstaendig (partial-Stufe, CLIP-Text, echtes Cache-Anhaengen, je ein Einstiegsskript).*
 
 The three experiments map to the three evaluation stages and share one retrieval stack at an
 **identical, audited configuration** (42 views · top-k-softmax k=5 · mean DINO pooling ·
@@ -255,11 +255,28 @@ render      blender -b -P rendering/rendering.py   with RENDER_ONLY=<obj>, NUM_V
 partial     generate_partial_pointclouds.py        (HPR per view)
 describe    generate_descriptions.py               (LLaVA, one caption per view)
 io_load_images / embed_dino    DINOv2 over the V renders
-embed_clip                     CLIP text over the V captions
+embed_clip                     CLIP text over the V captions (_encode_texts_batch)
 io_load_clouds / embed_ulip    ULIP-2 over the V partial clouds
 dgedi                          GeDi descriptors (optional; only if geometry is used)
-cache_write                    serialise the cache entry
+cache_load / insert / save     the simulated append-only cache
 ```
+
+SYNC and VERIFY (rclone to Drive, `PREPROCESSING.md` §1 steps 5–6) are deliberately out —
+network time, not a property of the pipeline.
+
+Three subtleties that cost measurements before they were caught, all on 2026-09-01:
+
+- **`partial` needs the camera matrices.** `generate_partial_pointclouds.py` discovers its
+  views from `<obj>_viewN_CamMatrix.npy`; without them it finds zero views and returns in
+  milliseconds. It is also driven by `--images_dir`, resolving meshes through the
+  `<cad_dir>/<obj_id>/` convention — **not** `--mesh-glob`, which is a standalone pattern
+  keyed by *file stem* and would map every ycbv object onto `textured_simple`.
+- **CLIP text goes through `_encode_texts_batch`**, the path `load_descriptions` itself
+  uses. There is no public `encode_text`, and a per-string loop would measure something
+  the pipeline never does — batching makes the step flat in V (4.6 ms at 16 as at 42).
+- **Sub-process stages check their output, not their return code.** `render` counts the
+  images produced (Blender exits 0 on Python errors), `partial` counts the clouds. Both
+  had reported success while producing nothing.
 
 Renders go to a **work directory**, never into `object_images/` — the experiment must not
 overwrite the gallery it is measuring against.
@@ -320,7 +337,22 @@ embeddings are always cached for all 42 views and `_apply_view_limit()` only fil
 is re-encoded. Steps that do not depend on view count (`mesh`) are excluded from the comparison,
 since their difference would be pure measurement noise.
 
-### 4.4 What comes out
+### 4.4 One entry point per side
+
+```bash
+bash scripts/stage4_onboarding.sh          # all 59 CADs, 16 and 42 views
+bash scripts/stage4_query.sh               # ycbv, 50 queries, 16 and 42 views
+```
+
+Both print one table: a row per step, view counts as columns, the total, a cost/benefit
+row against the Stage-1 quality, and cold start reported separately. The onboarding
+wrapper splits across two environments — Blender lives outside the compose mount and runs
+on the host, encoders and LLaVA need the container — and merges the results.
+
+Do not measure with `-n 4`: after two warm-ups only two scored samples remain, and a
+median of two flips on a single outlier. From `-n 50` the IQR stays under 10 ms.
+
+### 4.5 What comes out
 
 ```
 results_stage4/onboarding.json      per_step stats by view count, per-object records with

@@ -1,8 +1,40 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-08-31 (Stage-3 run chain complete; entries below are
-> newest-first and the two 2026-07-3x updates come from the two machines
-> independently)
+> Last updated: 2026-09-01 (Full-Mesh-Farblauf laeuft; Stage 4 vollstaendig)
+
+## Update 2026-09-01 (Stage 4 fertig instrumentiert, Full-Mesh-Neulauf laeuft)
+
+**Laeuft gerade:** `scripts/run_fullmesh_color_redo.sh`, gestartet 17:56.
+Vier Stage-3-Laeufe (`3a_pc_v2`, `3a_cross_v2`, `3a_pc_fullmesh_v2`,
+`3a_cross_fullmesh_v2`) plus zwei Stage-1-Arme. ~3 h je Lauf, fertig am
+Morgen des 02.09. **Vier Full-Mesh-Caches sind nach `.ulip_cache_stash_*`
+verschoben** — sie muessen weg bleiben, bis der Lauf durch ist, sonst
+greifen die alten farblosen Embeddings.
+
+Warum: `sample_pointcloud_from_mesh` las Farbe nur aus `face_colors`, was bei
+texturierten Meshes (SHREC, GSO, YCB-V) `None` ist. Behoben ueber
+`to_color().vertex_colors`. **Wichtig:** die Farbe erklaert den
+partial-vs-full-mesh-Abstand NICHT — Details und Gegenbelege in `AI_LOG.md`
+2026-09-01. Der Neulauf raeumt den Einwand aus, mehr nicht; die Vorhersage
+(GSO/YCB-V leicht besser, T-LESS unveraendert) steht dort ebenfalls.
+
+Jeder Stage-3-Lauf schreibt jetzt `arm_ranks` — den Ziel-Rang **je Kanal**.
+Damit faellt der isolierte Shape-Kanal (`ulip_only_full`) gratis mit ab, den
+Stage 3 bisher gar nicht hatte.
+
+**Stage 4 ist vollstaendig instrumentiert.** Je ein Aufruf:
+`bash scripts/stage4_onboarding.sh` und `bash scripts/stage4_query.sh`.
+Ergebnisse und Zahlen: `docs/STAGE4_RESULTS.md`. Query-Seite fertig gemessen
+(Ende zu Ende 2,19 s bei 16 Views, 2,47 s bei 42; Pose dominiert mit ~60 %);
+Onboarding-Einzelposten belastbar, Gesamtsumme noch aus mehreren Laeufen
+zusammengesetzt — ein vollstaendiger Durchlauf steht aus.
+
+**Neu: `docs/AGREEMENTS.md`** — laufendes Protokoll der Verabredungen, damit
+sie zwischen Sitzungen nicht verloren gehen. Vor jedem Lauf gegenlesen.
+
+> (Aeltere Kopfzeile: 2026-08-31, Stage-3-Kette komplett; Eintraege unten
+> newest-first, die beiden 2026-07-3x-Updates stammen von den zwei Maschinen
+> unabhaengig.)
 
 ## Update 2026-08-31 (Stage 3 complete — nothing queued)
 
