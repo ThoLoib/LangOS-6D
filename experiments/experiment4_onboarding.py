@@ -360,22 +360,30 @@ class Encoders:
         return {"cache_entries": n_before}
 
 
-def stage_dgedi(obj_dir, t: Timings) -> dict:
-    """GeDi-Deskriptoren ueber die Teilwolken des neuen Objekts.
+def stage_dgedi(mesh_path, obj_root, obj_id, t: Timings) -> dict:
+    """GeDi-Deskriptoren fuer das neue Objekt, damit es geometrisch suchbar ist.
 
-    Nur relevant, wenn geometrisches Re-Ranking benutzt wird — was Stage 3
-    fuer BOP gerade widerlegt hat. Deshalb optional, nicht Default.
+    Ueber tools/precompute_gedi_descriptors.py — den Weg, den die Preprocessing-
+    Kette geht. `dgedi_bridge` bietet nur dgedi_health und dgedi_rerank; ein
+    `compute_descriptors` gibt es dort NICHT (der erste Entwurf importierte es
+    und waere sofort gescheitert).
+
+    Nur relevant, wenn geometrisches Re-Ranking benutzt wird — was Stage 3 fuer
+    BOP widerlegt hat. Deshalb optional, nicht Default.
     """
-    from dgedi_bridge import dgedi_health
-    import numpy as np
-    if not dgedi_health().get("ok", False):
-        return {"dgedi_skipped": "Service nicht erreichbar"}
-    from dgedi_bridge import compute_descriptors
-    npz = sorted(glob.glob(os.path.join(obj_dir, "*_partial.npz")))
+    cache = os.path.join(obj_root, "gedi_cache")
+    cmd = [sys.executable, os.path.join(_ROOT, "tools",
+                                        "precompute_gedi_descriptors.py"),
+           "--mesh-glob", mesh_path,
+           "--gallery-cache-dir", cache,
+           "--skip-queries", "--overwrite"]
     with t.measure("dgedi"):
-        for p in npz:
-            compute_descriptors(np.load(p)["points"])
-    return {"n_dgedi_clouds": len(npz)}
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=_ROOT)
+    n = len(glob.glob(os.path.join(cache, "*.npz")))
+    out = {"dgedi_rc": r.returncode, "dgedi_descriptors": n}
+    if n == 0:
+        out["dgedi_error"] = (r.stderr or r.stdout or "")[-300:]
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -510,7 +518,7 @@ def main(argv=None):
                         src = os.path.join(_ROOT, "object_images", ds, oid)
                     rec.update(enc.embed_object(src, V, t))
                 if "dgedi" in stages:
-                    rec.update(stage_dgedi(obj_dir, t))
+                    rec.update(stage_dgedi(mesh, obj_root, oid, t))
             except Exception as exc:
                 rec["error"] = f"{type(exc).__name__}: {exc}"
                 print(f"  [{i}/{len(meshes)}] {ds}/{oid}  FEHLER: {rec['error']}")

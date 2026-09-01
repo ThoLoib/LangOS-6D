@@ -81,6 +81,19 @@ ycbv, Gallery 1278, 50 Queries je View-Zahl, mit Pose, **0 Detektionsausfälle**
 
 Kaltstart einmalig: Gallery-Assembly 7,6 s + GroundingDINO/SAM 3,7 s.
 
+**Geometrisches Re-Ranking, separat gemessen** (12 Queries, 42 Views, K=5,
+5 von 5 Registrierungen erfolgreich je Query):
+
+| | |
+|---|---|
+| `geometry` (dGeDi + RANSAC + ICP) | **5,45 s** (IQR 1,32 s, p95 8,19 s) |
+| Anteil an der Query | **82 %** |
+
+Das ist **mehr als das Doppelte der gesamten uebrigen Kette samt Pose**. Zusammen mit
+dem Stage-3-Befund, dass Geometrie in allen vier Zellen die Genauigkeit senkt, ist die
+Sache damit von zwei Seiten entschieden: der teuerste Schritt der Pipeline ist zugleich
+der einzige, der schadet.
+
 **Die Pose dominiert** mit 57–64 % und ist der unruhigste Schritt: Median 1,4 s, IQR
 1,1 s, p95 bis 4,7 s — FoundationPose' Hypothesenverfeinerung, kein Messrauschen. Der
 einzige Posten, der mit der View-Zahl skaliert, ist DINO; alles andere ist konstant.
@@ -150,7 +163,8 @@ die konstante Pose-Zeit ihn verdünnt.
 - **Ein vollständiger Onboarding-Lauf** über alle 59 CADs mit der kompletten Kette
   (`mesh,partial,describe,embed`) und Render auf dem Host. Die Einzelposten oben stammen
   aus mehreren Läufen; die Gesamtsumme ist deshalb zusammengesetzt, nicht gemessen.
-- **`--dgedi`** ist implementiert, aber nicht gelaufen. Nur relevant, wenn geometrisches
-  Re-Ranking benutzt wird — was Stage 3 für BOP gerade widerlegt hat.
+- **Onboarding-Stufe `dgedi`** (GeDi-Deskriptoren für ein neues Objekt, über
+  `tools/precompute_gedi_descriptors.py`) ist implementiert, aber noch nicht gelaufen.
+  Die Query-Seite ist gemessen (siehe §3).
 - **Nur ycbv** auf der Query-Seite. T-LESS und LM-O würden zeigen, ob die Segmentierung
   auf texturlosen Objekten teurer wird.

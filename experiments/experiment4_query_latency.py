@@ -220,11 +220,22 @@ def run_one(tgt, dataset, test_root, gallery, localizer, args, sink) -> dict:
         out = run_query(pcfg, clip_retr, dino_rer, fusion_mod, shape_m,
                         loc.roi_image, gallery.eval_cfg, ulip_query_emb=ulip_q)
 
-    if args.geometry and cloud is not None:
-        from pipeline.step_b2_geometry_reranking import GeometryReRanker
+    if args.geometry and cloud is not None and len(cloud):
+        # GENAU der Pfad aus eval_bop_pose (Zeile ~594): der dGeDi-DIENST ueber
+        # dgedi_rerank, mit denselben Repo-Parametern. Der erste Entwurf rief
+        # GeometryReRanker(pcfg).rerank(out, ...) — eine andere Implementierung
+        # (lokales GeDi), mit falschen Argumenten (erwartet List[FusedCandidate]
+        # und eine Open3D-Wolke) und pro Query neu konstruiert. Das waere sofort
+        # gescheitert und haette, wenn nicht, eine Latenz fuer einen Pfad
+        # gemessen, den die Evaluation nie benutzt.
+        from dgedi_bridge import dgedi_rerank
+        from eval_common import fusion_ranking as _fr
+        cand_ids = [oid for oid, _ in _fr(out["fused_full"])[:args.geo_k]]
         with t.measure("geometry"):
-            GeometryReRanker(pcfg).rerank(out, observed_pc=cloud,
-                                          top_k=args.geo_k)
+            geo = dgedi_rerank(cloud, cand_ids, ransac_keypoints=6000,
+                               ransac_max_iter=10000, use_icp=True)
+        rec["geo_ok"] = sum(1 for v in (geo or {}).values() if v.get("ok"))
+        rec["geo_requested"] = len(cand_ids)
 
     if not args.no_pose:
         top1 = _top1_id(out)
@@ -323,6 +334,23 @@ def main(argv=None):
         # landen ~25 s Modell-Ladezeit in der ERSTEN Query und verfaelschen
         # sowohl den Kaltstart- als auch den Warm-Median.
         localizer._load_model()
+
+    if args.geometry:
+        # dGeDi laeuft ebenfalls als Dienst. Erreichbarkeit und Gallery-Groesse
+        # VOR der Messung pruefen: eine falsche Gallery hat am 2026-08-28 einen
+        # 17-Stunden-Leerlauf verursacht, in dem keine Registrierung gelang.
+        with cold.measure("check_dgedi"):
+            from dgedi_bridge import dgedi_health
+            h = dgedi_health()
+            # dgedi_health() liefert das Health-Dict ODER None bei
+            # Unerreichbarkeit — es gibt KEINEN "ok"-Schluessel. Ein
+            # h.get("ok") schlaegt deshalb auch dann Alarm, wenn der Dienst
+            # laeuft (beobachtet 2026-09-01). Massgeblich ist n_gallery.
+            n_gal = (h or {}).get("n_gallery", 0)
+            print(f"[stage4] dGeDi n_gallery={n_gal}")
+            if not n_gal:
+                print("[stage4] WARNUNG: dGeDi nicht erreichbar oder leere "
+                      "Gallery — die geometry-Stufe wird nichts messen.")
 
     if not args.no_pose:
         # FoundationPose laeuft als eigener Dienst; "laden" heisst hier
