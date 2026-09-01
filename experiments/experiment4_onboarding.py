@@ -144,19 +144,29 @@ def stage_render(mesh_path, out_dir, obj_id, num_views, blender, t: Timings) -> 
     return out
 
 
-def stage_partial(mesh_path, out_dir, num_points, t: Timings) -> dict:
+def stage_partial(mesh_path, out_dir, num_points, obj_id, t: Timings) -> dict:
+    """Teilwolken je View aus Mesh + gespeicherter Kameramatrix (HPR)."""
+    # KEIN --mesh-glob: das ist ein eigenstaendiges Muster mit obj_id =
+    # Dateistamm, was fuer ycbv jedes Objekt auf "textured_simple" abbilden
+    # wuerde (dieselbe ID-Kollision wie im Full-Mesh-Pfad). Stattdessen die
+    # <cad_dir>/<obj_id>/-Konvention: das Skript entdeckt die Objekte ueber
+    # --images_dir, und obj_root enthaelt genau eines.
+    cad_dir = os.path.dirname(os.path.dirname(mesh_path))
     cmd = [sys.executable, os.path.join(_ROOT, "rendering",
                                         "generate_partial_pointclouds.py"),
-           "--cad_dir", os.path.dirname(os.path.dirname(mesh_path)),
+           "--cad_dir", cad_dir,
            "--images_dir", out_dir,
-           "--mesh-glob", os.path.basename(mesh_path),
            "--num_points", str(num_points), "--overwrite"]
     with t.measure("partial"):
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=_ROOT)
-    return {"partial_rc": r.returncode}
+    n = len(glob.glob(os.path.join(out_dir, obj_id, "*_partial.npz")))
+    out = {"partial_rc": r.returncode, "partial_clouds": n}
+    if n == 0:
+        out["partial_error"] = (r.stderr or r.stdout or "")[-300:]
+    return out
 
 
-def reuse_renders(ds, oid, obj_dir, num_views) -> dict:
+def reuse_renders(ds, oid, obj_dir, num_views, gen_partial=False) -> dict:
     """Vorhandene Renderings ins Arbeitsverzeichnis kopieren.
 
     Blender ist auf dieser Maschine nicht installiert (die Gallery wurde auf dem
@@ -172,12 +182,39 @@ def reuse_renders(ds, oid, obj_dir, num_views) -> dict:
         return {"reuse_renders": f"keine Renderings unter {src}"}
     imgs = [p for p in sorted(glob.glob(os.path.join(src, "*.png")))
             if not p.endswith("_bg.png")][:num_views]
-    npz = sorted(glob.glob(os.path.join(src, "*_partial.npz")))[:num_views]
-    for p in imgs + npz:
+    # Kameramatrizen MUESSEN mit: generate_partial_pointclouds.py entdeckt seine
+    # Views ueber <obj>_viewN_CamMatrix.npy. Ohne sie findet es null Views und
+    # die partial-Stufe laesst sich gar nicht messen — der Grund, warum sie in
+    # allen Laeufen bis 2026-09-01 fehlte.
+    cams = sorted(glob.glob(os.path.join(src, "*_CamMatrix.npy")))
+    cams = _first_n_views(cams, num_views)
+    files = imgs + cams
+    npz = []
+    if not gen_partial:
+        # Wolken nur uebernehmen, wenn sie NICHT erzeugt werden sollen; sonst
+        # wuerde die Messung ueberschriebene Dateien zaehlen statt neue.
+        npz = sorted(glob.glob(os.path.join(src, "*_partial.npz")))[:num_views]
+        files += npz
+    for p in files:
         dst = os.path.join(obj_dir, os.path.basename(p))
         if not os.path.exists(dst):
             shutil.copy2(p, dst)
-    return {"reused_images": len(imgs), "reused_clouds": len(npz)}
+    return {"reused_images": len(imgs), "reused_cams": len(cams),
+            "reused_clouds": len(npz)}
+
+
+def _first_n_views(paths, n):
+    """Die ersten n Views in FPS-Reihenfolge, nach View-Index sortiert.
+
+    Lexikographisch waere view10 < view2 — der Schnitt traefe dann eine andere
+    Teilmenge als die, die Stage 1 als V16 ausgewertet hat.
+    """
+    import re
+    keyed = []
+    for p in paths:
+        m = re.search(r"_view(\d+)_", os.path.basename(p))
+        keyed.append((int(m.group(1)) if m else 10 ** 9, p))
+    return [p for _, p in sorted(keyed)[:n]]
 
 
 def stage_describe(obj_root, t: Timings) -> dict:
@@ -259,12 +296,13 @@ class Encoders:
                 texts = _json.load(open(desc))
                 texts = (list(texts.values()) if isinstance(texts, dict)
                          else list(texts))[:num_views]
-                enc = getattr(self.clip, "encode_text", None)
-                if enc is None:
-                    raise AttributeError("CLIPRetriever hat kein encode_text")
+                # _encode_texts_batch ist der Pfad, den load_descriptions selbst
+                # nimmt (step3_clip_retrieval.py:212) — gebatcht, nicht je String.
+                # Ein oeffentliches encode_text gibt es nicht und wird auch nicht
+                # gebraucht; eine Schleife ueber Einzelstrings haette zudem etwas
+                # anderes gemessen als die Pipeline tut.
                 with t.measure("embed_clip"):
-                    for s in texts:
-                        enc(str(s))
+                    self.clip._encode_texts_batch([str(s) for s in texts])
                 info["n_texts"] = len(texts)
             except Exception as exc:            # nicht abbrechen, nur vermerken
                 info["embed_clip_skipped"] = str(exc)
@@ -281,22 +319,45 @@ class Encoders:
                     self.ulip.encode_pointcloud(pts, colors=col)
             info["n_clouds"] = len(npz)
 
-        with t.measure("cache_write"):
-            self._touch_cache(obj_dir)
+        info.update(self.append_to_cache(num_views, t))
         return info
 
     @staticmethod
-    def _touch_cache(obj_dir):
-        """Serialisierungskosten des Cache-Eintrags.
+    def append_to_cache(num_views, t, work=None):
+        """Das simulierte INKREMENTELLE Anhaengen — echt, nicht als Attrappe.
 
-        Klein, aber getrennt ausgewiesen, weil der Punkt des Experiments genau
-        hier liegt: der Schreibvorgang IST billig — teuer ist, dass der aktuelle
-        Fingerprint ihn fuer die ganze Gallery erzwingt (--measure-invalidation).
+        Genau das waere die Arbeit eines anhaengenden Caches: bestehende Datei
+        laden, den einen neuen Objekteintrag einfuegen, zurueckschreiben. Als
+        Stellvertreter dient der groesste reale Gallery-Cache (gso, 1030 der
+        1257 Proxy-Objekte).
+
+        Die Messung getrennt nach load / insert / save zu fuehren ist der Punkt:
+        das Einfuegen ist O(1), aber Laden und Schreiben einer monolithischen
+        .pt-Datei sind O(Gallery). Selbst ein "anhaengender" Cache in dieser
+        Ablageform zahlt also pro neuem Objekt fuer die ganze Gallery — nur
+        eben Serialisierung statt Encoding.
         """
         import torch
-        p = os.path.join(obj_dir, ".stage4_cache_probe.pt")
-        torch.save({"probe": torch.zeros(42, 1280)}, p)
-        os.remove(p)
+        cands = sorted(glob.glob(os.path.join(
+            _ROOT, "object_images", "gso", ".ulip_partial_cache_*.pt")))
+        if not cands:
+            return {"cache_append_skipped": "kein gso-Partial-Cache gefunden"}
+        with t.measure("cache_load"):
+            blob = torch.load(cands[0], map_location="cpu", weights_only=False)
+        emb = blob.get("embeddings", blob) if isinstance(blob, dict) else blob
+        n_before = len(emb)
+        with t.measure("cache_insert"):
+            any_v = next(iter(emb.values()))
+            emb["__stage4_probe__"] = torch.zeros(
+                num_views, any_v.shape[-1], dtype=any_v.dtype)
+        tmp = os.path.join(work or "/tmp", ".stage4_cache_append.pt")
+        with t.measure("cache_save"):
+            torch.save(blob, tmp)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return {"cache_entries": n_before}
 
 
 def stage_dgedi(obj_dir, t: Timings) -> dict:
@@ -318,17 +379,32 @@ def stage_dgedi(obj_dir, t: Timings) -> dict:
 
 
 # --------------------------------------------------------------------------
-def measure_invalidation(t: Timings) -> dict:
-    """Was der aktuelle Cache erzwingt, wenn EIN Objekt dazukommt.
+def measure_invalidation(enc, num_views, sample, t: Timings) -> dict:
+    """Der Aufschlag, den der AKTUELLE Cache erzwingt — gemessen, nicht geraten.
 
-    Nicht gemessen wird ein kuenstlicher Neulauf: es genuegt, die Gallery
-    einmal ohne Cache zu encodieren und die Kosten pro Objekt zu extrapolieren
-    — die Invalidierung trifft jedes Objekt gleich.
+    Kommt ein Objekt dazu, aendert sich der Inventar-Fingerprint und der
+    gesamte Cache verfaellt: jedes Gallery-Objekt muss neu encodiert werden.
+    Gemessen wird deshalb das Encoding einer Stichprobe echter Gallery-Objekte
+    OHNE Cache, hochgerechnet auf die Gallery-Groesse.
+
+    Der erste Versuch (2026-09-01) hat hier `assemble_gallery` gestoppt und
+    6,1 s gemeldet — das war eine Assembly mit WARMEN Caches, also gerade nicht
+    die Groesse, um die es geht. Deshalb jetzt ueber die Stueckkosten.
     """
-    from stage3_gallery import PROXY_DATASETS, assemble_gallery
-    with t.measure("gallery_full_assembly"):
-        g = assemble_gallery(target_datasets=(), proxy_ds=PROXY_DATASETS)
-    return {"gallery_size": len(g.gallery_ids)}
+    GALLERY = 1257                      # G_proxy, die 3b-Datenbank
+    src_root = os.path.join(_ROOT, "object_images", "gso")
+    objs = [d for d in sorted(os.listdir(src_root))
+            if os.path.isdir(os.path.join(src_root, d))][:sample]
+    per = Timings()
+    for oid in objs:
+        enc.embed_object(os.path.join(src_root, oid), num_views, per)
+    enc_keys = [k for k in per.as_dict() if k.startswith("embed_")]
+    per_obj = sum(sum(per.runs[k]) for k in enc_keys) / max(len(objs), 1)
+    t.add("invalidation_total_extrapolated", per_obj * GALLERY)
+    return {"gallery_size": GALLERY, "sampled_objects": len(objs),
+            "per_object_encode_s": round(per_obj, 3),
+            "extrapolated_full_reencode_s": round(per_obj * GALLERY, 1),
+            "extrapolated_full_reencode_min": round(per_obj * GALLERY / 60, 1)}
 
 
 def main(argv=None):
@@ -336,9 +412,11 @@ def main(argv=None):
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--targets", default="ycbv,tless,lmo",
                     help="Datensaetze, deren CADs onboardet werden (Default: alle 59).")
-    ap.add_argument("--stages", default="mesh,embed",
-                    help=f"Komma-Liste aus {ALL_STAGES} oder 'all'. "
-                         "Default laesst Blender und LLaVA weg (schnell).")
+    ap.add_argument("--stages", default="mesh,partial,describe,embed",
+                    help=f"Komma-Liste aus {ALL_STAGES} oder 'all'. Default ist "
+                         "die vollstaendige Kette OHNE render — Blender liegt "
+                         "ausserhalb des Containers und laeuft ueber "
+                         "scripts/stage4_onboarding.sh auf dem Host.")
     ap.add_argument("--max-objects", type=int, default=0,
                     help="Nur die ersten N CADs (0 = alle).")
     ap.add_argument("--num-views", default="42",
@@ -360,6 +438,9 @@ def main(argv=None):
                          "kopieren, statt sie zu erzeugen. Noetig, wo kein "
                          "Blender installiert ist — describe und embed werden "
                          "dann echt gemessen, nur die Renderzeit fehlt.")
+    ap.add_argument("--inv-sample", type=int, default=15,
+                    help="Wie viele echte Gallery-Objekte fuer die "
+                         "Invalidierungs-Stueckkosten encodiert werden.")
     ap.add_argument("--measure-invalidation", action="store_true",
                     help="Zusaetzlich den Aufschlag der Cache-Invalidierung messen.")
     ap.add_argument("--out", default=os.path.join(_ROOT, "results_stage4",
@@ -410,12 +491,14 @@ def main(argv=None):
                 if "mesh" in stages:
                     rec.update(stage_mesh(mesh, t))
                 if args.reuse_renders:
-                    rec.update(reuse_renders(ds, oid, obj_dir, V))
+                    rec.update(reuse_renders(ds, oid, obj_dir, V,
+                                             gen_partial="partial" in stages))
                 if "render" in stages:
                     rec.update(stage_render(mesh, obj_root, oid, V,
                                             args.blender, t))
                 if "partial" in stages:
-                    rec.update(stage_partial(mesh, obj_root, args.num_points, t))
+                    rec.update(stage_partial(mesh, obj_root, args.num_points,
+                                             oid, t))
                 if "describe" in stages:
                     rec.update(stage_describe(obj_root, t))
                 if "embed" in stages and enc is not None:
@@ -460,8 +543,13 @@ def main(argv=None):
     }
 
     if args.measure_invalidation:
-        inv = Timings()
-        payload["invalidation"] = {**measure_invalidation(inv), **inv.as_dict()}
+        if enc is None:
+            payload["invalidation"] = {"skipped": "braucht --stages embed"}
+        else:
+            inv = Timings()
+            payload["invalidation"] = {
+                **measure_invalidation(enc, max(view_counts), args.inv_sample, inv),
+                **{k: round(sum(v), 2) for k, v in inv.as_dict().items()}}
 
     for V in view_counts:
         print_table(f"Onboarding pro Objekt — {V} Views", by_views[V]["per_step"])
