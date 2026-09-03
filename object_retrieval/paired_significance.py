@@ -32,6 +32,11 @@ PAIRS = [
     ("colour: XYZ+RGB vs XYZ (isolated)",     (None, "E1_shape_only"),   (None, "O5_xyz_shape_only")),
     ("colour: XYZ+RGB vs XYZ (fused)",        (None, "E1c_full_fusion"), (None, "O5_xyz_only")),
     ("ref: partial vs full-mesh (isolated)",  (None, "E1_shape_only"),   (None, "E2b_fullmesh_shape_only")),
+    # Seit dem Farb-Fix (2026-09-01) ist E2b_fullmesh der staerkste Arm ohne
+    # Geometrie — 0.5935 gegen 0.5868 fuer BASE. Der Abstand liegt in der
+    # Groessenordnung, in der sich der Uni3D-"Sieg" als Rauschen erwies,
+    # gehoert also geprueft und nicht behauptet.
+    ("ref: partial vs full-mesh (fused)",     (None, "E1c_full_fusion"), (None, "E2b_fullmesh")),
     ("appearance: DINOv2 vs SigLIP (isolated)", (None, "E1_view_only"),  (None, "E4_siglip_only")),
     ("combiner: weighted vs RRF (fused)",     (None, "E1c_full_fusion"), (None, "E6_rrf")),
     ("shape views: V32 vs V42 (isolated)",    (None, "A7_shape_only_V32"), (None, "A7_shape_only_V42")),

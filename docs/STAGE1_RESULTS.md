@@ -594,3 +594,33 @@ Scheinkorrespondenzen. Das ist die inhaltliche Grenze der Methode.
 
 *Aliase (identisch mit ihrem Basis-Arm) sind zusammengefasst: E2_none = E1c_full_fusion,
 O1b = E1c, O2_full_database = E1c, O4_V42 = E1c, O5_xyzrgb = E1c, E2b_partial = E1c.*
+
+## Stärkster Arm ohne Geometrie (Stand 2026-09-03)
+
+Nach dem Farb-Fix für texturierte Meshes ist **`E2b_fullmesh` der stärkste Arm ohne
+geometrisches Re-Ranking** — volle Fusion mit einer Full-Mesh-Shape-Referenz:
+
+| Arm | nDCG | NN_sub |
+|---|---|---|
+| **`E2b_fullmesh`** | **0.5935** | **0.3598** |
+| `E7_uni3d` | 0.5913 | 0.3455 |
+| `O5_xyz_only` | 0.5880 | 0.3541 |
+| `E1c_full_fusion` (BASE) | 0.5868 | 0.3413 |
+
+Gepaarter Test gegen BASE über alle 2101 Queries:
+
+| Metrik | Δ zugunsten Full-Mesh | 95 %-KI | Wilcoxon | Bilanz | Urteil |
+|---|---|---|---|---|---|
+| nDCG | 0.0067 | [−0.0134, +0.0003] | p = 0.0002 | 904 : 1127 | konsistent |
+| NN_sub | 0.0186 | [−0.0352, −0.0019] | p = 0.031 | 143 : 182 | **real** |
+
+Auf nDCG schließt das Intervall die Null ein — der Mittelwert ist verrauscht —, doch der
+Vorzeichentest ist eindeutig. Auf **NN_sub**, der Top-1-Metrik mit Bezug zur Pose, ist der
+Vorteil statistisch belastbar.
+
+Isoliert bleibt es umgekehrt: der partielle Shape-Kanal ist für sich genauer
+(0.5353 gegen 0.4956). Der Nutzen des vollständigen Meshes entsteht erst in der Fusion —
+seine Fehler korrelieren offenbar weniger mit denen von Text und Erscheinung. Dasselbe
+Muster zeigt Stage 3 (`3a_cross_fullmesh_v2` 0.5151 gegen 0.4818).
+
+Welche Kategorien wo gewinnen: `python3 tools/compare_arms_by_category.py --preset fusion`.
