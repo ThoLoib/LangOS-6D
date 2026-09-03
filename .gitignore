@@ -77,3 +77,6 @@ third_party/pylibs/
 
 # Stage-4-Messergebnisse
 /results_stage4/
+
+# Verdraengte/duplizierte Ergebnisordner
+/.stage1_superseded/
