@@ -13,9 +13,9 @@ complete, Stage 4 (latency) is implemented and awaiting its full run.*
 > ran at **42 views + top-5**. Stage 1 was the sole outlier and has been **fully re-run at
 > 42v + k=5** → `results_shrec18_v2_stage1_42v_k5` (38 arms incl. geometry at K=50; on Drive).
 > Headline: BASE **0.5868** · isolated shape **0.5353** · geometry winner **0.6405** ·
-> hit@1 0.340→0.471. A paired significance test (§3.1) shows the **config change itself is a
-> wash** (p=0.60) — it bought comparability, not different numbers. All three stages now share
-> one shape config (§2.1).
+> hit@1 0.340→0.471. The per-query comparison (§3.1) shows the **config change itself is a
+> wash** (938:1064) — it bought comparability, not different numbers. All three stages now
+> share one shape config (§2.1).
 
 ---
 
@@ -136,10 +136,10 @@ tell a different story. nDCG shown; top-1 (`hit@1`) added where it matters.
 |---|---|---|---|---|
 | **A1** | ◆ | Visual backbone: DINOv2 vs SigLIP | Which appearance encoder? | **DINOv2 0.5506** > SigLIP 0.5165 (fair MAP-pooled; the old 0.5245 used a degenerate patch-0 token). DINOv2 wins isolated *and* fused (0.5889 vs 0.5667). |
 | **A2** | ◇ | Visual view count 8/16/32/42 | How many renders? | **isolated: V8 0.5302 · V16 0.5481 · V32 0.5426 · V42 0.5506** — more views help but ~flat past 16 (V16 is 99% of V42); V42 best, small V32 dip (noise). Mirrors the fused O4 trend (V8 0.5736 → V42 0.5889). |
-| **A3** | ◆ | Shape backbone: ULIP-2 vs Uni3D (pc) | Which 3D encoder? | **Tie — in both settings** (significance-tested, §3.1). Isolated nDCG 0.5353 vs 0.5337 (n.s.); fused 0.5868 vs 0.5913 looks like a Uni3D win but is **outlier-driven** (per-query wins 1009:1027, median 0, Wilcoxon p=0.54) → not a real effect. On **hit@1 ULIP-2 is significantly better** isolated (+0.018, p=0.038). **Keep ULIP-2** (it also has the cross-mode tower Uni3D lacks). |
+| **A3** | ◆ | Shape backbone: ULIP-2 vs Uni3D (pc) | Which 3D encoder? | **Tie — in both settings** (§3.1). Isolated nDCG 0.5353 vs 0.5337; fused 0.5868 vs 0.5913 looks like a Uni3D win but the per-query split is 1009:1027 with median 0 → outlier-driven, not a real effect. On **hit@1 ULIP-2 is ahead** isolated (+0.018). **Keep ULIP-2** (it also has the cross-mode tower Uni3D lacks). |
 | **A4** | ◆ | Shape reference: partial view vs full mesh | Match a rendered partial view or the whole mesh? | **partial 0.5256 ≫ full-mesh 0.4858** isolated. *In fusion they tie* (0.5889 vs 0.5897) — fusion had masked a real +0.04 shape-channel gap. |
 | **A5** | ◇ | Shape **query mode: pc vs cross** | Encode the query point cloud or its image? | **pc 0.5256 ≫ cross 0.4673** (+0.058). This is the **bridge to Stage 2**: it quantifies exactly what the depth-free (cross) setting costs. |
-| **A6** | ◇ | Query colours: XYZ+RGB vs XYZ-only | Do point colours help the shape channel? | **Colour slightly *hurts*, consistently** (significance-tested): isolated 0.5353 (RGB) vs 0.5422 (XYZ-only); XYZ-only wins **1152 of 1999** non-tied queries (Wilcoxon p=0.0007) — small but systematic, and **REAL on hit@1** (−0.032, p=0.0008). ⚠ *Confounded:* the xyz arm also swaps the ULIP tower (ViT-B/512-d/8k pts vs ViT-g/1280-d/10k), so this is not a clean colour-only ablation (§2.1). |
+| **A6** | ◇ | Query colours: XYZ+RGB vs XYZ-only | Do point colours help the shape channel? | **Colour slightly *hurts*, consistently**: isolated 0.5353 (RGB) vs 0.5422 (XYZ-only); XYZ-only wins **1152 of 1999** non-tied queries — small but systematic, and larger on hit@1 (−0.032). ⚠ *Confounded:* the xyz arm also swaps the ULIP tower (ViT-B/512-d/8k pts vs ViT-g/1280-d/10k), so this is not a clean colour-only ablation (§2.1). |
 | **A7** | ◇ | Shape view count (ULIP partial) | How many ULIP gallery views to pool? | **isolated: V8 0.5128 · V16 0.5256 · V32 0.5295 · V42 0.5389** — **monotone, more views keep helping** (unlike appearance, which plateaus). **But in fusion it vanishes:** arm `A7f` (BASE fusion, shape @42) = **0.5885 vs BASE 0.5889 = −0.0004**, so the isolated +0.013 is fully masked. BASE pools 16 → confirmed a sound default, not a compromise. Ran via a force-loaded partial-gallery cache from Drive (`.ulip_partial_cache_*.pt`, `SHREC_FORCE_PARTIAL_CACHE`); V16 reproduces E1_shape_only 0.5256 = validated. |
 
 ### Block B — Fusion
@@ -161,33 +161,32 @@ Order: **configure the combiner first, then show the payoff.**
 | **C2** | ◇ | Geometry shortlist depth K (50/20/5) | How deep to re-rank? | **Deeper is better** (42v/k5): GeDi+RANSAC **K50 0.6405 · K20 0.6279 · K5 0.6022** (+0.038 nDCG, **+0.046 hit@1** over the range), konsistent über *alle* Geometrie-Arme. K=50 ist die BASE-Tiefe. K=20/5 aus dem K=50-Cache abgeleitet. |
 | **C3** | ◇ | Shape vs geometry redundancy | Is S_shape redundant once GeDi re-ranks? | Complementary; all geometry re-ranks the fusion top-K shortlist. text+view 0.5519 · +shape-in-fusion 0.5889 · +GeDi-rerank-on-the-text+view-shortlist (no shape) 0.5917 · **+both (shape + GeDi) 0.6226** · GeDi⊕base Borda 0.6301. Shape and GeDi each add ~+0.04 and stack — neither redundant. |
 
-### 3.1 Paired significance — which deltas are real?
+### 3.1 How stable are the deltas?
 
-`object_retrieval/paired_significance.py` pairs the per-query records by query id
-(n = 2101) and reports, per comparison: the mean Δ with a **95 % bootstrap CI (10 k
-resamples)**, the **Wilcoxon signed-rank p**, and the **per-query win split**. Run on
-nDCG and hit@1; results in `paired_significance_{nDCG,NN_sub}.csv`.
+Every arm is evaluated over the same 2101 queries, so each comparison can be made
+**per query**. The win split of those individual comparisons says more than the gap
+between means alone: an advantage carried by a few large swings looks identical in the
+mean to one earned across the board.
 
-**The two tests answer different questions, and here that matters.** The CI tests the
-*mean* difference; Wilcoxon tests whether one arm wins *consistently*. With heavy-tailed
-per-query deltas a handful of large swings can move the mean while the win/loss split is
-~50/50 — so **for near-ties the sign-consistency verdict is authoritative**: a "win"
-carried by a few outliers is not a design argument.
+| Comparison (nDCG) | Δ | queries won | reading |
+|---|---|---|---|
+| geometry: none vs GeDi+RANSAC | −0.0537 | 599 : **1264** | geometry wins broadly |
+| partial vs full-mesh (isolated) | +0.0495 | **1015** : 974 | narrow split, large margin |
+| DINOv2 vs SigLIP (isolated) | +0.0341 | **1213** : 811 | DINOv2 wins broadly |
+| weighted-sum vs RRF (fused) | +0.0124 | **1320** : 718 | weighted-sum wins broadly |
+| XYZ+RGB vs XYZ-only (isolated) | −0.0068 | 847 : **1152** | colour hurts slightly but steadily |
+| ULIP-2 vs Uni3D (fused) | −0.0045 | 1009 : 1027 | **tie** |
+| ULIP-2 vs Uni3D (isolated) | +0.0017 | balanced | **tie** |
+| config 16v/k8 → 42v/k5 (fused) | +0.0021 | 938 : 1064 | **wash** |
 
-| Comparison (nDCG) | Δ | CI | Wilcoxon p | wins | verdict |
-|---|---|---|---|---|---|
-| geometry: none vs GeDi+RANSAC | −0.0537 | excl. 0 | 0.0000 | 599:1264 | **REAL** (geometry helps) |
-| partial vs full-mesh (isolated) | +0.0495 | excl. 0 | 0.0000 | 1015:974 | **REAL** (partial wins by larger margins) |
-| DINOv2 vs SigLIP (isolated) | +0.0341 | excl. 0 | 0.0000 | 1213:811 | **REAL** |
-| weighted-sum vs RRF (fused) | +0.0124 | excl. 0 | 0.0000 | 1320:718 | **REAL** |
-| XYZ+RGB vs XYZ-only (isolated) | −0.0068 | incl. 0 | 0.0007 | 847:1152 | **consistent** — colour slightly hurts |
-| ULIP-2 vs Uni3D (fused) | −0.0045 | excl. 0 | 0.54 | 1009:1027 | **outlier-driven → tie** |
-| ULIP-2 vs Uni3D (isolated) | +0.0017 | incl. 0 | 0.11 | — | **tie** |
-| config 16v/k8 → 42v/k5 (fused) | +0.0021 | excl. 0 | 0.60 | 938:1064 | **outlier-driven → wash** |
+Two rows deserve attention because mean and split disagree. **ULIP-2 vs Uni3D** looks
+like a Uni3D win in the mean (−0.0045), but the split is 1009:1027 — the gap comes from a
+handful of outliers, not from consistently better rankings; on hit@1 ULIP-2 is ahead
+(+0.018). **The 16v/k8 → 42v/k5 config change** is likewise a wash at 938:1064: it bought
+comparability across the stages, not better numbers.
 
-On **hit@1** every REAL row above holds and gets larger (geometry −0.130, SigLIP +0.070,
-full-mesh +0.049, RRF +0.024), and two more become REAL: ULIP-2 > Uni3D isolated (+0.018,
-p=0.038) and XYZ-only > XYZ+RGB (−0.032, p=0.0008).
+On **hit@1** every broad advantage grows (geometry −0.130, SigLIP +0.070, full-mesh
++0.049, RRF +0.024).
 
 **Two prior claims are corrected by this:** "Uni3D wins fused" is **not** a real effect
 (A3 is a tie in both settings), and the **16v/k8 → 42v/k5 config correction is a wash** —

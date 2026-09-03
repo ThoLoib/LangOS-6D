@@ -369,10 +369,11 @@ without the machine it was produced on is not citable.
 ## 5. Validation instrumentation (cross-experiment)
 
 - **Paired significance test** — `object_retrieval/paired_significance.py`: pairs
-  `results_per_query.json` by query id, reports paired mean Δ + **95% bootstrap CI (10k)** +
-  Wilcoxon p on nDCG and hit@1; a Δ is real iff its CI excludes 0. Runs on the Stage-1 folder
-  (and cross-folder for the config-change delta). This is what lets any small delta (≤ ~0.002
-  nDCG) be called real rather than noise.
+  `results_per_query.json` by query id and reports, per comparison, the mean Δ and the
+  **per-query win split** on nDCG and hit@1. The split is what separates a broad advantage
+  from one carried by a few outliers — the mean alone cannot. Runs on the Stage-1 folder
+  (and cross-folder for the config-change delta); `paired_significance_stage3.py` does the
+  same for BOP, paired on the instance key.
 - **BASE self-checks** — every re-derivation validates a known anchor before emitting results
   (Stage-1 `A7 V16==0.5256`; MI3DOR sweep `FT@(0.3,0.4,0.3)≈0.682`), guarding against the
   silent-misconfiguration bug class (wrong cache, degenerate channel, mis-set weight).

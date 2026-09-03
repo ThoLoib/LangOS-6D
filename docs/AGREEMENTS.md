@@ -95,3 +95,15 @@ gegenlesen, ob er noch dem entspricht, was hier steht.
   Summary-Dateien aus *nur den gelaufenen* Armen neu. Nachträgliche Arme laufen deshalb
   in einen eigenen Ordner; danach werden ausschließlich die Arm-Verzeichnisse
   hinüberkopiert, mit Sicherung und Gegenprüfung.
+
+## 2026-09-03 (Nachtrag)
+
+- **Ergebnisse ohne Konfidenzintervalle und ohne Wilcoxon berichten** — jetzt und künftig.
+  *Warum:* Thomas' Entscheidung; der Apparat wirkt für den Nutzen zu aufwendig und muss in
+  der Verteidigung erklärt werden. In der Computer Vision ist er ohnehin unüblich.
+- **Stattdessen: Δ plus die Bilanz gewonnener Queries.** Das ist eine rein beschreibende
+  Zahl, kein Test, trennt aber weiterhin einen breiten Vorsprung von einem, der auf wenigen
+  Ausreißern beruht — genau die Unterscheidung, an der der Uni3D-„Sieg" (1009:1027) und die
+  Config-Umstellung (938:1064) als Nulleffekte erkennbar wurden.
+- Die Skripte `paired_significance*.py` bleiben im Repo, ihre Ausgabe wird aber nicht mehr
+  in die Ergebnisdokumente übernommen.

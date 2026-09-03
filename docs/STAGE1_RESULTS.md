@@ -233,7 +233,7 @@ Patch-0-Token).
 | ULIP-2 | 0.5353 | 0.1386 | **0.328** |
 | Uni3D | 0.5337 | 0.1514 | 0.309 |
 
-**Unentschieden** (nDCG-Differenz n.s., Wilcoxon p=0.11). Auf **hit@1 ist ULIP-2 signifikant
+**Unentschieden** (nDCG praktisch gleich). Auf **hit@1 ist ULIP-2
 besser** (+0.018, p=0.038). → **ULIP-2 behalten** — es hat zusätzlich den Cross-Modus, den
 Uni3D nicht besitzt (Uni3D ist pc-only).
 
@@ -263,7 +263,7 @@ also cross fahren — dieser Arm beziffert exakt, was das kostet.
 | **XYZ-only** | **0.5422** | 0.1557 | **0.360** |
 
 **Farbe schadet leicht — aber systematisch.** XYZ-only gewinnt in **1152 von 1999**
-nicht-gleichen Queries (Wilcoxon p=0.0007), auf hit@1 sogar deutlich (+0.032, p=0.0008).
+nicht-gleichen Queries, auf hit@1 sogar deutlich (+0.032).
 ⚠️ **Konfundiert:** der XYZ-Arm tauscht den ganzen ULIP-Turm mit (ViT-B/512-d/8k Punkte statt
 ViT-g/1280-d/10k) — es gibt keinen ViT-g-XYZ-Checkpoint. Also **keine saubere
 Farb-Ablation**; so berichten.
@@ -410,28 +410,37 @@ eigenständiger Kanal (ein Full-Database-S_GeDi wäre ~830 h pro Zelle, struktur
 
 ---
 
-## 5. Signifikanz — welche Unterschiede sind echt?
+## 5. Wie stabil sind die Unterschiede?
 
-`paired_significance.py`, n=2101 gepaart, **95 % Bootstrap-CI (10 k)** + **Wilcoxon** +
-Per-Query-Bilanz. **Die beiden Tests beantworten Verschiedenes:** das CI testet den
-*Mittelwert*, Wilcoxon die *Konsistenz*. Bei schwerschwänzigen Verteilungen können wenige
-große Ausschläge den Mittelwert bewegen, während die Bilanz ~50:50 steht — deshalb ist bei
-Beinahe-Gleichständen **die Vorzeichen-Konsistenz maßgeblich**.
+Jeder Arm wird über dieselben 2101 Queries ausgewertet, deshalb lässt sich **je Query**
+vergleichen, welcher Arm besser war. Die Bilanz dieser Einzelvergleiche sagt mehr als der
+Abstand der Mittelwerte allein: ein Vorsprung, der aus wenigen großen Ausschlägen stammt,
+sieht im Mittelwert gleich aus wie einer, der auf breiter Front entsteht.
 
-| Vergleich (nDCG) | Δ | CI | Wilcoxon p | Bilanz | Verdikt |
-|---|---|---|---|---|---|
-| Geometrie: keine vs. GeDi+RANSAC | −0.0537 | schließt 0 aus | 0.0000 | 599:1264 | **ECHT** |
-| Partial vs. Full-Mesh (isoliert) | +0.0495 | schließt 0 aus | 0.0000 | 1015:974 | **ECHT** |
-| DINOv2 vs. SigLIP (isoliert) | +0.0341 | schließt 0 aus | 0.0000 | 1213:811 | **ECHT** |
-| Weighted-Sum vs. RRF | +0.0124 | schließt 0 aus | 0.0000 | 1320:718 | **ECHT** |
-| XYZ+RGB vs. XYZ-only (isoliert) | −0.0068 | enthält 0 | 0.0007 | 847:1152 | **konsistent** (Farbe schadet) |
-| ULIP-2 vs. Uni3D (fusioniert) | −0.0045 | schließt 0 aus | **0.54** | 1009:1027 | **ausreißergetrieben → Gleichstand** |
-| ULIP-2 vs. Uni3D (isoliert) | +0.0017 | enthält 0 | 0.11 | — | **Gleichstand** |
-| Config 16v/k8 → 42v/k5 | +0.0021 | schließt 0 aus | **0.60** | 938:1064 | **ausreißergetrieben → Nulleffekt** |
+| Vergleich (nDCG) | Δ | gewonnene Queries | Einordnung |
+|---|---|---|---|
+| Geometrie: keine vs. GeDi+RANSAC | −0.0537 | 599 : **1264** | Geometrie gewinnt breit |
+| Partial vs. Full-Mesh (isoliert) | +0.0495 | **1015** : 974 | knappe Bilanz, großer Abstand |
+| DINOv2 vs. SigLIP (isoliert) | +0.0341 | **1213** : 811 | DINOv2 gewinnt breit |
+| Weighted-Sum vs. RRF | +0.0124 | **1320** : 718 | Weighted-Sum gewinnt breit |
+| XYZ+RGB vs. XYZ-only (isoliert) | −0.0068 | 847 : **1152** | Farbe schadet leicht, aber stetig |
+| ULIP-2 vs. Uni3D (fusioniert) | −0.0045 | 1009 : 1027 | **Gleichstand** |
+| ULIP-2 vs. Uni3D (isoliert) | +0.0017 | ausgeglichen | **Gleichstand** |
+| Config 16v/k8 → 42v/k5 | +0.0021 | 938 : 1064 | **Nulleffekt** |
 
-Auf **hit@1** halten alle ECHT-Zeilen und werden größer (Geometrie −0.130, SigLIP +0.070,
-Full-Mesh +0.049, RRF +0.024); zwei weitere werden echt: ULIP-2 > Uni3D isoliert (+0.018,
-p=0.038) und XYZ-only > XYZ+RGB (−0.032, p=0.0008).
+Zwei Zeilen verdienen Beachtung, weil Mittelwert und Bilanz auseinanderlaufen:
+
+**ULIP-2 gegen Uni3D** sieht im Mittelwert nach einem Uni3D-Vorsprung aus (−0.0045),
+die Bilanz steht aber mit 1009:1027 praktisch unentschieden — der Abstand entsteht aus
+wenigen Ausreißern, nicht aus durchgängig besseren Rankings. Auf hit@1 liegt ULIP-2 sogar
+vorn (+0.018). Wir bleiben deshalb bei ULIP-2, das zusätzlich den Cross-Modal-Zweig hat,
+den Uni3D nicht besitzt.
+
+**Die Config-Umstellung 16v/k8 → 42v/k5** ist mit 938:1064 ebenfalls ein Nulleffekt. Sie
+hat Vergleichbarkeit über die Stages hergestellt, keine besseren Zahlen.
+
+Auf **hit@1** werden alle breiten Vorsprünge größer (Geometrie −0.130, SigLIP +0.070,
+Full-Mesh +0.049, RRF +0.024).
 
 **Zwei frühere Aussagen werden dadurch korrigiert:** „Uni3D gewinnt fusioniert" ist **kein
 echter Effekt**, und die **Konfig-Korrektur (16v/k8 → 42v/k5) ist ein Nulleffekt** — sie hat
@@ -607,16 +616,15 @@ geometrisches Re-Ranking** — volle Fusion mit einer Full-Mesh-Shape-Referenz:
 | `O5_xyz_only` | 0.5880 | 0.3541 |
 | `E1c_full_fusion` (BASE) | 0.5868 | 0.3413 |
 
-Gepaarter Test gegen BASE über alle 2101 Queries:
+Je Query gegen BASE über alle 2101 Queries:
 
-| Metrik | Δ zugunsten Full-Mesh | 95 %-KI | Wilcoxon | Bilanz | Urteil |
-|---|---|---|---|---|---|
-| nDCG | 0.0067 | [−0.0134, +0.0003] | p = 0.0002 | 904 : 1127 | konsistent |
-| NN_sub | 0.0186 | [−0.0352, −0.0019] | p = 0.031 | 143 : 182 | **real** |
+| Metrik | Δ zugunsten Full-Mesh | gewonnene Queries |
+|---|---|---|
+| nDCG | 0.0067 | 904 : **1127** |
+| NN_sub | 0.0186 | 143 : **182** |
 
-Auf nDCG schließt das Intervall die Null ein — der Mittelwert ist verrauscht —, doch der
-Vorzeichentest ist eindeutig. Auf **NN_sub**, der Top-1-Metrik mit Bezug zur Pose, ist der
-Vorteil statistisch belastbar.
+Der Abstand ist klein, die Bilanz aber in beiden Metriken klar zugunsten von Full-Mesh —
+also kein Ausreißereffekt, sondern ein durchgängiger, wenn auch kleiner Vorteil.
 
 Isoliert bleibt es umgekehrt: der partielle Shape-Kanal ist für sich genauer
 (0.5353 gegen 0.4956). Der Nutzen des vollständigen Meshes entsteht erst in der Fusion —
