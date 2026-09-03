@@ -1594,6 +1594,22 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
     _spec("E2b_fullmesh", "E2b", "full-mesh S_shape reference",
           bib="diUREDUnsupervised3D2023",
           channels={**_TV_CH, "shape": ("ulip_pc_fullmesh", None)}),
+    # Geometrie auf dem jeweils staerksten Arm OHNE Geometrie. Die E2-Arme
+    # sitzen alle auf dem BASE-Ranking (0.5868); seit dem Farb-Fix ist aber
+    # E2b_fullmesh mit 0.5935 vorn. Ein besseres Ausgangsranking hebt die Latte,
+    # die das Re-Ranking ueberspringen muss — Stage 3 zeigt denselben
+    # Mechanismus. Beide Kandidaten sind vordefiniert, gefahren wird per Gate
+    # nur der, der sich am Ende als staerkster erweist.
+    _spec("E2b_fullmesh_geo", "E2b",
+          "GeDi-RANSAC re-rank ON TOP of the full-mesh fusion",
+          bib="caraffaFreeZeTrainingfreeZeroshot2025",
+          channels={**_TV_CH, "shape": ("ulip_pc_fullmesh", None)},
+          geometry="chamfer_ransac"),
+    _spec("E7_ulip2_cross_fullmesh_geo", "E7",
+          "GeDi-RANSAC re-rank ON TOP of the cross x full-mesh fusion",
+          bib="caraffaFreeZeTrainingfreeZeroshot2025",
+          channels={**_TV_CH, "shape": ("ulip_cross_fullmesh", None)},
+          geometry="chamfer_ransac"),
     # Isolated (shape-only) counterparts: the partial-vs-fullmesh effect read
     # on the shape channel ALONE, not masked by the shared text+view fusion.
     # E2b_partial_shape_only == E1_shape_only (pc-mode partial views).
