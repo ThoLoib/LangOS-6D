@@ -1,6 +1,62 @@
 # AI Handoff – Branch `thesis-approach`
 
-> Last updated: 2026-09-01 (Full-Mesh-Farblauf laeuft; Stage 4 vollstaendig)
+> Last updated: 2026-09-04 (3c + Stage-1-Zellen + Geometrie laufen)
+
+## Update 2026-09-04 (Farb-Fix ausgewertet; drei Ketten laufen)
+
+**Laeuft gerade, streng sequenziell verkettet:**
+1. `run_stage3_fullmesh_pose.sh` — `3b_cross_fullmesh` fertig, `3c_cross_fullmesh`
+   rechnet (tless ~66 %), Ende ca. 03:15.
+2. `run_stage1_cross_fullmesh.sh` — wartet; ergaenzt die fehlende Matrixzelle
+   cross x full-mesh (~1 h).
+3. `run_stage1_geo_on_best.sh` — wartet; **Gate**: ermittelt den staerksten Arm
+   OHNE Geometrie selbst und setzt darauf `chamfer_ransac` bei K=50 (~12 h).
+   Schaltet dGeDi vorher auf `.dgedi_gallery_shrec` (Pruefung n_gallery >= 3000)
+   und danach zurueck auf BOP.
+
+Ein Monitor (`Monitor`-Tool, persistent) meldet Meilensteine, Abbrueche und den
+Fall "Skript lebt, aber kein Rechenprozess".
+
+**Die zwei Ergebnisse, die alles verschieben** (Details `AI_LOG.md` 2026-09-04):
+
+| | Retrieval R@1 | Pose D_sym Median |
+|---|---|---|
+| cross, partial | 0.4818 | **18.37 mm** |
+| cross, **full-mesh** | **0.5151** | 18.91 mm |
+| OSCAR-Baseline | 0.3198 | 21.73 mm |
+
+Der beste Retrieval-Arm ist **nicht** der beste Pose-Arm. Empfehlung wird
+deshalb je Zielaufgabe genannt (`DECISIONS.md` 2026-09-04). Stage 1 zeigt
+dasselbe Muster: fusioniert gewinnt Full-Mesh (0.5935 vs 0.5868), isoliert
+gewinnt partial (0.5353 vs 0.4956).
+
+**Neue Werkzeuge:**
+- `tools/results_overview.py` -> `docs/RESULTS_OVERVIEW.md`. **Generiert**, nach
+  jedem Lauf neu erzeugen, nie von Hand pflegen. Meldet fehlende Zellen selbst.
+- `tools/compare_arms_by_category.py` — gepaarter Armvergleich je GT-Kategorie
+  aus `results_per_query.json`. Diese Dateien deshalb NICHT loeschen.
+- `paired_significance_stage3.py` — existiert, wird aber nicht mehr berichtet
+  (`DECISIONS.md` 2026-09-03: keine CIs, kein Wilcoxon, stattdessen die
+  Gewinnbilanz je Query).
+
+**Beim Nachtragen von Stage-1-Armen aufpassen:** der Aggregator schreibt
+`best_config.json` und die Summary-Dateien aus NUR den gelaufenen Armen neu.
+Nachtraege laufen deshalb in einen eigenen `--results-root`; danach werden
+ausschliesslich die Arm-Verzeichnisse hinuebergespiegelt. Der Default
+`images_dir` des Treibers ist ausserdem `object_images/shrec18` (leer) — die
+Renderings liegen in `shrec18_v2`, `--images-dir` also immer mitgeben.
+
+Offen:
+- Stage-4-Vollmessung mit der korrigierten Kette (partial, embed_clip, echtes
+  Cache-Anhaengen). Geometrie dort gemessen: **5,45 s je Query, 82 %** — der
+  teuerste Schritt der Pipeline ist zugleich der einzige, der schadet.
+- `STAGE2_RESULTS.md`: der Befund, dass die MI3DOR-Meshes gar keine Farbe
+  tragen, fehlt dort noch.
+- Zwei veraltete MD-Artefakte (Stage 1 vom 27.08., Stage 3 vom 24.08.)
+  duplizieren die gepflegten HTML-Fassungen und sollten entfallen.
+- Stage-5-Grasping: Wahrnehmungskette laeuft, Greifen hebt nicht.
+
+> (Aeltere Kopfzeile: 2026-09-01, Full-Mesh-Farblauf lief; Stage 4 vollstaendig.)
 
 ## Update 2026-09-01 (Stage 4 fertig instrumentiert, Full-Mesh-Neulauf laeuft)
 

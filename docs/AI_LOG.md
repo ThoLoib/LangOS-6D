@@ -1,5 +1,93 @@
 # AI Log
 
+## 2026-09-04 The colour fix reversed the full-mesh finding — but only for retrieval, not for pose
+
+Goal
+- Re-measure the four full-mesh arms with the corrected texture sampler (2026-09-01 entry) and
+  check the prediction recorded before the run.
+
+The prediction held where it mattered
+- Recorded beforehand: *GSO and YCB-V slightly better, T-LESS unchanged, overall finding stands.*
+
+| pc, full-mesh | before | after | Δ | predicted |
+|---|---|---|---|---|
+| YCB-V | 0.635 | **0.740** | +0.105 | "slightly better" — direction right, magnitude badly underestimated |
+| T-LESS | 0.157 | 0.159 | **+0.002** | "unchanged" ✓ |
+| LM-O | 0.436 | 0.446 | +0.010 | — |
+
+- The **controls reproduce exactly**: `3a_pc_v2` = 0.4636 and `3a_cross_v2` = 0.4818, identical to
+  the pre-fix runs. The partial caches were untouched, so they had to — and they did. That
+  validates the whole re-run rather than just asserting it.
+
+The finding itself reversed
+- `3a_cross_fullmesh_v2` = **0.5151**, up from 0.4639, and **above the frozen config (0.4818)**.
+  It wins on R@1, R@5, R@10, MRR and the isolated shape channel. Full mesh is the better gallery
+  representation in cross mode; in pc mode partial still wins, but the entire remaining gap now
+  comes from T-LESS (YCB-V +0.069 and LM-O +0.046 go the other way).
+- Conclusion drawn on 2026-09-01 — "partial beats full mesh" — was therefore **substantially an
+  artefact of the colour defect**. What survives is narrower and better supported: partial pays off
+  only where the query is itself partial *and* shape is the sole discriminating channel.
+
+**But the retrieval win does not reach the pose.** `3b_cross_fullmesh` D_sym median **18.91 mm**
+against **18.37 mm** for cross-partial — full mesh finds the right CAD more often and poses it
+slightly worse. Per dataset: YCB-V 21.8 vs 23.6 (better), T-LESS 15.0 vs 13.6 and LM-O 34.0 vs
+28.5 (worse). Both still beat the OSCAR baseline (21.73 mm) clearly.
+
+- Mechanism, and it is the same one a third time: **retrieval and pose ask different things of a
+  substitute**. Retrieval rewards the model that matches the object as a whole; FoundationPose
+  registers against the *visible* surface, which rewards a representation matching the partial
+  observation. Whatever fits the observation domain wins — not whatever is objectively more
+  complete. Same structure as T-LESS in retrieval and as the geometry stage overall.
+
+The isolated shape channel, available for the first time
+- `arm_ranks` (added 2026-09-01) makes the per-channel target rank fall out of every run:
+
+| arm | fused | shape alone | DINO alone | CLIP alone |
+|---|---|---|---|---|
+| pc, partial | 0.4636 | 0.0211 | 0.3739 | 0.2086 |
+| pc, full mesh | 0.3878 | 0.0089 | 0.3739 | 0.2086 |
+| cross, partial | 0.4818 | 0.1997 | 0.3739 | 0.2086 |
+| cross, full mesh | 0.5151 | 0.2272 | 0.3739 | 0.2086 |
+
+- DINO and CLIP are bit-identical across runs — they do not depend on the shape gallery, so they
+  had to be. A cheap consistency check that came for free.
+- **The pc-mode shape channel reaches 2.1 % R@1 on its own** against 1316 objects, while DINO
+  reaches 37 %. In cross mode it jumps to 20 %, because there ULIP-2's *image* tower is doing the
+  work — effectively a second appearance channel. The contrast with Stage 1 (isolated shape
+  0.5353 nDCG) is not a contradiction: SHREC scores graded category relevance, BOP demands the
+  exact instance.
+
+Stage 1, same fix
+- `E2b_fullmesh` **0.5935 / NN_sub 0.3598** — now the strongest arm without geometry, ahead of
+  BASE (0.5868 / 0.3413). Isolated, partial still wins (0.5353 vs 0.4956).
+- **Fused full mesh wins, isolated partial wins** — on SHREC and on BOP alike. The partial channel
+  is more accurate alone but errs in ways that correlate with text and appearance; the complete
+  mesh errs differently and therefore complements the fusion better.
+- The first attempt produced `rendered: 0 -> scored gallery: 0`: the driver's default `images_dir`
+  is `object_images/shrec18` (empty), the renders live in `shrec18_v2`, and the chain script had
+  omitted `--images-dir`/`--desc-file`. The second attempt then wrote into the repo root because
+  `--results-root` is relative and the container ran from `/app`; the arms were moved into the
+  canonical folder afterwards, deliberately without the two-arm `best_config.json`.
+
+A gap the tooling found immediately
+- `tools/results_overview.py` generates `docs/RESULTS_OVERVIEW.md` from the actual result
+  directories. On first run it surfaced three things held wrongly in my head: Stage 1 has **39**
+  arms, not 44; the two new arms sat in the wrong directory; and **Stage 1 has no cross × full-mesh
+  cell at all** — the very combination that wins on BOP. Pass and arms added, run queued.
+- `tools/compare_arms_by_category.py` pairs two arms per GT category. First result (pc partial vs
+  pc full mesh, nDCG): partial wins machine +0.39, keyboard +0.36, book +0.33; full mesh wins desk
+  −0.28, light −0.23, table −0.21. Partial views for small detail-rich objects, complete meshes for
+  large flat furniture.
+
+Two self-inflicted monitoring errors, recorded because both are the same class as the silent
+config defects
+- I declared the pose chain dead from a `ps` filter that never included it — reading absence from a
+  list it could not have appeared in as a crash.
+- The first Monitor's `pgrep -f` searched for the three script names, which appear in **its own
+  command line**; it always matched itself, so the abort branch was dead code. It delivered the 3b
+  milestones correctly the whole time, which hid the defect. Replaced with a `ps -eo args` match
+  anchored on `^bash scripts/…` plus a check for "script alive but no compute process".
+
 ## 2026-09-01 Textured meshes lost their colour in the full-mesh path — and the hypothesis it inspired was wrong
 
 Goal

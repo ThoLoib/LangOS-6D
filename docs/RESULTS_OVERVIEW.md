@@ -3,7 +3,7 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-03 10:27
+Stand: 2026-09-04 01:12
 
 
 ## Stage 1 — SHREC'18 (39 Arme)
@@ -111,7 +111,7 @@ Stand: 2026-09-03 10:27
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | partial | `oscar_softmax` | 85.04 | 0.575 | 0.592 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | partial | `ulip_only_full` | 78.10 | 0.510 | 0.518 |
 
-## Stage 3 — BOP (21 Arme)
+## Stage 3 — BOP (22 Arme)
 
 ### 3a — Retrieval
 
@@ -139,6 +139,7 @@ Stand: 2026-09-03 10:27
 | Arm | Modus | D_sym Median (mm) | Δ Median (mm) | Deckung |
 |---|---|---|---|---|
 | `3b_cross` | 3b | 18.37 | 15.79 | 1.000 |
+| `3b_cross_fullmesh` | 3b | 18.91 | 16.63 | 1.000 |
 | `3b_cross_geo` | 3b | 28.79 | 26.07 | 1.000 |
 | `3b_oscar` | 3b | 21.73 | 18.86 | 1.000 |
 | `3c_cross` | 3c | 15.34 | 12.39 | 1.000 |
@@ -164,5 +165,4 @@ Stand: 2026-09-03 10:27
 ## Bekannte Lücken
 
 - **Stage 1 hat keine Zelle cross × full-mesh.** Vorhanden sind pc×partial (`E1_shape_only`), pc×full-mesh (`E2b_fullmesh_shape_only`) und cross×partial (`E7_ulip2_cross_shape_only`). Auf BOP ist genau die fehlende Kombination der beste Arm (R@1 0.5151).
-- **`3b_cross_fullmesh` fehlt** — Pose für den neuen besten Retrieval-Arm.
 - **`3c_cross_fullmesh` fehlt** — Zerlegung dazu.

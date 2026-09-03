@@ -1,5 +1,57 @@
 # Decisions
 
+## 2026-09-04 The recommended configuration is named per target task, not once
+
+Decision
+- **Retrieval alone:** cross query, **full-mesh** gallery (`3a_cross_fullmesh_v2`, R@1 0.5151).
+- **The chain through to pose:** cross query, **partial-view** gallery (`3b_cross`, D_sym median
+  18.37 mm). This is the thesis' headline configuration, because pose is the target task.
+- Both are reported side by side. Neither is presented as *the* winner without naming the task.
+
+Rationale
+- The best retrieval arm is **not** the best pose arm: full mesh gains +0.033 R@1 and loses
+  0.54 mm D_sym. Quoting one number as "the best configuration" would be true for one stage and
+  wrong for the other.
+- The mechanism is not a quirk of these datasets: retrieval rewards the model matching the object
+  *as a whole*, while FoundationPose registers against the *visible* surface and rewards a
+  representation matching the partial observation. The same "observation domain wins" pattern
+  explains T-LESS in retrieval and the geometry stage overall — three instances now.
+- Both arms beat the OSCAR baseline (21.73 mm) by a wide margin, so the contribution claim does not
+  depend on which of the two is chosen. Only the deployment recommendation does.
+
+Alternatives considered
+- Name the retrieval winner as *the* configuration — rejected: it would be a recommendation whose
+  downstream effect is the opposite of what was measured.
+- Report only the pose-optimal arm — rejected: the retrieval reversal is a result in its own right
+  and drops out of the ablation grid for free.
+
+## 2026-09-03 Report results without confidence intervals or significance tests
+
+Decision
+- Results are reported as **Δ plus the per-query win split** — no bootstrap CIs, no Wilcoxon, no
+  p-values, in the docs and in the artifacts.
+- `paired_significance.py` and `paired_significance_stage3.py` stay in the repo; their output no
+  longer feeds the result documents.
+
+Rationale
+- Thomas' call: the apparatus costs more to defend than it returns, and in computer vision it is
+  not the convention — BOP, the SHREC tracks and most retrieval work report point estimates.
+- The win split is **descriptive, not inferential**: it counts how many of the 2101 queries each
+  arm won. It needs no assumptions and no defence, and it still separates a broad advantage from
+  one carried by outliers — the distinction that exposed the Uni3D "win" (1009:1027) and the
+  16v/k8 → 42v/k5 config change (938:1064) as null effects.
+- **No conclusion changed** when the apparatus was removed. "1009:1027" is immediately legible;
+  "p = 0.54" is not.
+- On BOP the tests had in any case stopped discriminating: at n = 12 284 every comparison came out
+  significant with p-values down to 10⁻²⁶³. Effect size was doing the work, not the test.
+
+Alternatives considered
+- Keep CIs, drop only Wilcoxon — rejected: the CI is the half that needs the most explaining.
+- Add a Holm correction for the 17 comparisons and keep everything — rejected as the opposite of
+  the requested simplification.
+
+Detail: `docs/AGREEMENTS.md`, 2026-09-03.
+
 ## 2026-09-01 Report the partial-vs-full-mesh result per dataset, never as an aggregate
 
 Decision
