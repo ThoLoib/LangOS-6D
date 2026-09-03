@@ -79,3 +79,19 @@ gegenlesen, ob er noch dem entspricht, was hier steht.
 - **Geometrie bleibt in der Pose-Pipeline aus** (Stage-3-Befund, alle vier Zellen).
 - **τ = 0.37 und Mittelwert-Pooling sind fix**, nicht Teil der Ablationen.
 - **Auf `tessa-pc` pushen, nie auf `main`. Nur committen, wenn danach gefragt wird.**
+
+## 2026-09-03
+
+- **Vollständiger Ergebnisüberblick jederzeit.** `docs/RESULTS_OVERVIEW.md` wird von
+  `tools/results_overview.py` aus den echten Ergebnisordnern **generiert**, nie von Hand
+  gepflegt, und nach jedem Lauf neu erzeugt. Er meldet fehlende Zellen selbst.
+  *Warum:* mir war entgangen, dass Stage 1 die Zelle cross × full-mesh gar nicht hat —
+  ausgerechnet die, die auf BOP gewinnt — und dass ein Lauf im falschen Verzeichnis lag.
+- **Aktuelle Ergebnisse gehören sofort in die Docs**, nicht erst auf Nachfrage.
+- **Per-Query-Dateien bleiben erhalten.** `results_per_query.json` trägt die GT-Kategorie
+  je Query und ist die Grundlage für `tools/compare_arms_by_category.py`. Ohne sie lässt
+  sich später nicht mehr sagen, in welchen Kategorien ein Modus besser war.
+- **Nichts überschreiben.** Der Stage-1-Aggregator schreibt `best_config.json` und die
+  Summary-Dateien aus *nur den gelaufenen* Armen neu. Nachträgliche Arme laufen deshalb
+  in einen eigenen Ordner; danach werden ausschließlich die Arm-Verzeichnisse
+  hinüberkopiert, mit Sicherung und Gegenprüfung.

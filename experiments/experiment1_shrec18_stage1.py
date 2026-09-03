@@ -1002,6 +1002,15 @@ PASS_DEFS: "OrderedDict[str, dict]" = OrderedDict([
                            partial=False, overrides={})),
     ("ulip_pc_rgb",   dict(channels=("shape",), ulip2_mode="pc",
                            partial=True, overrides={})),
+    # Die vierte Zelle der Matrix Query-Modus x Gallery-Repraesentation:
+    # cross-Query (ULIP-2-Bildturm) gegen die FULL-MESH-Gallery. Sie fehlte bis
+    # 2026-09-03, obwohl genau diese Kombination auf BOP der beste Arm ist
+    # (3a_cross_fullmesh_v2, R@1 0.5151). Beide Caches bestehen bereits: die
+    # Full-Mesh-Gallery aus ulip_pc_fullmesh, die cross-Query aus
+    # ulip_cross_rgb — der Modus betrifft nur die Query-Seite, `partial` nur
+    # die Gallery-Seite. Es faellt also nur die Fusion an.
+    ("ulip_cross_fullmesh", dict(channels=("shape",), ulip2_mode="cross",
+                           partial=False, overrides={})),
     # ULIP-2 shape channel scored in CROSS mode: the query IMAGE is encoded by
     # ULIP-2's image tower against the SAME partial-view CAD gallery, instead
     # of the query point cloud.  Reuses the ulip_pc_rgb gallery cache unchanged
@@ -1658,6 +1667,16 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           bib="xueULIP2ScalableMultimodal2024",
           channels={"shape": ("ulip_cross_rgb", None)},
           weights=(0.0, 0.0, 1.0)),
+    # Vierte Zelle der 2x2-Matrix, siehe Pass ulip_cross_fullmesh.
+    _spec("E7_ulip2_cross_fullmesh_shape_only", "E7",
+          "ULIP-2 shape ALONE, cross-mode query vs FULL-MESH gallery (isolated)",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={"shape": ("ulip_cross_fullmesh", None)},
+          weights=(0.0, 0.0, 1.0)),
+    _spec("E7_ulip2_cross_fullmesh", "E7",
+          "full fusion with cross-mode shape vs FULL-MESH gallery",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={**_TV_CH, "shape": ("ulip_cross_fullmesh", None)}),
     # --- O1: is S_shape redundant once S_GeDi exists? --------------------
     _spec("O1a_no_geometry", "O1", "neither S_shape nor S_GeDi",
           channels=dict(_TV_CH), weights=(0.43, 0.57, 0.0),
