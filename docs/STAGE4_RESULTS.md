@@ -1,9 +1,9 @@
 # Stage 4 — Onboarding- und Query-Latenz
 
-**Status (2026-09-01):** Skripte vollständig und verifiziert, Messungen teilweise
-vorläufig. Die Query-Seite ist fertig gemessen; auf der Onboarding-Seite stammen die
-Einzelposten aus verschiedenen Läufen, weil drei Stufen erst am 01.09. gemessen werden
-konnten. Ein vollständiger Durchlauf steht aus (siehe §5).
+**Status (2026-09-04):** vollständig gemessen. Beide Seiten in einem zusammenhängenden
+Lauf (`scripts/run_stage4_full.sh`), Onboarding über alle 59 Ziel-CADs, Query-Latenz über
+50 Anfragen je View-Zahl. Die früheren, aus Teilläufen zusammengesetzten Zahlen sind damit
+ersetzt.
 
 Stage 1–3 beantworten *wie gut*. Stage 4 beantwortet *zu welchem Preis* — die Frage, die
 ein Leser stellt, sobald der Genauigkeitsnachweis steht, und die darüber entscheidet, ob
@@ -68,53 +68,61 @@ ycbv, Gallery 1278, 50 Queries je View-Zahl, mit Pose, **0 Detektionsausfälle**
 
 | Schritt | 16 Views | 42 Views |
 |---|---|---|
-| io_load | 9,0 ms | 17,2 ms |
-| **segment** | 229,6 ms | 228,7 ms |
-| pointcloud | 1,2 ms | 1,2 ms |
-| encode_query | 37,5 ms | 37,7 ms |
-| clip | 18,6 ms | 17,9 ms |
-| **dino** | 293,0 ms | **537,4 ms** |
-| ulip | 172,9 ms | 190,6 ms |
+| io_load | 8,8 ms | 17,1 ms |
+| **segment** (GroundingDINO + SAM2.1) | 230,6 ms | 242,1 ms |
+| pointcloud | 1,3 ms | 1,3 ms |
+| encode_query | 37,6 ms | 37,8 ms |
+| clip | 19,8 ms | 18,7 ms |
+| **dino** | 296,3 ms | **561,8 ms** |
+| ulip | 176,7 ms | 219,4 ms |
 | fusion | 12,0 ms | 12,0 ms |
-| **pose** | **1409,3 ms** | 1417,9 ms |
-| **Ende zu Ende** | **2,194 s** | **2,471 s** |
+| **pose** (FoundationPose) | **1402,0 ms** | 1487,0 ms |
+| **Ende zu Ende** | **2,184 s** | **2,602 s** |
 
-Kaltstart einmalig: Gallery-Assembly 7,6 s + GroundingDINO/SAM 3,7 s.
+Kaltstart einmalig: Gallery-Assembly 8,0 s + GroundingDINO/SAM 4,6 s.
 
-**Geometrisches Re-Ranking, separat gemessen** (12 Queries, 42 Views, K=5,
-5 von 5 Registrierungen erfolgreich je Query):
+**Die Pose dominiert** mit 64 % bzw. 57 % und ist der unruhigste Schritt (p95 bis 4,7 s) —
+FoundationPose' Hypothesenverfeinerung, kein Messrauschen. **Der einzige Posten, der mit der
+View-Zahl skaliert, ist DINO**; alles andere ist konstant.
+
+### Geometrisches Re-Ranking
+
+Separat gemessen (K=5, ohne Pose, 5 von 5 Registrierungen erfolgreich je Anfrage):
 
 | | |
 |---|---|
-| `geometry` (dGeDi + RANSAC + ICP) | **5,45 s** (IQR 1,32 s, p95 8,19 s) |
-| Anteil an der Query | **82 %** |
+| `geometry` (dGeDi + RANSAC + ICP) | **≈ 2,0 s** |
+| Anteil an der Query ohne Pose | ~65 % |
 
-Das ist **mehr als das Doppelte der gesamten uebrigen Kette samt Pose**. Zusammen mit
-dem Stage-3-Befund, dass Geometrie in allen vier Zellen die Genauigkeit senkt, ist die
-Sache damit von zwei Seiten entschieden: der teuerste Schritt der Pipeline ist zugleich
-der einzige, der schadet.
+Das ist etwa **das Doppelte der gesamten übrigen Kette ohne Pose** (≈1,05 s). Zusammen mit
+dem Stage-3-Befund, dass Geometrie die Genauigkeit in allen vier gemessenen Zellen senkt, ist
+die Sache von zwei Seiten entschieden: der teuerste Schritt ist zugleich der einzige, der
+schadet.
 
-**Die Pose dominiert** mit 57–64 % und ist der unruhigste Schritt: Median 1,4 s, IQR
-1,1 s, p95 bis 4,7 s — FoundationPose' Hypothesenverfeinerung, kein Messrauschen. Der
-einzige Posten, der mit der View-Zahl skaliert, ist DINO; alles andere ist konstant.
+> **Vorbehalt zur absoluten Zahl.** Eine erste Messung am 2026-09-01 ergab 5,45 s. Sie
+> reproduziert nicht: zwei Messungen am 2026-09-04 liefern 1,84 s (n=25) und 2,07 s (n=12,
+> dieselbe Stichprobengröße wie die erste). Dazwischen wurde der dGeDi-Container zweimal neu
+> erzeugt; die alte Instanz lief seit über 26 Stunden unter Dauerlast. Das ist eine Vermutung,
+> keine Erklärung — belastbar ist der reproduzierte Wert von ~2 s, und die Richtung der
+> Aussage hängt nicht daran.
 
 ## 4. Onboarding — Einzelposten belastbar, Gesamtsumme vorläufig
 
-| Stufe | 16 Views | 42 Views | n | skaliert mit V? |
-|---|---|---|---|---|
-| render (Blender) | 14,19 s | 34,96 s | 3 | ja, linear |
-| describe (LLaVA) | 8,90 s ¹ | 11,68 s ¹ | 3 | ja, unterlinear |
-| partial (HPR) | 1,95 s | 3,45 s | 3 | ja |
-| embed_ulip | 0,61 s | 1,61 s | 3 | ja |
-| embed_dino | 0,11 s | 0,28 s | 3 | ja |
-| embed_clip | 4,6 ms | 4,7 ms | 3 | **nein** (Batch) |
-| cache_load + save | 0,23 s | 0,24 s | 3 | **nein** (Gallery-Größe) |
-| cache_insert | 0,04 ms | 0,1 ms | 3 | — |
-| **Summe** | **≈ 26,0 s** | **≈ 52,2 s** | | **16 Views = 50 %** |
+| Stufe | 16 Views | 42 Views | skaliert mit V? |
+|---|---|---|---|
+| **render** (Blender, n=5) | 14,45 s | **34,68 s** | ja, linear |
+| **describe** (LLaVA) | 10,25 s | 13,08 s | ja, unterlinear |
+| partial (HPR) | 1,35 s | 2,76 s | ja |
+| embed_ulip | 0,59 s | 1,55 s | ja |
+| embed_dino | 0,12 s | 0,29 s | ja |
+| embed_clip | 4,6 ms | 4,7 ms | **nein** (Batch) |
+| mesh | 0,12 s | 0,10 s | nein |
+| cache_load + save | 0,22 s | 0,23 s | **nein** (Gallery-Größe) |
+| **Gesamt** | **27,18 s** | **52,97 s** | **16 Views = 51 %** |
 
-¹ Im 59-Objekt-Lauf lag `describe` bei 10,18 s (V16) und 18,12 s (V42) — mehr Objekte,
-kälteres LLaVA. Für den Spaltenvergleich unerheblich, für die absolute Zahl gilt der
-größere Lauf.
+n = 59 Ziel-CADs, Render auf 5 Objekten (Blender läuft auf dem Host). IQR über die 59 CADs:
+0,96 s bei 16 Views, 2,10 s bei 42 — die Streuung über reale Meshes unterschiedlicher
+Komplexität ist klein, das Onboarding ist gut vorhersagbar.
 
 **Render und Beschreibung machen zusammen rund 90 % aus.** Das Encodieren, das man
 intuitiv für den teuren Teil hält, sind unter 4 %.
@@ -134,7 +142,7 @@ Hash und invalidiert alles.
 | | |
 |---|---|
 | Inkrementell (Encoding + Anhängen, ein Objekt) | **≈ 2,3 s** |
-| Was der aktuelle Fingerprint erzwingt (1257 Objekte neu) | **≈ 34,3 min** |
+| Was der aktuelle Fingerprint erzwingt (1257 Objekte neu) | **≈ 34,7 min** |
 
 Ein Faktor von rund 1000. Gemessen wurde über echte Stückkosten (1,635 s je Objekt bei
 42 Views, hochgerechnet auf die Gallery), nicht geschätzt.
@@ -149,9 +157,9 @@ statt Encoding.
 
 | | 16 Views | 42 Views | nDCG (Stage 1, O4) |
 |---|---|---|---|
-| Onboarding je CAD | **50 %** | 100 % | 0.5820 vs 0.5868 |
+| Onboarding je CAD | **51 %** | 100 % | 0.5820 vs 0.5868 |
 | Query, nur Retrieval | 66 % | 100 % | |
-| Query, Ende zu Ende | 89 % | 100 % | |
+| Query, Ende zu Ende | 84 % | 100 % | |
 
 **Onboarding ist der Hebel, nicht die Query.** Ein neues Objekt kostet bei 16 Views die
 Hälfte — für 0.005 nDCG, und Stage 1 zeigt die Qualitätskurve ab 16 Views flach (V32
@@ -160,11 +168,8 @@ die konstante Pose-Zeit ihn verdünnt.
 
 ## 6. Offen
 
-- **Ein vollständiger Onboarding-Lauf** über alle 59 CADs mit der kompletten Kette
-  (`mesh,partial,describe,embed`) und Render auf dem Host. Die Einzelposten oben stammen
-  aus mehreren Läufen; die Gesamtsumme ist deshalb zusammengesetzt, nicht gemessen.
-- **Onboarding-Stufe `dgedi`** (GeDi-Deskriptoren für ein neues Objekt, über
-  `tools/precompute_gedi_descriptors.py`) ist implementiert, aber noch nicht gelaufen.
-  Die Query-Seite ist gemessen (siehe §3).
-- **Nur ycbv** auf der Query-Seite. T-LESS und LM-O würden zeigen, ob die Segmentierung
-  auf texturlosen Objekten teurer wird.
+- **Nur ycbv** auf der Query-Seite. T-LESS und LM-O würden zeigen, ob die Segmentierung auf
+  texturlosen Objekten teurer wird.
+- Die Onboarding-Stufe `dgedi` (GeDi-Deskriptoren für ein neues Objekt) ist implementiert,
+  aber nicht gelaufen — nur relevant, wenn geometrisches Re-Ranking benutzt wird, was Stage 3
+  für BOP widerlegt hat.

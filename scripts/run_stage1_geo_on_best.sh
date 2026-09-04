@@ -89,8 +89,13 @@ log "dGeDi n_gallery=${n:-0}"
 # --geom-k 50 ist gepinnt (C2/BASE-Tiefe). Ohne die Angabe waehlt der Treiber
 # K selbst und der Vergleich mit E2_chamfer_ransac waere hinfaellig.
 log ">>> $GEO_ARM (Grundlage $BASE_ARM, K=50)"
-docker compose run --rm oscar bash -lc \
+# STAGE1_GEOMETRY_BACKEND=dgedi MUSS gesetzt sein — sonst probt der Treiber den
+# ALTEN `gedi`-Dienst, findet ihn nicht und ueberspringt die Geometriearme
+# STILL mit rc=0. Genau das ist am 2026-08-26 passiert (6 Arme uebersprungen)
+# und am 2026-09-04 noch einmal, weil die Variable in diesem Skript fehlte.
+docker compose run --rm -e STAGE1_GEOMETRY_BACKEND=dgedi oscar bash -lc \
   "cd /app && PYTHONHASHSEED=0 SHREC_DINO_POOLING=mean \
+   STAGE1_GEOMETRY_BACKEND=dgedi \
    python3 -u experiments/experiment1_shrec18_stage1.py \
    --ablations $GEO_ARM --with-geometry --geom-k 50 \
    --data-root eval/datasets/shrec18/shrec18_full --images-dir $IMG \
@@ -105,7 +110,9 @@ if [ -f "$STAGING/$GEO_ARM/metrics_summary.json" ]; then
     "cp -r /app/$STAGING/$GEO_ARM /app/$CANON/" >/dev/null 2>&1
   log "    uebernommen: $GEO_ARM"
 else
-  log "    FEHLT: $GEO_ARM — nicht uebernommen"
+  log "    FEHLER: $GEO_ARM wurde nicht erzeugt (rc sagt nichts aus)."
+  log "    Ursache im Log suchen: grep -E 'skipping|unreachable' logs/stage1_geo_on_best.log"
+  grep -hE "skipping|unreachable" logs/stage1_geo_on_best.log 2>/dev/null | tee -a "$LOG"
 fi
 
 # ---- 5. dGeDi zurueck auf die BOP-Gallery --------------------------------
