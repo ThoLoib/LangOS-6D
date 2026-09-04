@@ -1,5 +1,39 @@
 # Decisions
 
+## 2026-09-04 Geometric re-ranking is reported as conditional on the base ranking, not as a fixed gain
+
+Decision
+- The geometry result is stated as a **relationship**, not a constant: the gain depends on how
+  weak the ranking it overwrites is. Reported on two bases so the dependence is visible:
+
+  | base | without geometry | with geometry | gain |
+  |---|---|---|---|
+  | BASE (pc × partial) | 0.5868 / 0.3413 | 0.6405 / 0.4717 | +0.0537 / +0.1304 |
+  | `E2b_fullmesh` | 0.5935 / 0.3598 | **0.6417 / 0.4807** | +0.0482 / +0.1209 |
+
+- `E2b_fullmesh_geo` is the strongest Stage-1 arm overall and is reported as such.
+
+Rationale
+- A stronger base leaves less to repair: the gain drops 10 % on nDCG and 7 % on NN_sub, and the
+  base's own advantage shrinks from +0.0067 to +0.0012 nDCG — **re-ranking consumes 82 % of it**.
+  Quoting "+0.054 nDCG from geometry" as a property of the method would therefore be wrong; it is
+  a property of the pair (method, base ranking).
+- This is the same mechanism Stage 3 exposed on BOP, now confirmed on a second dataset and with a
+  number attached. There the fusion score was already strong enough (66 % top-1 within the
+  shortlist against geometry's 58 %) that re-ranking lost in all four cells. On SHREC the base is
+  weak enough that it still pays.
+- The practical criterion that follows is general and belongs in the thesis: **geometric
+  re-ranking replaces an ordering rather than adding to it, so it pays only where it beats the
+  score it overwrites.**
+
+Alternatives considered
+- Report only the gain on the strongest base — rejected: the dependence on the base is the finding;
+  a single number hides it.
+- Re-run the remaining geometry variants (fitness, Borda) on the new base — deferred: the signal
+  comparison was settled on the BASE (distance > Borda > fitness) and nothing suggests the ordering
+  of signals depends on the base.
+
+
 ## 2026-09-04 The recommended configuration is named per target task, not once
 
 Decision

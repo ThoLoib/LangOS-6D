@@ -659,3 +659,31 @@ Qualität der Tiefendaten: SHREC liefert saubere Scans, in denen die Punktwolken
 überlegen ist; BOP liefert verrauschte Sensortiefe in unaufgeräumten Szenen, wo das Bild
 das verlässlichere Formsignal ist. Die Wahl des Query-Modus ist damit keine Design-
 entscheidung, sondern eine Eigenschaft der Aufnahmesituation.
+
+## Geometrie auf dem stärksten Arm (Stand 2026-09-04)
+
+Alle bisherigen Geometrie-Arme sitzen auf dem BASE-Ranking. Seit dem Farb-Fix ist
+`E2b_fullmesh` der stärkste Arm ohne Geometrie — dieselbe Geometrie darauf angesetzt:
+
+| Grundlage | ohne Geometrie | mit Geometrie | Gewinn |
+|---|---|---|---|
+| BASE (pc × partial) | 0.5868 / 0.3413 | 0.6405 / 0.4717 | +0.0537 / +0.1304 |
+| **`E2b_fullmesh`** | 0.5935 / 0.3598 | **0.6417 / 0.4807** | +0.0482 / +0.1209 |
+
+(nDCG / NN_sub, `chamfer_ransac`, K = 50)
+
+**Der Gewinn schrumpft auf dem stärkeren Ausgangsranking** — auf nDCG um 10 %
+(0.0537 → 0.0482), auf NN_sub um 7 %. Die Geometrie ordnet die Top-50 um; je besser diese
+Liste schon sortiert ist, desto weniger bleibt zu reparieren.
+
+Deutlicher wird es am Vorsprung selbst: vor der Geometrie liegt `E2b_fullmesh` um
+**+0.0067 nDCG** vorn, danach nur noch um **+0.0012**. Das Re-Ranking frisst also
+**82 % des Vorsprungs** auf. Auf NN_sub bleiben von +0.0185 noch +0.0090, also die Hälfte.
+
+Damit ist der Mechanismus, den Stage 3 nahegelegt hat, auf einem zweiten Datensatz belegt:
+**geometrisches Re-Ranking ersetzt die Sortierung, statt sie zu ergänzen — es lohnt sich
+nur, soweit das bestehende Ranking schwach ist.** Auf SHREC ist es das noch genug, um
++0.048 zu tragen; auf BOP mit seinem stärkeren Fusions-Score nicht mehr (dort verliert die
+Geometrie in allen vier Zellen).
+
+`E2b_fullmesh_geo` (0.6417 / 0.4807) ist damit der **stärkste Stage-1-Arm insgesamt**.

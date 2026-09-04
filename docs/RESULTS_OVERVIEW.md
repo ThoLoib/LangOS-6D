@@ -3,10 +3,10 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-04 04:02
+Stand: 2026-09-04 14:47
 
 
-## Stage 1 — SHREC'18 (41 Arme)
+## Stage 1 — SHREC'18 (42 Arme)
 
 | Arm | nDCG | NN_sub | Ort |
 |---|---|---|---|
@@ -32,6 +32,7 @@ Stand: 2026-09-04 04:02
 | `E2_chamfer_unaligned` | 0.6251 | 0.4393 | object_retrieval/ |
 | `E2_fitness` | 0.6251 | 0.4393 | object_retrieval/ |
 | `E2b_fullmesh` | 0.5935 | 0.3598 | object_retrieval/ |
+| `E2b_fullmesh_geo` | 0.6417 | 0.4807 | object_retrieval/ |
 | `E2b_fullmesh_shape_only` | 0.4956 | 0.2822 | object_retrieval/ |
 | `E4_siglip` | 0.5659 | 0.3051 | object_retrieval/ |
 | `E4_siglip_only` | 0.5165 | 0.2642 | object_retrieval/ |
