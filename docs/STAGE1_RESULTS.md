@@ -632,3 +632,30 @@ seine Fehler korrelieren offenbar weniger mit denen von Text und Erscheinung. Da
 Muster zeigt Stage 3 (`3a_cross_fullmesh_v2` 0.5151 gegen 0.4818).
 
 Welche Kategorien wo gewinnen: `python3 tools/compare_arms_by_category.py --preset fusion`.
+
+## Die vollständige Shape-Matrix (Stand 2026-09-04)
+
+Query-Modus × Gallery-Repräsentation, **isolierter** Shape-Kanal (nDCG / NN_sub):
+
+| | partial | full-mesh |
+|---|---|---|
+| **pc** | **0.5353 / 0.3275** | 0.4956 / 0.2822 |
+| **cross** | 0.4809 / 0.2637 | 0.4569 / 0.2028 |
+
+Isoliert gewinnt **partial in beiden Modi**, und **pc in beiden Repräsentationen** — auf
+SHREC'18, wo die Tiefendaten aus sauberen Scans stammen.
+
+Fusioniert kehrt sich nur die Repräsentationsachse um:
+
+| Arm | nDCG | NN_sub |
+|---|---|---|
+| `E2b_fullmesh` (pc × full-mesh) | **0.5935** | **0.3598** |
+| `E1c_full_fusion` (BASE, pc × partial) | 0.5868 | 0.3413 |
+| `E7_ulip2_cross_fullmesh` | 0.5511 | 0.3084 |
+
+**Der Vergleich mit Stage 3 ist der eigentliche Befund.** Dort ist cross × full-mesh der
+*beste* Arm (R@1 0.5151), hier der *schwächste* der drei. Der Unterschied liegt in der
+Qualität der Tiefendaten: SHREC liefert saubere Scans, in denen die Punktwolken-Query
+überlegen ist; BOP liefert verrauschte Sensortiefe in unaufgeräumten Szenen, wo das Bild
+das verlässlichere Formsignal ist. Die Wahl des Query-Modus ist damit keine Design-
+entscheidung, sondern eine Eigenschaft der Aufnahmesituation.

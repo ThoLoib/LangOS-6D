@@ -3,10 +3,10 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-04 03:56
+Stand: 2026-09-04 04:02
 
 
-## Stage 1 — SHREC'18 (39 Arme)
+## Stage 1 — SHREC'18 (41 Arme)
 
 | Arm | nDCG | NN_sub | Ort |
 |---|---|---|---|
@@ -36,6 +36,8 @@ Stand: 2026-09-04 03:56
 | `E4_siglip` | 0.5659 | 0.3051 | object_retrieval/ |
 | `E4_siglip_only` | 0.5165 | 0.2642 | object_retrieval/ |
 | `E6_rrf` | 0.5744 | 0.3175 | object_retrieval/ |
+| `E7_ulip2_cross_fullmesh` | 0.5511 | 0.3084 | object_retrieval/ |
+| `E7_ulip2_cross_fullmesh_shape_only` | 0.4569 | 0.2028 | object_retrieval/ |
 | `E7_ulip2_cross_shape_only` | 0.4809 | 0.2637 | object_retrieval/ |
 | `E7_uni3d` | 0.5913 | 0.3455 | object_retrieval/ |
 | `E7_uni3d_shape_only` | 0.5337 | 0.3094 | object_retrieval/ |
@@ -165,4 +167,3 @@ Stand: 2026-09-04 03:56
 
 ## Bekannte Lücken
 
-- **Stage 1 hat keine Zelle cross × full-mesh.** Vorhanden sind pc×partial (`E1_shape_only`), pc×full-mesh (`E2b_fullmesh_shape_only`) und cross×partial (`E7_ulip2_cross_shape_only`). Auf BOP ist genau die fehlende Kombination der beste Arm (R@1 0.5151).
