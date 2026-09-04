@@ -4,14 +4,28 @@
 
 Decision
 - **Retrieval alone:** cross query, **full-mesh** gallery (`3a_cross_fullmesh_v2`, R@1 0.5151).
-- **The chain through to pose:** cross query, **partial-view** gallery (`3b_cross`, D_sym median
-  18.37 mm). This is the thesis' headline configuration, because pose is the target task.
-- Both are reported side by side. Neither is presented as *the* winner without naming the task.
+- **Pose with a proxy-only gallery (3b):** cross query, **partial-view** gallery (18.37 mm vs
+  18.91 mm).
+- **Pose with related real CADs in the gallery (3c):** cross query, **full-mesh** gallery
+  (13.51 mm vs 15.34 mm).
+- All three are reported side by side. Nothing is presented as *the* winner without naming both
+  the task **and** what the gallery contains.
 
 Rationale
-- The best retrieval arm is **not** the best pose arm: full mesh gains +0.033 R@1 and loses
-  0.54 mm D_sym. Quoting one number as "the best configuration" would be true for one stage and
-  wrong for the other.
+- The best retrieval arm is **not** the best pose arm — but which one wins depends on the gallery,
+  and the 3c decomposition explains why. **Full mesh picks real CADs better and proxies worse:**
+
+  | subset | partial | full mesh |
+  |---|---|---|
+  | substitute is a real CAD of another object | 10.35 mm (55 % of instances) | **9.76 mm (65 %)** |
+  | substitute from the proxy gallery | **20.10 mm** (45 %) | 22.65 mm (35 %) |
+  | overall (3c) | 15.34 mm | **13.51 mm** |
+
+  Its stronger retrieval routes 65 % instead of 55 % of instances into the good subset, which is
+  why it wins 3c. In 3b every target CAD is removed, leaving only the subset where it is weaker —
+  which is why it loses there. Both results follow from one property, not from two.
+- Quoting one number as "the best configuration" would therefore be true for one setting and wrong
+  for the other.
 - The mechanism is not a quirk of these datasets: retrieval rewards the model matching the object
   *as a whole*, while FoundationPose registers against the *visible* surface and rewards a
   representation matching the partial observation. The same "observation domain wins" pattern
