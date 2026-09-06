@@ -31,25 +31,32 @@ S4 = os.path.join(_ROOT, "results_stage4")
 # Zuordnung ueber das Datum des Laufs (Ende-Zeitpunkt der jeweiligen Kette).
 S1_RUNS = [
     ("2026-08-26 13:00", "2026-08-27 07:00", "run_stage1_full.sh",
-     "FORCE_PARTIAL=✓ · DINO=mean · GEO_BACKEND=dgedi · DGEDI=shrec"),
+     "FP✓ · mean · geo:dgedi/shrec"),
     ("2026-08-26 14:50", "2026-08-26 15:10", "run_a7.sh",
-     "FORCE_PARTIAL=✓ (colored) · DINO=mean"),
+     "FP✓col · mean"),
     ("2026-09-03 00:00", "2026-09-03 23:59", "run_stage1_fullmesh_color.sh",
-     "FORCE_PARTIAL=— (Full-Mesh gewollt) · DINO=mean"),
+     "FP— (FM gewollt) · mean"),
     ("2026-09-04 03:00", "2026-09-04 05:00", "run_stage1_cross_fullmesh.sh",
-     "FORCE_PARTIAL=— (Full-Mesh gewollt) · DINO=mean"),
+     "FP— (FM gewollt) · mean"),
     ("2026-09-04 14:00", "2026-09-04 15:00", "run_stage1_geo_on_best.sh",
-     "GEO_BACKEND=dgedi · DGEDI=shrec · --geom-k 50 · DINO=mean"),
+     "geo:dgedi/shrec · K=50 · mean"),
     ("2026-09-06 18:00", "2026-09-06 23:59", "run_stage1_cross_fullmesh.sh",
-     "FORCE_PARTIAL=✓ (colored) · DINO=mean"),
+     "FP✓col · mean"),
 ]
 
 
 def run_of(ts, table):
-    for a, b, script, env in table:
-        if a <= ts <= b:
-            return script, env
-    return "—", "—"
+    """Engste passende Zeitspanne gewinnt.
+
+    Die Bereiche ueberlappen (run_a7.sh laeuft mitten in der Spanne von
+    run_stage1_full.sh). Ohne Sortierung nach Breite bekaeme A2_view_only_V42
+    das falsche Skript zugeschrieben.
+    """
+    hits = [(b, a, sc, env) for a, b, sc, env in table if a <= ts <= b]
+    if not hits:
+        return "—", "—"
+    b, a, sc, env = min(hits, key=lambda h: h[0] + h[1])
+    return sc, env
 
 
 def when(p):
@@ -146,6 +153,11 @@ def markdown():
            "> Die Skript- und Variablenspalten stammen aus `S1_RUNS` im Werkzeug,",
            "> alles andere aus den Ergebnisdateien.\n"]
 
+    out.append("\n**Kurzcodes:** `FP✓` = `SHREC_FORCE_PARTIAL_CACHE` gesetzt · "
+               "`FP✓col` = mit dem coloured-Cache (1280-d) · `FP—` = bewusst nicht "
+               "gesetzt · `mean` = `SHREC_DINO_POOLING=mean` · `geo:dgedi/shrec` = "
+               "`STAGE1_GEOMETRY_BACKEND=dgedi` + `DGEDI_CACHE_DIR=.dgedi_gallery_shrec` · "
+               "`K=50` = `--geom-k 50`. `PYTHONHASHSEED=0` überall.\n")
     out.append("\n## Stage 1 — SHREC'18\n")
     out.append("| Arm | Shape-Pass | Gewichte | Geo | Skript | Variablen | nDCG | NN_sub |")
     out.append("|---|---|---|---|---|---|---|---|")
@@ -165,6 +177,19 @@ def markdown():
         out.append(f"| `{d}` | `{sp}` | {w} | {g} | `{sc}` | {env} | "
                    f"{nd:.4f} | {nn:.4f} |" if nn is not None else
                    f"| `{d}` | `{sp}` | {w} | {g} | `{sc}` | {env} | {nd:.4f} | — |")
+
+    # ---- Stage 2
+    out.append("\n## Stage 2 — MI3DOR\n")
+    out.append("| Ordner | Modus | Views | Arm | NN | FT | mAP |")
+    out.append("|---|---|---|---|---|---|---|")
+    for dd in sorted(glob.glob(os.path.join(OR, "results_mi3dor*"))):
+        for f in sorted(glob.glob(os.path.join(dd, "*", "metrics_summary_topk_*.json"))):
+            j = json.load(open(f)); mode = os.path.basename(os.path.dirname(f))
+            views = "8" if "legacy_v8" in dd else "42"
+            for arm, v in (j.get("variants") or {}).items():
+                out.append(f"| `{os.path.basename(dd)}` | {mode} | {views} | `{arm}` | "
+                           f"{v.get('NN_accuracy',0):.2f} | {v.get('FT_mean',0):.3f} | "
+                           f"{(v.get('mAP_mean') or 0):.3f} |")
 
     out.append("\n## Stage 3 — BOP\n")
     out.append("| Lauf | Modus | Gallery | arm_ranks | R@1 / D_sym | MRR |")
@@ -188,6 +213,21 @@ def markdown():
             sy = (o.get("dsym") or j.get("dsym") or {})
             main_v, second = f"{sy.get('d_sym_median',0):.2f} mm", "—"
         out.append(f"| `{d}` | {mode} | {j.get('gallery_size','—')} | {ar} | {main_v} | {second} |")
+
+    # ---- Stage 4
+    out.append("\n## Stage 4 — Latenz\n")
+    out.append("| Datei | Stufen / Views | Gallery | Median je Einheit |")
+    out.append("|---|---|---|---|")
+    for f in sorted(glob.glob(os.path.join(S4, "*.json"))):
+        j = json.load(open(f))
+        bv = j.get("by_views") or {}
+        cfg = j.get("stages") or j.get("views") or j.get("view_counts") or "—"
+        for v, blk in bv.items():
+            tot = (blk.get("per_query_total_s") or blk.get("per_object_total_s") or {})
+            if tot.get("median") is None:
+                continue
+            out.append(f"| `{os.path.basename(f)}` | {cfg}, {v} Views | "
+                       f"{j.get('gallery_size','—')} | {tot['median']:.3f} s (n={tot.get('n')}) |")
     return "\n".join(out) + "\n"
 
 
