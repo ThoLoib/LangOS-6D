@@ -645,13 +645,17 @@ Query-Modus × Gallery-Repräsentation, **isolierter** Shape-Kanal (nDCG / NN_su
 Isoliert gewinnt **partial in beiden Modi**, und **pc in beiden Repräsentationen** — auf
 SHREC'18, wo die Tiefendaten aus sauberen Scans stammen.
 
-Fusioniert kehrt sich nur die Repräsentationsachse um:
+Fusioniert kippt die Repräsentationsachse **mit dem Query-Modus**:
 
-| Arm | nDCG | NN_sub |
-|---|---|---|
-| `E2b_fullmesh` (pc × full-mesh) | **0.5935** | **0.3598** |
-| `E1c_full_fusion` (BASE, pc × partial) | 0.5868 | 0.3413 |
-| `E7_ulip2_cross_fullmesh` | 0.5511 | 0.3084 |
+| Query-Modus | partial | full-mesh | Sieger |
+|---|---|---|---|
+| **pc** | 0.5868 / 0.3413 | **0.5935 / 0.3598** | full-mesh |
+| **cross** | **0.5588 / 0.3289** | 0.5511 / 0.3084 | partial |
+
+Nur wenn die Query eine Punktwolke ist, ergänzt das vollständige Mesh die Fusion besser;
+kommt sie als Bild, bleibt die partielle Referenz vorn. Der cross-Wert für partial
+(`E7_ulip2_cross`) wurde am 06.09. nachgerechnet — der erste Versuch lief ohne
+`SHREC_FORCE_PARTIAL_CACHE` und rechnete still Full-Mesh (`RUN_PROVENANCE.md` §0).
 
 **Der Vergleich mit Stage 3 ist der eigentliche Befund.** Dort ist cross × full-mesh der
 *beste* Arm (R@1 0.5151), hier der *schwächste* der drei. Der Unterschied liegt in der

@@ -3,10 +3,10 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-04 14:47
+Stand: 2026-09-06 18:38
 
 
-## Stage 1 — SHREC'18 (42 Arme)
+## Stage 1 — SHREC'18 (43 Arme)
 
 | Arm | nDCG | NN_sub | Ort |
 |---|---|---|---|
@@ -37,6 +37,7 @@ Stand: 2026-09-04 14:47
 | `E4_siglip` | 0.5659 | 0.3051 | object_retrieval/ |
 | `E4_siglip_only` | 0.5165 | 0.2642 | object_retrieval/ |
 | `E6_rrf` | 0.5744 | 0.3175 | object_retrieval/ |
+| `E7_ulip2_cross` | 0.5588 | 0.3289 | object_retrieval/ |
 | `E7_ulip2_cross_fullmesh` | 0.5511 | 0.3084 | object_retrieval/ |
 | `E7_ulip2_cross_fullmesh_shape_only` | 0.4569 | 0.2028 | object_retrieval/ |
 | `E7_ulip2_cross_shape_only` | 0.4809 | 0.2637 | object_retrieval/ |
@@ -154,17 +155,18 @@ Stand: 2026-09-04 14:47
 
 **`query_latency_ycbv`** — NVIDIA GeForce RTX 4090
 
-- 42 Views — gesamt 6.719 s · io_load 7 ms, segment 264 ms, pointcloud 1 ms, encode_query 39 ms, clip 16 ms, dino 606 ms, ulip 226 ms, fusion 12 ms, retrieval_total 1032 ms, geometry 5451 ms
+- 42 Views — gesamt 2.602 s · io_load 17 ms, segment 242 ms, pointcloud 1 ms, encode_query 38 ms, clip 19 ms, dino 562 ms, ulip 219 ms, fusion 12 ms, retrieval_total 815 ms, pose 1487 ms
+- 16 Views — gesamt 2.184 s · io_load 9 ms, segment 231 ms, pointcloud 1 ms, encode_query 38 ms, clip 20 ms, dino 296 ms, ulip 177 ms, fusion 12 ms, retrieval_total 506 ms, pose 1402 ms
 
 **`onboarding`** — NVIDIA GeForce RTX 4090
 
-- 16 Views — gesamt 11.085 s · mesh 104 ms, describe 10179 ms, io_load_images 58 ms, embed_dino 119 ms, io_load_clouds 13 ms, embed_ulip 580 ms, cache_write 1 ms
-- 42 Views — gesamt 20.297 s · mesh 98 ms, describe 18119 ms, io_load_images 142 ms, embed_dino 290 ms, io_load_clouds 34 ms, embed_ulip 1532 ms, cache_write 1 ms
+- 16 Views — gesamt 12.731 s · mesh 116 ms, partial 1350 ms, describe 10250 ms, io_load_images 58 ms, embed_dino 119 ms, embed_clip 4 ms, io_load_clouds 27 ms, embed_ulip 588 ms, cache_load 50 ms, cache_insert 0 ms, cache_save 173 ms
+- 42 Views — gesamt 18.293 s · mesh 102 ms, partial 2761 ms, describe 13083 ms, io_load_images 140 ms, embed_dino 292 ms, embed_clip 5 ms, io_load_clouds 30 ms, embed_ulip 1551 ms, cache_load 63 ms, cache_insert 0 ms, cache_save 173 ms
 
 **`onboarding_render`** — ?
 
-- 16 Views — gesamt 14.187 s · render 14187 ms
-- 42 Views — gesamt 34.963 s · render 34963 ms
+- 16 Views — gesamt 14.452 s · render 14452 ms
+- 42 Views — gesamt 34.681 s · render 34681 ms
 
 ## Bekannte Lücken
 
