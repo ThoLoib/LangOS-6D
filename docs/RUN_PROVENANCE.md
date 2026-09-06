@@ -48,7 +48,7 @@ Fusion-Config je Arm in `metrics_summary.json` → `config`: Gewichte (0.3, 0.4,
 | `E2b_fullmesh`, `E2b_fullmesh_shape_only` | 03.09. 10:17 | `run_stage1_fullmesh_color.sh` | ✗ | — | — | nach dem Textur-Farb-Fix; **Full-Mesh-Arme, Fallback folgenlos** |
 | `E7_ulip2_cross_fullmesh`, `..._shape_only` | 04.09. 04:00 | `run_stage1_cross_fullmesh.sh` | ✗ | — | — | Staging `results_stage1_cross_fullmesh`; **Full-Mesh-Arme, folgenlos** |
 | `E2b_fullmesh_geo` | 04.09. 14:44 | `run_stage1_geo_on_best.sh` | ✗ | **dgedi** | **shrec** | Gate wählte Grundlage selbst; `--with-geometry --geom-k 50` |
-| ⚠️ `E7_ulip2_cross` | 06.09. 17:59 | `run_stage1_cross_fullmesh.sh` | ✗ | — | — | **UNGÜLTIG** — `partial`-Pass ohne die Variable → still Full-Mesh gerechnet, Werte bitgleich zu `E7_ulip2_cross_fullmesh` |
+| `E7_ulip2_cross` | 06.09. 18:20 | `run_stage1_cross_fullmesh.sh` | **✓ gesetzt** | — | — | Nachlauf. Der erste Versuch (17:59) lief **ohne** die Variable, rechnete still Full-Mesh und lieferte Werte bitgleich zu `E7_ulip2_cross_fullmesh`; er liegt unter `.stage1_superseded/E7_ulip2_cross_INVALID_fullmesh_fallback`. |
 
 ### Was der Fallback wirklich getroffen hat
 
@@ -56,9 +56,28 @@ Nur **ein** Arm. Die Grid-Läufe vom August setzen die Variable; alle September-
 Full-Mesh **by design**, für die ist der Fallback der gewollte Pfad. `E7_ulip2_cross` ist der
 einzige Partial-Arm, der ohne die Variable lief — und damit ungültig.
 
-**Erkennungsmerkmal für die Zukunft:** im Lauflog steht `[init] Encoding 3308 ULIP CAD
-meshes...` statt `[init] ULIP partial-view cache loaded`. Bei einem `partial`-Pass ist das
-der Fallback.
+**Erkennungsmerkmal:** im Lauflog steht `[init] Encoding 3308 ULIP CAD meshes...` statt
+`[init] ULIP partial-view cache FORCE-loaded`. Bei einem `partial`-Pass ist das der Fallback.
+
+### ⚠ Die Variable ist PASS-ABHÄNGIG — beide Richtungen sind Fehler
+
+| Pass | Variable | Folge |
+|---|---|---|
+| `partial` | **fehlt** | still Full-Mesh (der Fehler vom 06.09.) |
+| `full-mesh` | **gesetzt** | `eval_common` überspringt den Full-Mesh-Zweig (`not _forced_ok`) → still **Partial** |
+
+Sie darf also weder weggelassen noch pauschal gesetzt werden. `run_stage1_cross_fullmesh.sh`
+leitet sie seit dem 06.09. aus dem Arm-Namen ab (`case "$ARMS" in *fullmesh*)`).
+
+### Die richtige Cache-Datei je Encoder
+
+| Encoder | Datei |
+|---|---|
+| ULIP-2 coloured, 1280-d | `.ulip_partial_cache_c3b88090d599c522.pt` |
+| ULIP-2 XYZ, 512-d | `.ulip_partial_cache_641102dfbaf4e90c.pt` |
+| Uni3D, 1024-d | `.ulip_partial_cache_eabcf9b9096553c9.pt` |
+
+`run_stage1_full.sh` fährt deshalb in Phasen — eine Force-Cache je Phase.
 
 ---
 
@@ -156,8 +175,14 @@ des Repos** liegen, weil der dGeDi-Container nur `.:/oscar` mountet).
 Die Datums- und Config-Spalten lassen sich aus den Ergebnisdateien nachziehen:
 
 ```bash
-python3 tools/run_provenance.py            # Arm → Datum → gespeicherte Config
+python3 tools/run_provenance.py                              # Arm → Datum → Config, mit Fallback-Warnung
+python3 tools/run_provenance.py --markdown docs/CONFIG_TO_RESULT.md   # Konfiguration UND Ergebnis in einer Tabelle
 ```
+
+`docs/CONFIG_TO_RESULT.md` ist die zusammengeführte Tabelle: je Arm der Shape-Pass, die
+Gewichte, die Geometrie, das Skript, die gesetzten Variablen **und** das Ergebnis. Die
+Skript-/Variablenspalten stammen aus `S1_RUNS` im Werkzeug, damit Konfiguration und
+Ergebnis aus einer Quelle in eine Tabelle laufen.
 
 Die Skript- und Umgebungsspalten stammen aus den Skripten selbst und werden **von Hand**
 gepflegt — die Treiber schreiben sie nicht mit. Genau das war die Lücke, durch die der

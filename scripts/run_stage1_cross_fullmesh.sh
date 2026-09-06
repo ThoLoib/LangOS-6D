@@ -62,7 +62,22 @@ done
 log "GPU used=${u:-?} MiB"
 
 log ">>> $ARMS"
-docker compose run --rm oscar bash -lc \
+# SHREC_FORCE_PARTIAL_CACHE ist PASS-ABHAENGIG und darf nicht pauschal gesetzt
+# werden:
+#   * PARTIAL-Pass OHNE die Variable  -> SHREC hat null *_partial.npz, der Lauf
+#     faellt still auf Full-Mesh zurueck (Fehler vom 2026-09-06).
+#   * FULL-MESH-Pass MIT der Variable -> eval_common ueberspringt den
+#     Full-Mesh-Zweig (`not _forced_ok`) und rechnet still Partial.
+# Deshalb aus dem Arm-Namen ableiten statt fest verdrahten.
+CACHE_COL="object_images/shrec18_v2/.ulip_partial_cache_c3b88090d599c522.pt"
+case "$ARMS" in
+  *fullmesh*) FORCE=""; log "Full-Mesh-Pass — FORCE_PARTIAL_CACHE bewusst NICHT gesetzt";;
+  *)          FORCE="-e SHREC_FORCE_PARTIAL_CACHE=/app/$CACHE_COL"
+              log "Partial-Pass — FORCE_PARTIAL_CACHE=$CACHE_COL";;
+esac
+[ -n "$FORCE" ] && [ ! -f "$CACHE_COL" ] && { log "ABBRUCH: $CACHE_COL fehlt"; exit 3; }
+
+docker compose run --rm $FORCE oscar bash -lc \
   "cd /app && PYTHONHASHSEED=0 SHREC_DINO_POOLING=mean \
    python3 -u experiments/experiment1_shrec18_stage1.py \
    --ablations $ARMS \

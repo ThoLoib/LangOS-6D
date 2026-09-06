@@ -26,6 +26,32 @@ S3 = os.path.join(OR, "results_bop_stage3_v2")
 S4 = os.path.join(_ROOT, "results_stage4")
 
 
+# Skript- und Umgebungszuordnung. Steht HIER und nicht in einer Markdown-Datei,
+# damit Konfiguration und Ergebnis aus EINER Quelle in EINE Tabelle laufen.
+# Zuordnung ueber das Datum des Laufs (Ende-Zeitpunkt der jeweiligen Kette).
+S1_RUNS = [
+    ("2026-08-26 13:00", "2026-08-27 07:00", "run_stage1_full.sh",
+     "FORCE_PARTIAL=✓ · DINO=mean · GEO_BACKEND=dgedi · DGEDI=shrec"),
+    ("2026-08-26 14:50", "2026-08-26 15:10", "run_a7.sh",
+     "FORCE_PARTIAL=✓ (colored) · DINO=mean"),
+    ("2026-09-03 00:00", "2026-09-03 23:59", "run_stage1_fullmesh_color.sh",
+     "FORCE_PARTIAL=— (Full-Mesh gewollt) · DINO=mean"),
+    ("2026-09-04 03:00", "2026-09-04 05:00", "run_stage1_cross_fullmesh.sh",
+     "FORCE_PARTIAL=— (Full-Mesh gewollt) · DINO=mean"),
+    ("2026-09-04 14:00", "2026-09-04 15:00", "run_stage1_geo_on_best.sh",
+     "GEO_BACKEND=dgedi · DGEDI=shrec · --geom-k 50 · DINO=mean"),
+    ("2026-09-06 18:00", "2026-09-06 23:59", "run_stage1_cross_fullmesh.sh",
+     "FORCE_PARTIAL=✓ (colored) · DINO=mean"),
+]
+
+
+def run_of(ts, table):
+    for a, b, script, env in table:
+        if a <= ts <= b:
+            return script, env
+    return "—", "—"
+
+
 def when(p):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(p)))
 
@@ -113,11 +139,71 @@ def stage4():
         print(f"      {' · '.join(extra)}")
 
 
+def markdown():
+    """Eine Tabelle je Stage: Konfiguration UND Ergebnis nebeneinander."""
+    out = ["# Konfiguration → Ergebnis (generiert)\n",
+           "> Erzeugt von `tools/run_provenance.py --markdown`. Nicht von Hand aendern.",
+           "> Die Skript- und Variablenspalten stammen aus `S1_RUNS` im Werkzeug,",
+           "> alles andere aus den Ergebnisdateien.\n"]
+
+    out.append("\n## Stage 1 — SHREC'18\n")
+    out.append("| Arm | Shape-Pass | Gewichte | Geo | Skript | Variablen | nDCG | NN_sub |")
+    out.append("|---|---|---|---|---|---|---|---|")
+    rows = []
+    for d in sorted(os.listdir(S1)):
+        f = os.path.join(S1, d, "metrics_summary.json")
+        if not os.path.isfile(f):
+            continue
+        m = json.load(open(f)); c = m.get("config") or {}
+        ch = (c.get("channels") or {}).get("shape")
+        sc, env = run_of(when(f), S1_RUNS)
+        rows.append((when(f), d, ch[0] if ch else "—",
+                     "/".join(str(x) for x in (c.get("weights") or [])),
+                     c.get("geometry") or "—", sc, env,
+                     m["metrics"]["nDCG"], (m.get("metrics_depth") or {}).get("NN_sub")))
+    for t, d, sp, w, g, sc, env, nd, nn in sorted(rows, key=lambda r: r[1]):
+        out.append(f"| `{d}` | `{sp}` | {w} | {g} | `{sc}` | {env} | "
+                   f"{nd:.4f} | {nn:.4f} |" if nn is not None else
+                   f"| `{d}` | `{sp}` | {w} | {g} | `{sc}` | {env} | {nd:.4f} | — |")
+
+    out.append("\n## Stage 3 — BOP\n")
+    out.append("| Lauf | Modus | Gallery | arm_ranks | R@1 / D_sym | MRR |")
+    out.append("|---|---|---|---|---|---|")
+    for d in sorted(os.listdir(S3)):
+        pth = os.path.join(S3, d)
+        if not os.path.isdir(pth) or d == "gt":
+            continue
+        f = next(iter(sorted(glob.glob(os.path.join(pth, "combined_stage3*.json")))), None)
+        if not f:
+            continue
+        j = json.load(open(f)); o = j.get("overall") or j
+        mode = os.path.basename(f)[len("combined_stage"):-len(".json")]
+        rf = next(iter(glob.glob(os.path.join(pth, "*_stage3a", "records.json"))), None)
+        ar = "—"
+        if rf:
+            r = json.load(open(rf)); ar = "ja" if r and "arm_ranks" in r[0] else "nein"
+        if mode == "3a":
+            main_v, second = f"{o.get('recall@1',0):.4f}", f"{o.get('mrr',0):.4f}"
+        else:
+            sy = (o.get("dsym") or j.get("dsym") or {})
+            main_v, second = f"{sy.get('d_sym_median',0):.2f} mm", "—"
+        out.append(f"| `{d}` | {mode} | {j.get('gallery_size','—')} | {ar} | {main_v} | {second} |")
+    return "\n".join(out) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", type=int, choices=[1, 3, 4])
+    ap.add_argument("--markdown", metavar="DATEI",
+                    help="Konfiguration+Ergebnis als Markdown-Tabelle schreiben.")
     a = ap.parse_args()
+    if a.markdown:
+        t = markdown()
+        p = a.markdown if os.path.isabs(a.markdown) else os.path.join(_ROOT, a.markdown)
+        open(p, "w").write(t)
+        print(f"geschrieben: {p} ({len(t.splitlines())} Zeilen)")
+        return
     if a.stage in (None, 1):
         stage1()
     if a.stage in (None, 3):
