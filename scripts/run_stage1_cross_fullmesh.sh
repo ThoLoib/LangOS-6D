@@ -28,8 +28,8 @@ ts(){ date -Is; }; log(){ echo "[$(ts)] $*" | tee -a "$LOG"; }
 : > "$LOG"
 
 CANON=object_retrieval/results_shrec18_v2_stage1_42v_k5
-STAGING=object_retrieval/results_stage1_cross_fullmesh
-ARMS="E7_ulip2_cross_fullmesh_shape_only,E7_ulip2_cross_fullmesh"
+STAGING=object_retrieval/results_stage1_cross_partial
+ARMS="E7_ulip2_cross"
 IMG=object_images/shrec18_v2
 
 # ---- 0. Sicherung der Dateien, die der Aggregator anfassen wuerde ----------

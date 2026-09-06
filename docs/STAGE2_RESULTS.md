@@ -137,6 +137,42 @@ isoliert). Kein Widerspruch, sondern ein verwertbarer Befund:
 Damit ist der Full-Mesh-Fallback aus §0 **inhaltlich kein Schaden** — im cross-Modus ist er die
 überlegene Wahl.
 
+### ⚠️ Die MI3DOR-Meshes tragen überhaupt keine Farbe
+
+Nachgeprüft am 2026-09-01: **alle 3848 Meshes liefern beim Sampling dieselbe Farbe
+(0.4, 0.4, 0.4)** — trimeshs Standardgrau. Die Dateien enthalten also weder Vertex- noch
+Flächenfarben und keine Textur. Der ULIP-2-Backbone ist der *farbige* (`pointbert_colored`,
+1280-d) und bekommt damit über die gesamte Gallery ein konstantes, informationsloses RGB.
+
+Zum Vergleich, dieselbe Messung auf den anderen Datensätzen (Standardabweichung der
+gesampelten Farbe je Objekt):
+
+| Datensatz | Mesh-Farbe |
+|---|---|
+| GSO, YCB-V, SHREC'18 | Textur vorhanden (0.10–0.28 nach Fix ¹) |
+| LM-O | Vertexfarben, 0.04–0.18 |
+| **MI3DOR, T-LESS, ITODD, HouseCat6D** | **0.0 — keine Farbe in den Dateien** |
+
+¹ Bei texturierten Meshes las der Sampler die Farbe bis zum 2026-09-01 nicht aus
+(`face_colors` ist dort `None`); behoben über `to_color().vertex_colors`. MI3DOR ist davon
+**nicht** betroffen — dort gibt es schlicht nichts auszulesen.
+
+**Was das für die Interpretation bedeutet.** Der Shape-Kanal läuft auf MI3DOR mit drei toten
+Eingangskanälen. Das verzerrt die Gallery nicht *untereinander* — die Konstante trifft alle
+3848 Objekte gleich —, setzt aber jedes Gallery-Embedding in einen Bereich des Merkmalsraums,
+für den der Encoder nicht trainiert wurde, während die Query durch den Bildturm kommt.
+
+Dass ULIP-2 hier der schwächste Kanal ist (FT 0.510 gegen DINOv2 0.629), war bisher allein der
+cross-modalen Schwierigkeit zugeschrieben. **Die farblose Gallery ist ein plausibler zweiter
+Grund.** Belegt ist das nicht — es wäre über partielle Punktwolken aus den vorhandenen
+Renderings prüfbar, was einen kompletten Stage-2-Neulauf bedeutete und deshalb nicht gemacht
+wurde (`DECISIONS.md`).
+
+Für die Schlussfolgerung des Kapitels ändert der Befund nichts, er **verschiebt nur die
+Begründung**: dass Shape ohne Tiefe heruntergewichtet gehört (§2), gilt weiterhin — die
+Ursache ist aber vermutlich nicht nur die fehlende Tiefe, sondern auch eine Gallery, der die
+Farbe fehlt, mit der der Encoder rechnet.
+
 ---
 
 ## 4. OSCAR-Legacy-Vergleich (V = 8 Views)

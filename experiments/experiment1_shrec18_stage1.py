@@ -1683,6 +1683,15 @@ ABLATIONS: "OrderedDict[str, AblationSpec]" = OrderedDict([
           bib="xueULIP2ScalableMultimodal2024",
           channels={"shape": ("ulip_cross_rgb", None)},
           weights=(0.0, 0.0, 1.0)),
+    # Vierte Zelle der FUSIONIERTEN Matrix. Isoliert waren alle vier Zellen seit
+    # 2026-09-04 da, fusioniert fehlte cross x partial — dadurch liess sich
+    # E7_ulip2_cross_fullmesh nur gegen die beiden pc-Arme stellen, nicht gegen
+    # sein eigenes Gegenstueck. Reine Tier-2-Ableitung: der Pass ulip_cross_rgb
+    # ist bereits gecacht, es faellt nur die Fusion an.
+    _spec("E7_ulip2_cross", "E7",
+          "full fusion with cross-mode shape vs PARTIAL-view gallery",
+          bib="xueULIP2ScalableMultimodal2024",
+          channels={**_TV_CH, "shape": ("ulip_cross_rgb", None)}),
     # Vierte Zelle der 2x2-Matrix, siehe Pass ulip_cross_fullmesh.
     _spec("E7_ulip2_cross_fullmesh_shape_only", "E7",
           "ULIP-2 shape ALONE, cross-mode query vs FULL-MESH gallery (isolated)",

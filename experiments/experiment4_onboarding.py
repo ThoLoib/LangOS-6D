@@ -360,23 +360,34 @@ class Encoders:
         return {"cache_entries": n_before}
 
 
-def stage_dgedi(mesh_path, obj_root, obj_id, t: Timings) -> dict:
+def stage_dgedi(mesh_path, obj_root, obj_id, ds, t: Timings) -> dict:
     """GeDi-Deskriptoren fuer das neue Objekt, damit es geometrisch suchbar ist.
 
-    Ueber tools/precompute_gedi_descriptors.py — den Weg, den die Preprocessing-
-    Kette geht. `dgedi_bridge` bietet nur dgedi_health und dgedi_rerank; ein
-    `compute_descriptors` gibt es dort NICHT (der erste Entwurf importierte es
-    und waere sofort gescheitert).
+    Ueber `dgedi_service/precompute_gallery.py` mit einem Ein-Eintrag-Manifest —
+    das ist der Weg, den die dGeDi-Kette geht. NICHT ueber
+    `tools/precompute_gedi_descriptors.py`: das zielt auf den ALTEN
+    `gedi`-Dienst (Default `http://gedi:5060`), der nicht laeuft, und wuerde
+    still scheitern. Dieselbe Verwechslung hat schon den Stage-1-Geometrielauf
+    gekostet (AI_LOG 2026-08-26 und 2026-09-04).
 
     Nur relevant, wenn geometrisches Re-Ranking benutzt wird — was Stage 3 fuer
     BOP widerlegt hat. Deshalb optional, nicht Default.
     """
-    cache = os.path.join(obj_root, "gedi_cache")
-    cmd = [sys.executable, os.path.join(_ROOT, "tools",
-                                        "precompute_gedi_descriptors.py"),
-           "--mesh-glob", mesh_path,
-           "--gallery-cache-dir", cache,
-           "--skip-queries", "--overwrite"]
+    import json as _json
+    # Der dGeDi-Container mountet NUR das Repo (`.:/oscar`). Manifest und
+    # Ausgabe muessen deshalb INNERHALB des Repos liegen — ein Arbeitsordner
+    # unter $HOME ist fuer ihn unsichtbar (FileNotFoundError, 2026-09-04).
+    work = os.path.join(_ROOT, ".stage4_dgedi", ds, obj_id)
+    cache = os.path.join(work, "gedi_cache")
+    man = os.path.join(work, "manifest.json")
+    os.makedirs(cache, exist_ok=True)
+    with open(man, "w") as fh:
+        _json.dump({f"{ds}/{obj_id}": os.path.relpath(mesh_path, _ROOT)}, fh)
+    cmd = ["docker", "compose", "run", "--rm", "--no-deps", "dgedi",
+           "python3", "/oscar/dgedi_service/precompute_gallery.py",
+           "--manifest", "/oscar/" + os.path.relpath(man, _ROOT),
+           "--out", "/oscar/" + os.path.relpath(cache, _ROOT),
+           "--overwrite"]
     with t.measure("dgedi"):
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=_ROOT)
     n = len(glob.glob(os.path.join(cache, "*.npz")))
@@ -518,7 +529,7 @@ def main(argv=None):
                         src = os.path.join(_ROOT, "object_images", ds, oid)
                     rec.update(enc.embed_object(src, V, t))
                 if "dgedi" in stages:
-                    rec.update(stage_dgedi(mesh, obj_root, oid, t))
+                    rec.update(stage_dgedi(mesh, obj_root, oid, ds, t))
             except Exception as exc:
                 rec["error"] = f"{type(exc).__name__}: {exc}"
                 print(f"  [{i}/{len(meshes)}] {ds}/{oid}  FEHLER: {rec['error']}")
