@@ -107,3 +107,31 @@ gegenlesen, ob er noch dem entspricht, was hier steht.
   Config-Umstellung (938:1064) als Nulleffekte erkennbar wurden.
 - Die Skripte `paired_significance*.py` bleiben im Repo, ihre Ausgabe wird aber nicht mehr
   in die Ergebnisdokumente übernommen.
+
+## 2026-09-06 — Begriffe, Kriterien und Messmethodik
+
+**„echtes CAD" ist als Begriff gestrichen.** Proxies *sind* CAD-Modelle. Die Unterscheidung
+in Stage 3c lautet ab jetzt **„Ersatz aus dem eigenen BOP-Datensatz"** gegen **„Ersatz aus
+der fremden Proxy-Gallery (GSO/HouseCat6D/ITODD)"**. Was sie trennt, ist die Herkunft und
+damit die Domänennähe, nicht die Echtheit.
+*Warum:* der alte Begriff behauptete einen Qualitätsunterschied, den es nicht gibt.
+
+**„Schwaches Ranking" ist operativ definiert.** Geometrisches Re-Ranking lohnt sich genau
+dann, wenn seine **bedingte Top-1-Genauigkeit innerhalb der Shortlist** (Top-1 ÷ Recall@K)
+die des Amtsinhabers schlägt. Vorab prüfbar über den **Kopfraum Recall@K − Top-1** — die
+Obergrenze dessen, was Re-Ranking gewinnen kann.
+- SHREC K=50: Fusion 0.396, Geometrie 0.548 → +15,2 Pp., Kopfraum 0.520
+- BOP 3a cross K=5: Fusion 0.657, Geometrie 0.577 → −8,0 Pp., Kopfraum 0.251
+*Warum:* die aggregierten Retrieval-Zahlen (hit@1 0.341 vs R@1 0.482) liegen nah beieinander
+und erklären den gegenläufigen Geometrie-Effekt nicht. Absolute Höhen sind zwischen den
+Datensätzen NICHT vergleichbar (Subkategorie- vs Instanz-Relevanz) — nur die Differenz
+innerhalb einer Spalte.
+
+**Score-Caches müssen persistiert werden.** `mi3dor_weight_sweep.py` scort jede Query einmal
+und fusioniert 231 Gewichtungen im Speicher — wirft den Cache aber weg. Deshalb kostet jede
+neue Fusionsvariante einen vollen Lauf (~5 h) statt Minuten.
+*Wie anwenden:* in `REPRO_SPEC.md` als Anforderung an die Repro-Skripte aufgenommen.
+
+**Stichprobengrößen werden benannt, nicht beschönigt.** Stage 4: 6 der 8 Onboarding-Stufen
+sind Vollerhebungen (n=59), nicht Stichproben. `render` (n=5) ist mit >50 % der Onboarding-Zeit
+der größte Posten und die schwächste Stelle — nachholbar in ~48 min.

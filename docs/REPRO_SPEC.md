@@ -277,3 +277,21 @@ Drei Anforderungen an die Skripte, gelernt aus den Fehlern dieser Evaluation:
 3. **Jeder Lauf schreibt seine volle Konfiguration ins Ergebnis** — auch die
    Env-Variablen, die heute fehlen. Dann kann `CONFIG_TO_RESULT.md` vollständig
    generiert werden statt teilweise von Hand.
+
+### Anforderung 4 — Kanal-Scores persistieren
+
+Zwischen zwei Fusionsvarianten ändert sich oft nur **ein** Kanal; die anderen sind
+bitgleich. Trotzdem kostet heute jede Variante einen vollen Lauf, weil nirgends die
+Score-Matrizen abgelegt werden. Die Ergebnisdateien halten je Query nur die Top-5 je Kanal
+plus die Positionen der relevanten Objekte — daraus lässt sich **keine** neue Fusion ableiten.
+
+`mi3dor_weight_sweep.py` macht bereits das Richtige (jede Query einmal scoren, dann 231
+Gewichtungen im Speicher fusionieren) und wirft den Cache am Ende weg.
+
+**Anforderung:** `repro_experiment.py` schreibt je Lauf die drei normalisierten
+Per-Kanal-Score-Maps als Artefakt neben die Metriken. Dann sind Gewichts-Sweeps, Fusionsmethoden
+und einzelne Kanaltausche eine Ableitung von Minuten statt eines Laufs von Stunden.
+
+*Konkreter Anlass:* der fusionierte MI3DOR-Partial-Arm (2026-09-06) brauchte ~5 h, obwohl sich
+gegenüber dem Full-Mesh-Lauf nur der ULIP-Kanal ändert und dessen beide Eingänge — Gallery-Cache
+und Query-Embeddings — fertig auf der Platte lagen.

@@ -971,3 +971,37 @@ Changes
 - Reset main to a clean scaffold.
 - Added README, placeholder directories, AI documentation files.
 - Documented GPU support intent for Docker compose.
+
+## 2026-09-06 — Artefakt-Durchgang nach Review; zwei Fehler gefunden
+
+**1. Stage-2-Kategorientabelle zeigte den falschen Arm.** Die Spalte „Fusion" in
+`STAGE2_RESULTS.md` §5 enthielt `clip_pruned_dino_ulip` (den Kaskaden-Arm), nicht
+`clip_dino_ulip_full` (die volle Fusion). Aggregiert fällt das nicht auf — 86.52 gegen 86.57 NN
+— je Kategorie aber massiv: `vase` 0.476 (Kaskade) gegen 0.284 (Fusion), `camera` 0.908 gegen
+0.974. Folge: die Aussage „feste Gewichtung schadet in **8** von 21 Kategorien" war falsch,
+korrekt sind **9 von 21**, größter Verlust −0.132 (`vase`) statt −0.094 (`bookshelf`).
+Nachgerechnet direkt aus `results_topk_15.json` über `eval_trace.arms[*].rel_positions`;
+Aggregat gegen `metrics_summary_topk_15.json` verifiziert (86.5714 exakt).
+Identifiziert wurde die Quelle durch Abgleich der publizierten Werte gegen alle
+MI3DOR-Läufe × alle Arme (Fehler 0.0000 nur für `clip_pruned_dino_ulip`).
+
+**2. Stage-4-Balken waren unsichtbar.** `.fill` ist ein `<span>` innerhalb `.track`; da `.track`
+kein Flex-/Grid-Container ist, blieb `.fill` `display:inline` und ignorierte `width`/`height`.
+`.track` selbst funktionierte, weil es Grid-Item von `.crow` ist (Blockifizierung).
+Fix: `display:block` auf `.fill`. Vom Nutzer bemerkt, nicht von mir.
+
+**3. Stage-1 §8 war unvollständig und teils veraltet.** Die handgepflegte `ARMS`-Liste hatte 36
+statt 43 Einträge (u. a. fehlten `E2b_fullmesh_geo`, `E7_ulip2_cross*`) und ein falscher Wert
+(`E2b_fullmesh_shape_only` 0.4858 statt 0.4956). Jetzt vollständig aus den
+`metrics_summary.json` generiert.
+
+**4. Zwei kleinere Inkonsistenzen** im Stage-1-Artefakt: ein überzähliges `</section>` schloss
+§4 vorzeitig, und zwei Abschnitte trugen beide die Kennung C3.
+
+### Methodisches
+- „echtes CAD" als Begriff gestrichen (siehe AGREEMENTS) — Proxies sind auch CADs.
+- „Schwaches Ranking" operativ definiert über die bedingte Top-1-Genauigkeit in der Shortlist.
+  Die vorherige Formulierung war zirkulär und hielt der Rückfrage nicht stand, dass die
+  aggregierten Retrieval-Werte beider Datensätze ähnlich sind.
+- Stage-3-Tabelle: alle als „—" ausgewiesenen Werte existierten in den Ergebnisdateien
+  (GT-Zeile normiert + je Datensatz, Geometrie-Zeile je Datensatz) und wurden nachgetragen.
