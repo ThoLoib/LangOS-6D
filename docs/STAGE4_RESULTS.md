@@ -110,7 +110,7 @@ schadet.
 
 | Stufe | 16 Views | 42 Views | skaliert mit V? |
 |---|---|---|---|
-| **render** (Blender, n=5) | 14,45 s | **34,68 s** | ja, linear |
+| **render** (Blender, n=5) | 10,75 s | **25,93 s** | ja, linear |
 | **describe** (LLaVA) | 10,25 s | 13,08 s | ja, unterlinear |
 | partial (HPR) | 1,35 s | 2,76 s | ja |
 | embed_ulip | 0,59 s | 1,55 s | ja |
@@ -118,9 +118,9 @@ schadet.
 | embed_clip | 4,6 ms | 4,7 ms | **nein** (Batch) |
 | mesh | 0,12 s | 0,10 s | nein |
 | cache_load + save | 0,22 s | 0,23 s | **nein** (Gallery-Größe) |
-| **Gesamt** | **27,18 s** | **52,97 s** | **16 Views = 51 %** |
+| **Gesamt** | **23,49 s** | **44,13 s** | **16 Views = 51 %** |
 
-n = 59 Ziel-CADs, Render auf 5 Objekten (Blender läuft auf dem Host). IQR über die 59 CADs:
+n = 59 Ziel-CADs, Render auf allen 59 Objekten (Blender läuft auf dem Host). IQR über die 59 CADs:
 0,96 s bei 16 Views, 2,10 s bei 42 — die Streuung über reale Meshes unterschiedlicher
 Komplexität ist klein, das Onboarding ist gut vorhersagbar.
 

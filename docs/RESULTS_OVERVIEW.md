@@ -3,7 +3,7 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-07 02:47
+Stand: 2026-09-07 09:02
 
 
 ## Stage 1 — SHREC'18 (43 Arme)

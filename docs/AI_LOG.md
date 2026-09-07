@@ -1036,3 +1036,27 @@ aber erst beim Nachsehen mit `cat -A`.
 sauber testen: der Wrapper `/bin/bash -c '...'` enthaelt das Muster im eigenen Kommandozeilen-
 Text und wird selbst zum Treffer. Beide Reproduktionsversuche waren dadurch verfaelscht; die
 Ursache stand am Ende in der Logdatei, nicht im Test.
+
+## 2026-09-07 — Render-Vollerhebung: die n=5-Stichprobe war um 25 % zu hoch
+
+Nachgezogen (`scripts/run_stage4_render_full.sh`, alle 59 Ziel-CADs, 16 + 42 Views, 40 min).
+
+| | n=5 | **n=59** | Abweichung |
+|---|---|---|---|
+| 16 Views | 14,45 s (IQR 0,32) | **10,75 s** (IQR 3,46) | −25,6 % |
+| 42 Views | 34,68 s (IQR 0,40) | **25,93 s** (IQR 8,61) | −25,2 % |
+
+**Kein Zufall, sondern systematische Verzerrung.** `--max-objects N` schneidet mit `meshes[:N]`
+die **ersten** N in Sortierreihenfolge ab — keine Zufallsstichprobe. Die fünf lagen geschlossen
+am oberen Rand: der alte Median (14,45 s) ist exakt das **Maximum** über alle 59 CADs.
+Der kleine IQR (0,32 s gegen wahre 3,46 s) täuschte zusätzlich Präzision vor — fünf ähnliche
+Objekte streuen wenig, das sagt nichts über die Grundgesamtheit.
+
+**Folgen.** Onboarding-Summe 27,18 → **23,49 s** (16 V) und 52,97 → **44,13 s** (42 V).
+Alle Schlussfolgerungen halten: Rendern+Beschreiben 89 % (war „90 %"), Encoding 3 % (war
+„unter 4 %"), 16 Views kosten 53 % von 42 (war 51 %). Die Größenordnungen trugen, die
+absoluten Zahlen nicht.
+
+**Lehre für die Repro-Spec.** Ein `--max-objects`-Flag, das vorne abschneidet, ist als
+Stichprobenmechanismus ungeeignet. Entweder Vollerhebung oder eine echte Zufallsziehung mit
+festem Seed — sonst misst man die Sortierreihenfolge mit.
