@@ -36,11 +36,23 @@ IDLE_MIB=${IDLE_MIB:-9000}     # dgedi + foundationpose im Leerlauf ~6,7 GiB
 [ -f "$OUT" ] && { log "ABBRUCH: $OUT existiert bereits — nichts ueberschreiben."; exit 1; }
 
 # --- 1. Auf die freie GPU warten -------------------------------------------
+# ACHTUNG, hier steckte am 2026-09-06 ein Fehler, der 12 h gekostet hat:
+#   RUNNING=$(pgrep -fc "..." || echo 0)
+# `pgrep -c` gibt bei NULL Treffern "0" aus UND beendet sich mit Status 1.
+# Das `|| echo 0` haengte deshalb eine zweite "0" an -> RUNNING="0\n0", und
+# `[ "0\n0" -eq 0 ]` ist ein Syntaxfehler, also immer falsch. Die Schleife lief
+# weiter, obwohl die GPU frei war. `| wc -l` liefert immer genau eine Zahl und
+# beendet sich immer mit 0.
+n_eval(){ pgrep -f "retrieval_mi3dor_eval_oscarplus|eval_bop_pose|experiment1_shrec18" 2>/dev/null | wc -l; }
+
 log "warte auf freie GPU (laufender Eval-Prozess + Speicherbelegung) ..."
 for i in $(seq 1 720); do            # bis zu 12 h
-  RUNNING=$(pgrep -fc "retrieval_mi3dor_eval_oscarplus|eval_bop_pose|experiment1_shrec18" 2>/dev/null || echo 0)
+  RUNNING=$(n_eval)
   USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1)
   USED=${USED:-99999}
+  # Guard: was hier ankommt, MUSS eine schlichte Zahl sein — sonst waere die
+  # Bedingung still immer falsch, statt laut zu scheitern.
+  case "$RUNNING$USED" in *[!0-9]*) log "ABBRUCH: unerwartete Werte RUNNING=[$RUNNING] USED=[$USED]"; exit 1;; esac
   if [ "$RUNNING" -eq 0 ] && [ "$USED" -lt "$IDLE_MIB" ]; then
     log "GPU frei (belegt ${USED} MiB, kein Eval-Prozess) — starte nach 60 s Nachlauf."
     sleep 60
@@ -50,7 +62,7 @@ for i in $(seq 1 720); do            # bis zu 12 h
   sleep 60
 done
 
-RUNNING=$(pgrep -fc "retrieval_mi3dor_eval_oscarplus|eval_bop_pose|experiment1_shrec18" 2>/dev/null || echo 0)
+RUNNING=$(n_eval)
 [ "$RUNNING" -eq 0 ] || { log "ABBRUCH: nach 12 h laeuft immer noch ein Eval-Prozess."; exit 1; }
 
 # --- 2. Vollerhebung --------------------------------------------------------

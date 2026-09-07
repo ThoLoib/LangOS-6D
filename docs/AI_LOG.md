@@ -1005,3 +1005,34 @@ statt 43 Einträge (u. a. fehlten `E2b_fullmesh_geo`, `E7_ulip2_cross*`) und ein
   aggregierten Retrieval-Werte beider Datensätze ähnlich sind.
 - Stage-3-Tabelle: alle als „—" ausgewiesenen Werte existierten in den Ergebnisdateien
   (GT-Zeile normiert + je Datensatz, Geometrie-Zeile je Datensatz) und wurden nachgetragen.
+
+## 2026-09-07 — `pgrep -c` mit `|| echo 0`: 12 h Wartelauf ins Leere
+
+`scripts/run_stage4_render_full.sh` sollte auf die freie GPU warten und dann rendern. Die GPU
+war um 02:44 frei; das Skript lief bis 08:16 weiter und brach dann per Zeitlimit ab.
+
+**Ursache.** `pgrep -c` gibt bei **null** Treffern `0` aus **und beendet sich mit Status 1**.
+Die Zeile
+
+```bash
+RUNNING=$(pgrep -fc "..." 2>/dev/null || echo 0)
+```
+
+hängte deshalb genau dann eine zweite `0` an, wenn kein Prozess lief → `RUNNING="0\n0"`.
+`[ "0\n0" -eq 0 ]` ist ein Syntaxfehler und damit immer falsch, also brach die Schleife nie ab.
+Sichtbar war es nur an der zerrissenen Logzeile: `... (6725 MiB, 0` / `0 Prozesse)`.
+
+**Fix.** `pgrep -f "..." | wc -l` — liefert immer genau eine Zahl und beendet sich immer mit 0.
+Zusätzlich ein Guard, der abbricht, wenn `RUNNING`/`USED` keine reinen Ziffern sind: eine
+kaputte Bedingung soll *laut* scheitern, nicht still immer falsch sein.
+
+**Einordnung.** Dritter Fehler derselben Familie (nach dem pgrep-Selbsttreffer und dem
+Wartezustand-Fehlalarm). Gemeinsamer Nenner: **Warteschleifen scheitern still.** Die Lehre aus
+AGREEMENTS — „Stufen pruefen ihr Ergebnis, nicht den Rueckgabewert" — gilt auch fuer die
+Bedingung selbst: sie muss beobachtbar sein. Die Statuszeile hat den Fehler am Ende verraten,
+aber erst beim Nachsehen mit `cat -A`.
+
+**Nebenbefund zum Testen.** Ein `pgrep`-Muster laesst sich aus diesem Werkzeug heraus nicht
+sauber testen: der Wrapper `/bin/bash -c '...'` enthaelt das Muster im eigenen Kommandozeilen-
+Text und wird selbst zum Treffer. Beide Reproduktionsversuche waren dadurch verfaelscht; die
+Ursache stand am Ende in der Logdatei, nicht im Test.
