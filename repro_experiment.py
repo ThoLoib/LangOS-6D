@@ -88,10 +88,10 @@ def run(cmd, env_extra=None, cwd=None):
 
 
 def reexec_in_container(env_extra):
-    cmd = ["docker", "compose", "run", "--rm", "oscar"]
+    cmd = ["docker", "compose", "run", "--rm"]
     for k, v in env_extra.items():
         cmd += ["-e", f"{k}={v}"]
-    cmd += ["python3", "/app/repro_experiment.py"] + sys.argv[1:]
+    cmd += ["oscar", "python3", "/app/repro_experiment.py"] + sys.argv[1:]
     log("laeuft im oscar-Container — wrappe automatisch.")
     os.execvp("docker", cmd)
 
@@ -202,6 +202,9 @@ def main():
             reexec_in_container(env)
         out = args.out or "object_retrieval/results_repro_stage1"
         cmd = ["python3", "-u", "experiments/experiment1_shrec18_stage1.py",
+               "--data-root", "eval/datasets/shrec18/shrec18_full",
+               "--images-dir", "object_images/shrec18_v2",
+               "--desc-file", "object_database/shrec18_v2/descriptions_attributes.json",
                "--ablations", args.arm, "--results-root", out]
         if geo:
             cmd += ["--with-geometry", "--geom-k", "50"]

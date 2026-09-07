@@ -156,7 +156,7 @@ Eine Szene aus YCB-V gegen die Stage-3a-Gallery, bis zur Pose:
 
 ```
 docker compose up -d foundationpose
-docker compose run --rm oscar python3 -m pipeline.run_pipeline --rgb eval/datasets/ycbv/test/000048/rgb/000001.png --depth eval/datasets/ycbv/test/000048/depth/000001.png --camera eval/datasets/ycbv/test/000048/scene_camera.json --prompt "the red bowl" --descriptions object_database/ycbv/descriptions_attributes.json --reference_images object_images/ycbv/ --cad_models object_database/ycbv/ --ulip_mode cross --pose_method foundationpose
+docker compose run --rm oscar python3 -m pipeline.run_pipeline --rgb eval/datasets/ycbv/test/000048/rgb/000001.png --depth eval/datasets/ycbv/test/000048/depth/000001.png --camera eval/datasets/ycbv/test/000048/scene_camera.json --prompt "the yellow mustard bottle" --descriptions object_database/ycbv/descriptions_attributes.json --reference_images object_images/ycbv/ --cad_models object_database/ycbv/ --ulip_mode cross --pose_method foundationpose
 ```
 
 `--pose_method icp` läuft ohne FoundationPose-Dienst (Fallback).
