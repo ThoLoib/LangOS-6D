@@ -1,0 +1,9 @@
+comparison,armA,armB,mean_d_NN_sub,median_d_NN_sub,ci_lo,ci_hi,wilcoxon_p,n_A_better,n_B_better,n_tied,ci_significant,wilcoxon_significant,verdict,n_paired
+shape enc: ULIP-2 vs Uni3D (isolated),E1_shape_only,E7_uni3d_shape_only,0.0181,0.0,0.0014,0.0352,0.0382,187,149,1765,YES,YES,REAL,2101
+colour: XYZ+RGB vs XYZ (isolated),E1_shape_only,O5_xyz_shape_only,-0.0324,0.0,-0.0509,-0.0133,0.0008,170,238,1693,YES,YES,REAL,2101
+colour: XYZ+RGB vs XYZ (fused),E1c_full_fusion,O5_xyz_only,-0.0129,0.0,-0.0267,0.0005,0.0643,93,120,1888,no,no,tie,2101
+ref: partial vs full-mesh (isolated),E1_shape_only,E2b_fullmesh_shape_only,0.0485,0.0,0.0295,0.0685,0.0,271,169,1661,YES,YES,REAL,2101
+appearance: DINOv2 vs SigLIP (isolated),E1_view_only,E4_siglip_only,0.0695,0.0,0.05,0.089,0.0,304,158,1639,YES,YES,REAL,2101
+combiner: weighted vs RRF (fused),E1c_full_fusion,E6_rrf,0.0238,0.0,0.0109,0.0366,0.0002,117,67,1917,YES,YES,REAL,2101
+geometry: none vs GeDi+RANSAC (fused),E1c_full_fusion,E2_chamfer_ransac,-0.1304,0.0,-0.1523,-0.108,0.0,157,431,1513,YES,YES,REAL,2101
+config: BASE 16v/k8 -> 42v/k5 (fused),E1c_full_fusion,E1c_full_fusion,-0.001,0.0,-0.0095,0.0076,0.8312,43,45,2013,no,no,tie,2101

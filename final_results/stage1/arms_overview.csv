@@ -1,0 +1,41 @@
+arm,gruppe,nDCG,mAP,hit@1,bemerkung
+E2b_fullmesh_geo,A4,0.6417,0.1773,0.481,stärkster Arm insgesamt
+E2_chamfer_ransac,C1,0.6405,0.1737,0.472,
+E2_both,C1,0.6362,0.1711,0.465,
+O1e_gedi_with_base,C3,0.6287,0.1726,0.459,
+E2_fitness,C1,0.6251,0.168,0.439,
+O1c_gedi_post_fusion,C3,0.5961,0.1382,0.406,
+E2b_fullmesh,A4,0.5935,0.1716,0.36,stärkster Arm ohne Geometrie
+O5_xyz_only,A6,0.588,0.1713,0.354,
+A7f_full_fusion_shape_V42,A7,0.5868,0.1666,0.341,= BASE
+E1c_full_fusion,B3,0.5868,0.1666,0.341,BASE
+O4_V16,A2,0.582,0.1661,0.333,
+O4_V32,A2,0.58,0.1615,0.329,
+E6_rrf,B1,0.5744,0.1379,0.317,
+O4_V8,A2,0.5714,0.1486,0.325,
+E4_siglip,A1,0.5659,0.1227,0.305,
+E7_ulip2_cross,A5,0.5588,0.1452,0.329,
+O2_visual_first,—,0.557,0.1558,0.341,gestrichen
+E1b_text_view,B3,0.5519,0.136,0.312,
+E7_ulip2_cross_fullmesh,A5,0.5511,0.1445,0.308,
+A2_view_only_V42,A2,0.5506,0.1548,0.334,= E1_view_only
+E1_view_only,A1,0.5506,0.1548,0.334,= A2_view_only_V42
+A2_view_only_V16,A2,0.5481,0.1563,0.326,
+A2_view_only_V32,A2,0.5426,0.1475,0.321,
+O5_xyz_shape_only,A6,0.5422,0.1557,0.36,
+A7_shape_only_V42,A7,0.5353,0.1386,0.327,= E1_shape_only
+E1_shape_only,A4,0.5353,0.1386,0.327,= A7_shape_only_V42
+E7_uni3d_shape_only,A3,0.5337,0.1514,0.309,
+A2_view_only_V8,A2,0.5302,0.1317,0.303,
+A7_shape_only_V32,A7,0.53,0.1314,0.317,
+A7_shape_only_V16,A7,0.5227,0.134,0.308,
+O2_clip_threshold_cal,—,0.5186,0.0877,0.281,gestrichen
+E4_siglip_only,A1,0.5165,0.0861,0.264,
+A7_shape_only_V8,A7,0.5119,0.1218,0.291,
+E2b_fullmesh_shape_only,A4,0.4956,0.1339,0.282,
+E7_ulip2_cross_shape_only,A5,0.4809,0.0926,0.264,
+E7_ulip2_cross_fullmesh_shape_only,A5,0.4569,0.0907,0.203,
+E1d_clip_pruned,B3,0.4566,0.05,0.231,
+O2_clip_threshold,—,0.4561,0.0499,0.229,
+E1_oscar_cascade,B3,0.4561,0.0501,0.235,
+E1a_text_only,B3,0.4218,0.047,0.13,

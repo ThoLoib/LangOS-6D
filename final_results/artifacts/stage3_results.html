@@ -1,0 +1,754 @@
+<title>Proxy Substitution Cost</title>
+<style>
+/* ---- Tokens: vollständige helle Palette auf blankem :root ---------------- */
+:root{
+  --ground:#F6F8FA;
+  --surface:#FFFFFF;
+  --sunken:#EDF1F5;
+  --ink:#141A21;
+  --ink-2:#4E5966;
+  --ink-3:#7C8794;
+  --rule:#DCE3EA;
+  --rule-strong:#C3CDD7;
+  --accent:#1F5F8B;         /* Instrumentenblau — der einzige laute Ton */
+  --accent-soft:#E3EDF4;
+  --good:#2E6F52;
+  --good-soft:#E2EFE8;
+  --bad:#A8452C;
+  --bad-soft:#F6E7E2;
+  --shadow:0 1px 2px rgba(20,26,33,.05), 0 8px 24px -16px rgba(20,26,33,.25);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#101519;
+    --surface:#171D23;
+    --sunken:#1E262E;
+    --ink:#E6EBF0;
+    --ink-2:#A6B2BE;
+    --ink-3:#7A8794;
+    --rule:#28323B;
+    --rule-strong:#3A4650;
+    --accent:#6FB0D8;
+    --accent-soft:#17303F;
+    --good:#6FBF95;
+    --good-soft:#16301F;
+    --bad:#E08268;
+    --bad-soft:#33191A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#101519; --surface:#171D23; --sunken:#1E262E;
+  --ink:#E6EBF0; --ink-2:#A6B2BE; --ink-3:#7A8794;
+  --rule:#28323B; --rule-strong:#3A4650;
+  --accent:#6FB0D8; --accent-soft:#17303F;
+  --good:#6FBF95; --good-soft:#16301F;
+  --bad:#E08268; --bad-soft:#33191A;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+/* ---- Grundlagen --------------------------------------------------------- */
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:ui-serif,"Iowan Old Style","Charter",Georgia,Cambria,serif;
+  font-size:17px; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1060px; margin:0 auto; padding:0 24px 96px}
+
+h1,h2,h3,.label,th,.stat-v,.chip{
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+h1{
+  font-size:clamp(2.1rem,5vw,3.1rem); line-height:1.06; letter-spacing:-.028em;
+  font-weight:760; margin:0 0 .5rem; text-wrap:balance;
+}
+h2{
+  font-size:clamp(1.3rem,2.6vw,1.65rem); line-height:1.18; letter-spacing:-.018em;
+  font-weight:700; margin:0; text-wrap:balance;
+}
+h3{
+  font-size:1.02rem; letter-spacing:-.008em; font-weight:680;
+  margin:2.2rem 0 .5rem; text-wrap:balance;
+}
+p{margin:0 0 1.05rem; max-width:68ch}
+strong{font-weight:600; color:var(--ink)}
+code{
+  font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  font-size:.85em; background:var(--sunken); padding:.12em .38em;
+  border-radius:4px; color:var(--ink-2);
+}
+.label{
+  font-size:.7rem; font-weight:670; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--ink-3);
+}
+
+/* ---- Kopf --------------------------------------------------------------- */
+header{padding:72px 0 40px; border-bottom:1px solid var(--rule)}
+.kicker{display:flex; align-items:center; gap:.6rem; margin-bottom:1.1rem}
+.kicker .bar{width:34px; height:2px; background:var(--accent)}
+.lede{font-size:1.12rem; color:var(--ink-2); max-width:64ch; margin:0}
+
+.facts{
+  display:grid; gap:1px; background:var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  border:1px solid var(--rule); border-radius:10px; overflow:hidden;
+  margin-top:2.2rem;
+}
+.fact{background:var(--surface); padding:14px 16px}
+.fact .label{display:block; margin-bottom:.3rem}
+.stat-v{
+  font-size:1.32rem; font-weight:700; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; display:block; line-height:1.2;
+}
+.fact small{color:var(--ink-3); font-size:.78rem; display:block; margin-top:.15rem}
+
+/* ---- Abschnitte mit Messschiene ---------------------------------------- */
+section{padding-top:56px}
+.head{
+  display:grid; grid-template-columns:44px 1fr; gap:16px; align-items:start;
+  margin-bottom:1.4rem;
+}
+.num{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.78rem;
+  font-weight:600; color:var(--accent); background:var(--accent-soft);
+  border-radius:6px; padding:.42rem 0; text-align:center; letter-spacing:.02em;
+}
+.head p{margin:.4rem 0 0; color:var(--ink-2); font-size:.97rem}
+
+/* ---- Tabellen ----------------------------------------------------------- */
+.tbl-wrap{
+  overflow-x:auto; border:1px solid var(--rule); border-radius:10px;
+  background:var(--surface); box-shadow:var(--shadow); margin:1.4rem 0 .6rem;
+}
+table{border-collapse:collapse; width:100%; font-size:.87rem}
+th,td{padding:9px 13px; text-align:right; white-space:nowrap}
+th:first-child,td:first-child{text-align:left; white-space:normal; min-width:190px}
+thead th{
+  font-size:.68rem; font-weight:670; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--ink-3); border-bottom:1px solid var(--rule-strong);
+  background:var(--sunken); position:sticky; top:0;
+}
+tbody td{
+  border-bottom:1px solid var(--rule);
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums; font-size:.83rem; color:var(--ink-2);
+}
+tbody td:first-child{
+  font-family:ui-sans-serif,system-ui,Helvetica,Arial,sans-serif;
+  font-size:.85rem; color:var(--ink); font-weight:500;
+}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:var(--sunken)}
+.grp td{
+  background:var(--sunken); font-size:.68rem; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:670;
+  font-family:ui-sans-serif,system-ui,Helvetica,Arial,sans-serif;
+}
+.best{color:var(--ink); font-weight:700}
+.best::after{content:""}
+td.ref{color:var(--ink); font-weight:650}
+
+/* Messbalken: der Zahlenwert bekommt ein Lineal statt eines Farbklecks */
+.m{position:relative}
+.m::before{
+  content:""; position:absolute; left:6px; right:6px; bottom:3px; height:2px;
+  background:linear-gradient(to right,var(--accent) calc(var(--v)*100%),transparent 0);
+  opacity:.5; border-radius:1px;
+}
+.chip{
+  display:inline-block; font-size:.7rem; font-weight:650; padding:.1rem .38rem;
+  border-radius:4px; font-variant-numeric:tabular-nums;
+}
+.chip.up{background:var(--good-soft); color:var(--good)}
+.chip.down{background:var(--bad-soft); color:var(--bad)}
+caption, .cap{
+  caption-side:bottom; text-align:left; font-size:.8rem; color:var(--ink-3);
+  padding:0; margin:.1rem 0 0; max-width:70ch;
+  font-family:ui-sans-serif,system-ui,Helvetica,Arial,sans-serif;
+}
+
+/* ---- Befundkarten ------------------------------------------------------- */
+.finding{
+  border:1px solid var(--rule); border-left:2px solid var(--accent);
+  background:var(--surface); border-radius:0 10px 10px 0;
+  padding:16px 20px; margin:1.5rem 0;
+}
+.finding h3{margin:0 0 .4rem; font-size:.98rem}
+.finding p{margin:0; font-size:.93rem; color:var(--ink-2); max-width:70ch}
+.finding p + p{margin-top:.7rem}
+
+.note{
+  font-size:.86rem; color:var(--ink-3); border-top:1px solid var(--rule);
+  padding-top:1.1rem; margin-top:2.4rem; max-width:70ch;
+}
+footer{
+  margin-top:72px; padding-top:22px; border-top:1px solid var(--rule);
+  font-size:.8rem; color:var(--ink-3);
+  font-family:ui-sans-serif,system-ui,Helvetica,Arial,sans-serif;
+}
+@media (max-width:640px){
+  body{font-size:16px}
+  header{padding-top:44px}
+  .head{grid-template-columns:32px 1fr; gap:11px}
+  .num{font-size:.7rem}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="kicker"><span class="bar"></span><span class="label">Stage 3 · BOP</span></div>
+  <h1>Proxy Substitution Cost</h1>
+  <p class="lede">Wenn das exakte CAD-Modell fehlt und die Pipeline ein Ersatzmodell
+  liefert — was kostet das in Millimetern? Auswertung über 12 284 Instanzen aus
+  YCB-V, T-LESS und LM-O.</p>
+
+  <div class="facts">
+    <div class="fact"><span class="label">Instanzen</span>
+      <span class="stat-v">12 284</span><small>ycbv 4123 · tless 6716 · lmo 1445</small></div>
+    <div class="fact"><span class="label">Gallery</span>
+      <span class="stat-v">1 316</span><small>1257 Proxy + 59 Ziel-CADs</small></div>
+    <div class="fact"><span class="label">Recall@1</span>
+      <span class="stat-v">0.515</span><small>bester Arm: cross × full-mesh</small></div>
+    <div class="fact"><span class="label">Substitutionskosten</span>
+      <span class="stat-v">15.8 mm</span><small>Median gegenüber GT-CAD</small></div>
+  </div>
+</header>
+
+<section>
+  <div class="head">
+    <div class="num">3a</div>
+    <div>
+      <h2>Retrieval — findet die Pipeline das richtige CAD?</h2>
+      <p>Gallery enthält das exakte Zielmodell. Relevant ist genau ein Eintrag,
+      gemessen wird Recall@K und MRR. Segmentierung über Ground-Truth-<code>mask_visib</code>,
+      damit Retrieval und Pose nicht von Segmentierungsfehlern überlagert werden.</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr>
+      <th>Arm</th><th>R@1</th><th>R@5</th><th>R@10</th><th>MRR</th><th>Shape allein</th>
+      <th>YCB-V</th><th>T-LESS</th><th>LM-O</th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td>Full-Mesh-Gallery, cross-modal <span class="label">bester Arm</span></td>
+        <td class="m best" style="--v:.515">0.5151</td><td class="best">0.7881</td>
+        <td class="best">0.8505</td><td class="best">0.6379</td><td class="best">0.2272</td>
+        <td>0.726</td><td class="best">0.394</td><td class="best">0.478</td></tr>
+      <tr>
+        <td>Volle Fusion, cross-modal <span class="label">eingefroren</span></td>
+        <td class="m" style="--v:.482">0.4818</td><td>0.7330</td><td>0.8120</td>
+        <td>0.5971</td><td>0.1997</td><td class="best">0.732</td><td>0.332</td><td>0.464</td></tr>
+      <tr>
+        <td>Volle Fusion, Punktwolken-Query</td>
+        <td class="m" style="--v:.464">0.4636</td><td>0.7258</td><td>0.8080</td>
+        <td>0.5844</td><td>0.0211</td><td>0.671</td><td>0.350</td><td>0.400</td></tr>
+      <tr>
+        <td>Full-Mesh-Gallery, Punktwolken-Query</td>
+        <td class="m" style="--v:.388">0.3878</td><td>0.6022</td><td>0.7160</td>
+        <td>0.4899</td><td>0.0089</td><td class="best">0.740</td><td>0.159</td><td>0.446</td></tr>
+      <tr>
+        <td>OSCAR-Baseline <span class="label">ohne Shape</span></td>
+        <td class="m" style="--v:.320">0.3198</td><td>0.4923</td><td>0.5418</td>
+        <td>0.4043</td><td>—</td><td>0.498</td><td>0.214</td><td>0.304</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Die drei rechten Spalten sind Recall@1 je Datensatz. „Shape allein" ist
+  der isolierte ULIP-2-Kanal — er zeigt, wie wenig die Form für sich trägt (2 % im
+  pc-Modus) und wie viel im cross-Modus, wo ULIP-2s Bildturm arbeitet (20 %).
+  OSCAR-Baseline = CLIP-Textschwelle τ=0.37, dann DINOv2-Best-View, kein Shape.</p>
+
+  <div class="finding">
+    <h3>Der Shape-Kanal trägt +0.162 Recall@1</h3>
+    <p>Gegen die faithful nachgebaute OSCAR-Kaskade (0.3198) gewinnt die volle
+    Fusion 16,2 Punkte. Der Abstand ist auf allen drei Datensätzen vorhanden und
+    auf T-LESS relativ am größten (0.214 → 0.332), also dort, wo Textur und
+    Sprache am wenigsten hergeben und Geometrie das einzige unterscheidende
+    Merkmal ist.</p>
+  </div>
+
+  <h3>Repräsentation der Gallery: partielle Ansichten gegen Full-Mesh</h3>
+  <p>Zwei unabhängige Achsen — wie die Query in den Shape-Raum kommt, und wie die
+  CAD-Modelle abgelegt sind. Recall@1 je Datensatz:</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr>
+      <th>Query · Datensatz</th><th>partial</th><th>full-mesh</th><th>Δ</th>
+      <th>Anteil Instanzen</th>
+    </tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="5">Punktwolken-Query</td></tr>
+      <tr><td>YCB-V</td><td>0.671</td><td class="best">0.740</td>
+        <td><span class="chip up">+0.069</span></td><td>34 %</td></tr>
+      <tr><td>T-LESS</td><td class="ref">0.350</td><td>0.159</td>
+        <td><span class="chip down">−0.191</span></td><td>55 %</td></tr>
+      <tr><td>LM-O</td><td>0.400</td><td class="best">0.446</td>
+        <td><span class="chip up">+0.046</span></td><td>12 %</td></tr>
+      <tr class="grp"><td colspan="5">Cross-modale Query</td></tr>
+      <tr><td>YCB-V</td><td class="ref">0.732</td><td>0.726</td>
+        <td><span class="chip down">−0.006</span></td><td>34 %</td></tr>
+      <tr><td>T-LESS</td><td>0.332</td><td class="best">0.394</td>
+        <td><span class="chip up">+0.062</span></td><td>55 %</td></tr>
+      <tr><td>LM-O</td><td>0.464</td><td class="best">0.478</td>
+        <td><span class="chip up">+0.014</span></td><td>12 %</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Stand 3. September, nach der Neuberechnung der Full-Mesh-Gallery.
+  Die Gewinnbilanz je Instanz stützt beide Richtungen: cross 884:1294 zugunsten
+  Full-Mesh, pc 1742:811 zugunsten partial.</p>
+
+  <div class="finding">
+    <h3>Im cross-Modus gewinnt Full-Mesh — und zwar überall</h3>
+    <p>Mit korrekt gesampelter Mesh-Farbe kehrt sich das Bild um: cross ×
+    full-mesh erreicht <strong>0.5151</strong> gegen 0.4818 der eingefrorenen
+    Konfiguration, auf R@1, R@5, R@10, MRR und dem isolierten Shape-Kanal
+    gleichermaßen. Es ist damit der <strong>stärkste Retrieval-Arm der Arbeit</strong>.</p>
+    <p>Im pc-Modus bleibt partial vorn — aber <strong>allein wegen T-LESS</strong>.
+    Auf YCB-V (+0.069) und LM-O (+0.046) gewinnt auch dort das vollständige Mesh.
+    „Partial schlägt Full-Mesh" ist damit keine Aussage über die Repräsentation,
+    sondern über texturlose, symmetrische Industrieteile.</p>
+  </div>
+
+  <div class="finding">
+    <h3>Warum der pc-Modus anders reagiert: Domänenabgleich</h3>
+    <p>Der Beleg steckt im Modusvergleich: dieselbe Gallery wirkt gegensätzlich —
+    im cross-Modus hilft das vollständige Mesh (+0.033), im pc-Modus schadet es
+    (−0.076). Eine Eigenschaft der Gallery allein könnte das nicht erklären.</p>
+    <p>Im pc-Modus ist die Query eine partielle Wolke, und die Partial-Gallery
+    besteht aus genau solchen — gleiche Domäne, und jedes Objekt bekommt über
+    seine 42 Ansichten 42 Chancen, den Blickwinkel zu treffen. Full-Mesh bietet
+    einen Vektor einer vollständigen Oberfläche, normalisiert auf dieselbe
+    Einheitskugel wie der Query-Ausschnitt. Im cross-Modus läuft die Query durch
+    den Bildturm, dort ist keine der beiden Varianten domänengleich — und der
+    Abstand fällt auf 0.018. Die Staffelung je Datensatz folgt daraus, wie viel
+    der Shape-Kanal tragen muss: auf YCB-V fangen Text und Erscheinung ihn auf,
+    auf texturlosem T-LESS nichts.</p>
+  </div>
+
+  <div class="finding">
+    <h3>Full-Mesh ist informativ, aber auf Rang 1 unbrauchbar</h3>
+    <p>Ziel-Rangverteilung auf T-LESS im pc-Modus: partial Median 2 (6 % jenseits
+    Rang 50), Full-Mesh Median 8 (14 %), <em>ohne</em> Shape-Kanal Median 24
+    (28 %). Full-Mesh hebt das Ranking also deutlich über die Variante ganz ohne
+    Form — der Kanal ist nicht uninformativ. Er versagt genau an der Spitze der
+    Liste, und das ist es, was Recall@1 misst.</p>
+  </div>
+
+  <h3>Geometrisches Re-Ranking</h3>
+  <p>dGeDi-Deskriptoren plus RANSAC über die Top-5, in zwei Varianten:
+  <strong>Distanz</strong> = Registrierungsdistanz nach der Ausrichtung,
+  <strong>Fitness</strong> = Anteil der Punkte im Inlier-Radius.</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr>
+      <th>Query · Signal</th><th>R@1</th><th>Δ R@1</th><th>MRR</th>
+      <th>R@5</th><th>R@10</th><th>Deckung</th>
+    </tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="7">Cross-modale Query</td></tr>
+      <tr><td>ohne Geometrie</td><td class="ref">0.4818</td><td>—</td>
+        <td class="ref">0.5971</td><td>0.7330</td><td>0.8120</td><td>—</td></tr>
+      <tr><td>Registrierungsdistanz</td><td>0.4229</td>
+        <td><span class="chip down">−0.059</span></td><td>0.5576</td>
+        <td>0.7330</td><td>0.8120</td><td>98 %</td></tr>
+      <tr><td>Fitness</td><td>0.4278</td>
+        <td><span class="chip down">−0.054</span></td><td>0.5569</td>
+        <td>0.7330</td><td>0.8120</td><td>98 %</td></tr>
+      <tr class="grp"><td colspan="7">Punktwolken-Query</td></tr>
+      <tr><td>ohne Geometrie</td><td class="ref">0.4636</td><td>—</td>
+        <td class="ref">0.5844</td><td>0.7258</td><td>0.8080</td><td>—</td></tr>
+      <tr><td>Registrierungsdistanz</td><td>0.3725</td>
+        <td><span class="chip down">−0.091</span></td><td>0.5215</td>
+        <td>0.7258</td><td>0.8080</td><td>98 %</td></tr>
+      <tr><td>Fitness</td><td>0.3820</td>
+        <td><span class="chip down">−0.082</span></td><td>0.5249</td>
+        <td>0.7258</td><td>0.8080</td><td>98 %</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">R@5 und R@10 sind über alle Zeilen identisch — das Re-Ranking
+  ordnet nur innerhalb der Top-5 um und kann die Mengenzugehörigkeit bei K≥5
+  nicht verändern. Derselbe Effekt wie in Stage 1, wo fünf der sieben offiziellen
+  Metriken für die Geometrie blind waren.</p>
+
+  <div class="finding">
+    <h3>Geometrie verliert in allen vier Zellen — und das ist kein Implementierungsfehler</h3>
+    <p>Bei 98 % Registrierungsdeckung greift die Geometrie nachweislich; sie ist
+    absolut betrachtet auch informativ und setzt das richtige CAD in 58 % der
+    Fälle auf Rang 1, gegenüber 20 % Zufall bei fünf Kandidaten. Nur: der
+    Fusions-Score, den sie <em>ersetzt</em>, schafft innerhalb derselben
+    Shortlist 66 %. Re-Ranking ist eine Verdrängung, keine Ergänzung — es lohnt
+    sich nur, wenn es den bestehenden Score schlägt. Auf SHREC'18 tut es das
+    (47 % gegen 34 %), auf BOP nicht.</p>
+    <p><strong>Fitness schlägt Distanz auf BOP in beiden Modi</strong> — genau
+    umgekehrt zu Stage 1 (Distanz 0.6405 gegen Fitness 0.6251 nDCG). SHREC'18 ist
+    skaleninvariant, dort ist die Ausrichtungsdistanz aussagekräftig; auf BOP mit
+    echter metrischer Skala gewinnt das reine Überlappungsmaß.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head">
+    <div class="num">3b</div>
+    <div>
+      <h2>Pose — reicht ein Ersatzmodell?</h2>
+      <p>Die exakten Zielmodelle sind aus der Gallery entfernt (1257 Einträge).
+      Das Top-1-Ergebnis ist zwangsläufig ein Proxy; FoundationPose schätzt damit
+      die Pose. Gemessen wird D<sub>sym</sub>, die symmetrische Oberflächen­distanz
+      zwischen dem GT-posierten Zielobjekt und dem geschätzt-posierten Proxy.</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr>
+      <th>Arm</th><th>Ergebnisordner</th><th>D_sym Median</th><th>/ Durchmesser</th><th>Δ zur GT-Pose</th>
+      <th>YCB-V</th><th>T-LESS</th><th>LM-O</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>GT-CAD <span class="label">Referenz</span></td>
+        <td><code>gt</code></td>
+        <td class="best">1.72 mm</td><td class="best">0.015</td><td>0 <span class="label">Definition</span></td>
+        <td>2.03</td><td>1.41</td><td>3.48</td></tr>
+      <tr><td>OSCAR+ Proxy, cross × partial</td>
+        <td><code>3b_cross</code></td>
+        <td class="best">18.37 mm</td><td>0.139</td><td class="best">15.79 mm</td>
+        <td>23.59</td><td class="best">13.57</td><td class="best">28.54</td></tr>
+      <tr><td>OSCAR+ Proxy, cross × full-mesh</td>
+        <td><code>3b_cross_fullmesh</code></td>
+        <td>18.91 mm</td><td>0.152</td><td>16.63 mm</td>
+        <td class="best">21.78</td><td>14.98</td><td>34.04</td></tr>
+      <tr><td>OSCAR-Baseline Proxy</td>
+        <td><code>3b_oscar</code></td>
+        <td>21.73 mm</td><td>0.173</td><td>18.86 mm</td>
+        <td>24.38</td><td>18.43</td><td>31.22</td></tr>
+      <tr><td>OSCAR+ Proxy + Geometrie</td>
+        <td><code>3b_cross_geo</code></td>
+        <td>28.79 mm</td><td>0.253</td><td>26.07 mm</td>
+        <td>21.58</td><td>29.10</td><td>45.90</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Die drei rechten Spalten sind D<sub>sym</sub>-Mediane in mm je
+  Datensatz (n = 4123 / 6716 / 1445). Deckung 100 %, außer full-mesh 99,98 %
+  (3 Ausfälle) und OSCAR-Baseline 99,96 % (5 von 12 284).</p>
+
+  <div class="finding">
+    <h3>Was in dieser Tabelle steht</h3>
+    <p><strong>„/ Durchmesser"</strong> ist derselbe Fehler, geteilt durch den
+    Durchmesser des Zielobjekts (aus <code>models_info.json</code> des jeweiligen
+    BOP-Datensatzes). Ohne diese Normierung sind die Datensätze nicht vergleichbar:
+    ein 5-mm-Fehler an einer T-LESS-Kleinteil-Schraube ist etwas völlig anderes als
+    an einer YCB-V-Bohrmaschine. In mm sieht T-LESS mit 13.57 am besten aus — relativ
+    zum Durchmesser (0.137) liegt es praktisch gleichauf mit YCB-V (0.134).
+    <strong>Die absolute Spalte misst zu einem guten Teil Objektgröße, die relative
+    den Substitutionsfehler.</strong></p>
+    <p><strong>„Δ zur GT-Pose"</strong> ist der gepaarte Abstand je Instanz zum
+    GT-CAD-Lauf derselben Zeile — also der Anteil des Fehlers, der auf das
+    <em>Ersatzmodell</em> zurückgeht und nicht auf FoundationPose. Für die
+    GT-Referenz ist er per Definition null. Er ist kleiner als die Differenz der
+    Mediane, weil er je Instanz gebildet wird.</p>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Arm</th><th>Aufruf (<code>eval_bop_pose.py</code>)</th><th>Gallery</th><th>Shape-Kanal</th></tr></thead>
+    <tbody>
+      <tr><td>GT-CAD</td><td><code>--mode gt</code></td><td>—</td><td>—</td></tr>
+      <tr><td>OSCAR+ cross × partial</td><td><code>--mode 3b</code></td><td>1257 Proxy-CADs</td><td>ULIP-2 cross, partielle Referenz</td></tr>
+      <tr><td>OSCAR+ cross × full-mesh</td><td><code>--mode 3b --fullmesh</code></td><td>1257</td><td>ULIP-2 cross, Full-Mesh-Referenz</td></tr>
+      <tr><td>OSCAR-Baseline</td><td><code>--mode 3b --oscar-baseline</code></td><td>1257</td><td><strong>keiner</strong> — CLIP-Schwelle τ=0.37, dann DINOv2-Best-View</td></tr>
+      <tr><td>+ Geometrie</td><td><code>--mode 3b</code> + dGeDi-Rerank</td><td>1257</td><td>wie cross × partial, danach Re-Ranking der Top-5</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Allen OSCAR+-Armen gemeinsam: Fusion (0.3, 0.4, 0.3) über die volle
+  Gallery, DINOv2 mean-Pooling über 42 Views, top-k-softmax k=5, Pose durch
+  FoundationPose mit GT-Maske und GT-Bounding-Box. Die einzige Variable ist die
+  jeweils genannte.</p>
+
+  <div class="finding">
+    <h3>Der Retrieval-Vorsprung überträgt sich nur bedingt</h3>
+    <p>Gegen die OSCAR-Baseline ja: 18.37 gegen 21.73 mm, <strong>3.4 mm</strong>
+    besser auf allen drei Datensätzen. Die +0.162 Recall@1 schlagen also bis zur
+    einsetzbaren Pose durch.</p>
+    <p>Zwischen den beiden OSCAR+-Armen aber nicht. <strong>Full-Mesh findet
+    häufiger das richtige CAD (+0.033 R@1) und posiert es schlechter</strong>
+    (18.91 gegen 18.37 mm). Je Datensatz: besser auf YCB-V (21.8 gegen 23.6),
+    schlechter auf T-LESS (15.0 gegen 13.6) und deutlich auf LM-O (34.0 gegen
+    28.5). Retrieval und Pose stellen verschiedene Anforderungen — Retrieval
+    belohnt das Modell, das als Ganzes passt, FoundationPose registriert gegen
+    die <em>sichtbare</em> Oberfläche.</p>
+    <p>Die Geometrie schadet der Pose noch deutlicher als dem Retrieval:
+    <strong>+57 %</strong> Fehler gegenüber demselben Arm ohne Re-Ranking. Damit
+    ist die Geometrie-Achse auf BOP an keiner Stelle der Kette von Nutzen.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head">
+    <div class="num">3c</div>
+    <div>
+      <h2>Zerlegung — woher kommen die 15 mm?</h2>
+      <p>Aus der Gallery wird nur das exakte GT-Modell entfernt, alles andere
+      bleibt. Damit lässt sich trennen, <strong>woher</strong> der beste
+      verbleibende Ersatz stammt: aus dem <em>eigenen BOP-Datensatz</em> (ein
+      anderes Objekt derselben Szenensammlung) oder aus der <em>fremden
+      Proxy-Gallery</em> (GSO, HouseCat6D, ITODD). Beides sind CAD-Modelle — der
+      Unterschied ist die Herkunft, und damit, wie nah sie der Aufgabe stehen.</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr>
+      <th>Fall</th><th>partial: n</th><th>Median</th><th>full-mesh: n</th><th>Median</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>Gesamt</td><td>12 284</td><td class="ref">15.34 mm</td>
+        <td>12 284</td><td class="best">13.51 mm</td></tr>
+      <tr><td>Ersatz aus dem <strong>eigenen</strong> BOP-Datensatz <span class="label">anderes Objekt</span></td>
+        <td>6 742 <span class="label">55 %</span></td><td>10.35 mm</td>
+        <td>7 999 <span class="label">65 %</span></td><td class="best">9.76 mm</td></tr>
+      <tr><td>Ersatz aus der <strong>fremden</strong> Proxy-Gallery <span class="label">GSO/HouseCat6D/ITODD</span></td>
+        <td>5 542 <span class="label">45 %</span></td><td class="best">20.10 mm</td>
+        <td>4 285 <span class="label">35 %</span></td><td>22.65 mm</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="finding">
+    <h3>Die Zerlegung löst den Widerspruch zwischen 3b und 3c auf</h3>
+    <p>Ein CAD aus dem eigenen BOP-Datensatz kostet <strong>10.35 mm</strong>,
+    eines aus der fremden Proxy-Gallery <strong>20.10 mm</strong> — fast das
+    Doppelte. Beides sind vollwertige CAD-Modelle; was sie trennt, ist die Nähe
+    zur Domäne: BOP-Datensätze sind thematisch geschlossen (Küchenobjekte,
+    Industrieteile), ein zufälliges GSO-Objekt ist es nicht. <strong>Die
+    Zusammensetzung der Gallery ist damit ein eigener Hebel, unabhängig vom
+    Retrieval.</strong></p>
+    <p><strong>Und sie erklärt, warum Full-Mesh in 3c gewinnt (13.51 gegen
+    15.34 mm), in 3b aber verliert.</strong> Es wählt aus dem eigenen Datensatz
+    <em>besser</em> (9.76 gegen 10.35 mm) und aus der fremden Gallery
+    <em>schlechter</em> (22.65 gegen 20.10 mm).
+    Sein stärkeres Retrieval schickt 65 statt 55 Prozent der Instanzen in die
+    gute Teilmenge — daher der Sieg in 3c. In 3b sind alle Ziel-CADs entfernt,
+    es bleibt nur die Teilmenge, in der es schwächer ist. Beide Ergebnisse
+    folgen aus <em>einer</em> Eigenschaft, nicht aus zweien.</p>
+    <p>T-LESS erreicht mit 8.75 mm den besten Median, obwohl es das schwächste
+    Retrieval hat (R@1 0.332). Kein Widerspruch: die Objekte sind einander
+    geometrisch so ähnlich, dass ein <em>falsch</em> gewähltes CAD trotzdem eine
+    gute Pose stützt. Retrieval-Genauigkeit und Pose-Nutzen sind nicht dasselbe.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head">
+    <div class="num">3d</div>
+    <div>
+      <h2>Verdeckung — der stärkste Faktor, den wir nicht entworfen haben</h2>
+      <p>Alle bisherigen Abschnitte vergleichen Entwurfsentscheidungen. Dieser fragt
+      etwas anderes: <em>wie viel von der Szene muss man überhaupt sehen?</em> BOP
+      liefert die Antwort mit, ohne dass ein neuer Lauf nötig wäre.</p>
+    </div>
+  </div>
+
+  <h3>Wie die Zahlen entstehen</h3>
+  <p>Es wurde <strong>nichts neu gerechnet</strong> — es ist eine Re-Analyse
+  vorhandener Dateien in vier Schritten:</p>
+  <ol>
+    <li><strong>BOPs eigene Annotation.</strong> Jede Testszene hat
+    <code>scene_gt_info.json</code> mit <code>visib_fract</code> je Instanz, definiert
+    als <code>px_count_visib / px_count_valid</code> — der Anteil der projizierten
+    Objektfläche, der im Bild tatsächlich zu sehen ist. An einer Instanz nachgerechnet:
+    3362/3478 = 0,9666, exakt der annotierte Wert.</li>
+    <li><strong>Verknüpfung</strong> unserer Per-Instanz-Records mit dieser Annotation
+    über den Schlüssel <code>(scene_id, im_id, gt_idx)</code>. <strong>12&nbsp;284 von
+    12&nbsp;284</strong> Instanzen zugeordnet, keine verloren.</li>
+    <li><strong>Eigene Metrik statt der fertigen Zahl.</strong> R@1 wurde aus
+    <code>target_rank == 1</code> selbst gebildet und gegen den publizierten Wert
+    geprüft: 5918/12284 = <strong>0,481765</strong> gegen 0,481765 aus
+    <code>combined_stage3a.json</code>. Kein einziger Record hat
+    <code>target_rank = None</code>, es gibt also keine Grauzone.</li>
+    <li><strong>Schichtung</strong> in vier Sichtbarkeitsklassen.</li>
+  </ol>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Sichtbarkeit</th><th>n</th><th>Anteil</th>
+      <th>3a: R@1</th><th>3b: D_sym</th></tr></thead>
+    <tbody>
+      <tr><td>stark verdeckt &lt; 50 %</td><td>1 184</td><td>9,6 %</td>
+        <td class="ref">0.098</td><td>27.7 mm</td></tr>
+      <tr><td>teilverdeckt 50–80 %</td><td>2 394</td><td>19,5 %</td>
+        <td>0.300</td><td>18.8 mm</td></tr>
+      <tr><td>leicht 80–95 %</td><td>2 992</td><td>24,4 %</td>
+        <td>0.502</td><td class="best">14.4 mm</td></tr>
+      <tr><td>frei &gt; 95 %</td><td>5 714</td><td>46,5 %</td>
+        <td class="best">0.627</td><td>18.8 mm</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Pearson r über alle Instanzen: +0,358 (3a) und −0,275 (3b).
+  Reproduzierbar mit <code>python3 tools/occlusion_analysis.py</code> — das Skript
+  bricht ab, wenn die selbst gerechnete R@1 nicht zur publizierten passt.</p>
+
+  <div class="finding">
+    <h3>Wie viel man sieht, schlägt jede Entwurfsentscheidung</h3>
+    <p>Zwischen frei sichtbar und stark verdeckt liegen <strong>0,53 R@1</strong>. Zum
+    Vergleich: die größte Designachse, die wir überhaupt gemessen haben — Full-Mesh gegen
+    Partial in 3a — bewegt <strong>0,033</strong>. Bei rund einem Zehntel der Instanzen
+    findet das System praktisch nichts mehr (R@1 0,098).</p>
+    <p>Für die Motivation der Arbeit ist das der eigentliche Befund: Retrieval <em>in
+    unaufgeräumten Szenen</em> scheitert nicht am Encoder, sondern an der Sichtbarkeit.</p>
+  </div>
+
+  <h3>Die Kontrolle, die die Aussage einschränkt</h3>
+  <p>Die vier Klassen sind ungleich besetzt <em>und</em> unterschiedlich
+  zusammengesetzt: T-LESS stellt <strong>73 %</strong> des stark verdeckten Bins, aber nur
+  47 % des freien — und T-LESS hat ohnehin das schwächste Retrieval. Die gepoolte Spanne
+  könnte also allein daher rühren. Deshalb dieselbe Auswertung je Datensatz:</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>R@1 je Datensatz</th><th>&lt; 50 %</th><th>50–80 %</th>
+      <th>80–95 %</th><th>&gt; 95 %</th><th>Spanne</th></tr></thead>
+    <tbody>
+      <tr><td>YCB-V</td><td>0.371</td><td>0.413</td><td class="best">0.880</td>
+        <td>0.829</td><td>0.51</td></tr>
+      <tr><td>T-LESS</td><td>0.062</td><td>0.201</td><td>0.391</td>
+        <td class="best">0.429</td><td>0.37</td></tr>
+      <tr><td>LM-O</td><td>0.093</td><td>0.334</td><td>0.534</td>
+        <td class="best">0.650</td><td>0.56</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="finding">
+    <h3>Der Effekt hält, die eine große Zahl nicht</h3>
+    <p><strong>In jedem Datensatz einzeln steigt R@1 mit der Sichtbarkeit</strong> — die
+    Zusammensetzung erzeugt den Effekt also nicht. Sie <em>überzeichnet</em> ihn aber:
+    innerhalb der Datensätze beträgt die Spanne 0,37 (T-LESS) bis 0,56 (LM-O) statt der
+    gepoolten 0,53 — jeweils als Abstand zwischen bester und schlechtester Klasse.
+    Ehrlich formuliert ist Verdeckung damit rund das <strong>11- bis 17-fache</strong> der
+    größten Designachse, nicht glatt das 16-fache.</p>
+    <p>Der 3b-Verlauf ist zudem <strong>nicht monoton</strong>: der freie Bin (18,8 mm)
+    liegt über dem leicht verdeckten (14,4 mm). Das bleibt auch nach Normierung auf den
+    Objektdurchmesser und in allen drei Datensätzen bestehen. Kontrolliert man aber je
+    Objekt — 43 Objekte mit mindestens 25 Instanzen in beiden Klassen —, steht es
+    <strong>26:17</strong> bei einer Mediandifferenz von 0,01. Das ist zu schwach, um es
+    zu deuten; <strong>interpretiert wird nur der monotone Teil bis 80–95 %.</strong></p>
+  </div>
+
+  <div class="finding">
+    <h3>Was diese Zahlen nicht sagen</h3>
+    <p><code>visib_fract</code> <strong>vermischt zwei Dinge</strong>: Verdeckung durch
+    andere Objekte und Abschneiden am Bildrand. Ein halb aus dem Bild ragendes Objekt
+    bekommt denselben niedrigen Wert wie ein verdecktes.</p>
+    <p>Die Auswertung nutzt <strong>GT-Masken und GT-Bounding-Boxen</strong>. Gemessen ist
+    also, was Verdeckung mit Retrieval und Pose macht, <em>wenn der Ausschnitt perfekt
+    ist</em>. In einem echten System käme die Segmentierung als weitere Fehlerquelle dazu
+    — der wahre Effekt wäre eher größer, nicht kleiner.</p>
+    <p>Und der Befund ist <strong>korrelational</strong>. Stark verdeckte Instanzen
+    unterscheiden sich womöglich noch anders als in der Sichtbarkeit; die Kontrolle je
+    Datensatz schließt nur die naheliegendste Alternative aus.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head">
+    <div class="num">→</div>
+    <div><h2>Was daraus folgt</h2></div>
+  </div>
+
+  <div class="finding">
+    <h3>Für die Konfiguration</h3>
+    <p>Es gibt keine einzelne beste Konfiguration — die Wahl hängt von der
+    Aufgabe <em>und</em> davon ab, was die Gallery enthält:</p>
+    <p><strong>Retrieval allein:</strong> cross × full-mesh (R@1 0.5151).
+    <strong>Pose gegen eine reine Proxy-Gallery:</strong> cross × partial
+    (18.37 mm). <strong>Pose mit verwandten CADs aus demselben Datensatz in der Gallery:</strong>
+    cross × full-mesh (13.51 mm). Ohne Geometrie in allen drei Fällen — sie
+    kostet rund 2,0 s je Anfrage (Stage 4, K=5) — mehr als die gesamte übrige Kette
+    ohne Pose — und senkt die Genauigkeit in jeder gemessenen Zelle.</p>
+  </div>
+  <div class="finding">
+    <h3>Für die Geometrie — wann sie sich lohnt, operativ definiert</h3>
+    <p>„Wo das bestehende Ranking schwach ist" ist als Regel unbrauchbar, solange
+    nicht steht, <em>woran</em> man schwach misst. Die aggregierten Retrieval-Zahlen
+    taugen dafür nicht: SHREC (hit@1 0.341) und BOP (R@1 0.482) liegen nicht weit
+    auseinander, und trotzdem hilft Geometrie auf dem einen und schadet auf dem
+    anderen. Die aggregierte Zahl ist schlicht nicht die Größe, die entscheidet.</p>
+    <p><strong>Entscheidend ist, was innerhalb der Shortlist passiert</strong> — denn
+    nur dort greift das Re-Ranking. Es ersetzt die Sortierung der Top-K; alles
+    außerhalb bleibt unberührt. Die passende Größe ist deshalb die <em>bedingte</em>
+    Top-1-Genauigkeit: <strong>wie oft steht das Richtige auf Rang 1, gegeben dass es
+    überhaupt in der Shortlist liegt</strong> — also Top-1 geteilt durch Recall@K.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th></th><th>SHREC'18 · K=50</th><th>BOP 3a cross · K=5</th></tr></thead>
+      <tbody>
+        <tr><td>Treffer in der Shortlist</td><td>0.862</td><td>0.733</td></tr>
+        <tr><td>Treffer auf Rang 1</td><td>0.341</td><td>0.482</td></tr>
+        <tr class="grp"><td colspan="3">bedingte Top-1-Genauigkeit innerhalb der Shortlist</td></tr>
+        <tr><td>der Fusions-Score (Amtsinhaber)</td><td class="ref">0.396</td><td class="ref">0.657</td></tr>
+        <tr><td>die Geometrie (Herausforderer)</td><td class="best">0.548</td><td>0.577</td></tr>
+        <tr><td><strong>Differenz</strong></td>
+          <td><span class="chip up">+15,2 Pp.</span></td>
+          <td><span class="chip down">−8,0 Pp.</span></td></tr>
+        <tr><td>Kopfraum (Recall@K − Top-1)</td><td class="best">0.520</td><td>0.251</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="cap">Beide Spalten identisch berechnet. Geometriesignal jeweils die
+    ausgerichtete Oberflächendistanz (<code>chamfer_ransac</code> bzw.
+    <code>3a_cross_geo_distance</code>). Die absolute Höhe ist zwischen den Spalten
+    <em>nicht</em> vergleichbar — SHREC zählt einen Subkategorie-Treffer, BOP das
+    exakte Zielobjekt. Vergleichbar ist nur die Differenz innerhalb einer Spalte,
+    und die ist die Entscheidungsgröße.</p>
+
+    <div class="finding">
+      <h3>Das Kriterium — vorab prüfbar, ohne die Geometrie zu rechnen</h3>
+      <p><strong>Ein Ranking ist „schwach" genau dann, wenn es innerhalb seiner
+      eigenen Shortlist viel liegen lässt.</strong> Das misst der Kopfraum
+      Recall@K − Top-1: auf SHREC 0.520, auf BOP 0.251. Er ist die Obergrenze
+      dessen, was Re-Ranking überhaupt gewinnen kann — und er kostet nichts, weil
+      beide Zahlen aus dem Retrieval-Lauf ohnehin vorliegen.</p>
+      <p>Warum die aggregierte Zahl täuscht: BOPs R@1 von 0.482 sieht niedrig aus,
+      aber 26,7 % der Instanzen haben das Ziel gar nicht in den Top-5 — dort kann
+      Geometrie nichts reparieren. Rechnet man diese heraus, sortiert der
+      Fusions-Score bereits <strong>zwei von drei</strong> Fällen richtig. Gegen
+      diesen Amtsinhaber verliert die Geometrie mit 0.577. Auf SHREC ist derselbe
+      Amtsinhaber mit 0.396 wirklich schwach, und die Geometrie schlägt ihn deutlich.</p>
+      <p>Der Kopfraum erklärt auch, warum tiefere Shortlists auf SHREC helfen
+      (K=5 → 50 hebt nDCG um +0.038): mehr Tiefe heißt mehr Kopfraum. Auf BOP ist
+      das Gegenteil zu erwarten, und genau deshalb läuft Stage 3 mit K=5.</p>
+    </div>
+  </div>
+  <div class="finding">
+    <h3>Für die Gallery</h3>
+    <p>Die Zerlegung in 3c zeigt, dass die Proxy-Auswahl den Substitutionsfehler
+    verdoppelt. Eine kuratierte oder größere Proxy-Gallery ist der nächste
+    naheliegende Hebel — deutlich wirksamer als weitere Retrieval-Feinarbeit.</p>
+  </div>
+
+  <p class="note">Alle Läufe über dieselben 12 284 BOP-Instanzen mit
+  Ground-Truth-Masken. Fusionsgewichte 0.3 / 0.4 / 0.3 (CLIP / DINOv2 / ULIP-2),
+  42 Views, top-k-softmax mit k=5 und τ=0.5 in beiden View-Kanälen — identisch
+  zu Stage 1 und Stage 2. Geometrie-Shortlist K=5.</p>
+</section>
+
+<footer>
+  Stage 3 · OSCAR+ · Masterarbeit TU Wien · Läufe abgeschlossen 30. August 2026
+</footer>
+
+</div>

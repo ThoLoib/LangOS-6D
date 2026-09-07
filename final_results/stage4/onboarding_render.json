@@ -1,0 +1,228 @@
+{
+  "experiment": "stage4a_onboarding",
+  "base_gallery": "G_proxy (3b) = gso + housecat6d + itodd = 1257",
+  "stages": [
+    "render"
+  ],
+  "view_counts": [
+    16,
+    42
+  ],
+  "n_objects": 5,
+  "provenance": {
+    "timestamp": "2026-09-04T19:39:49+0200",
+    "git_commit": "d2de36a3",
+    "cpu_count": 24
+  },
+  "model_load_once_s": {},
+  "by_views": {
+    "16": {
+      "per_step": {
+        "render": {
+          "n": 5,
+          "median": 14.451586945913732,
+          "mean": 14.390153409400956,
+          "std": 0.2630843499171693,
+          "min": 13.982325833989307,
+          "max": 14.611312074121088,
+          "q25": 14.29465249297209,
+          "q75": 14.610889700008556,
+          "iqr": 0.3162372070364654,
+          "p95": 14.611227599298582,
+          "sum": 71.95076704700477
+        }
+      },
+      "per_object_total_s": {
+        "n": 5,
+        "median": 14.451586945913732,
+        "mean": 14.390153409400956,
+        "std": 0.2630843499171693,
+        "min": 13.982325833989307,
+        "max": 14.611312074121088,
+        "q25": 14.29465249297209,
+        "q75": 14.610889700008556,
+        "iqr": 0.3162372070364654,
+        "p95": 14.611227599298582,
+        "sum": 71.95076704700477
+      }
+    },
+    "42": {
+      "per_step": {
+        "render": {
+          "n": 5,
+          "median": 34.68058949802071,
+          "mean": 34.64250622098334,
+          "std": 0.3191346490828078,
+          "min": 34.191202603979036,
+          "max": 34.9871805771254,
+          "q25": 34.475393117871135,
+          "q75": 34.878165307920426,
+          "iqr": 0.40277219004929066,
+          "p95": 34.9653775232844,
+          "sum": 173.2125311049167
+        }
+      },
+      "per_object_total_s": {
+        "n": 5,
+        "median": 34.68058949802071,
+        "mean": 34.64250622098334,
+        "std": 0.3191346490828078,
+        "min": 34.191202603979036,
+        "max": 34.9871805771254,
+        "q25": 34.475393117871135,
+        "q75": 34.878165307920426,
+        "iqr": 0.40277219004929066,
+        "p95": 34.9653775232844,
+        "sum": 173.2125311049167
+      }
+    }
+  },
+  "records": [
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000001",
+      "num_views": 16,
+      "mesh": "object_database/ycbv/obj_000001/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 17,
+      "timings": {
+        "render": [
+          14.611312074121088
+        ]
+      },
+      "total_s": 14.611312074121088
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000002",
+      "num_views": 16,
+      "mesh": "object_database/ycbv/obj_000002/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 17,
+      "timings": {
+        "render": [
+          14.610889700008556
+        ]
+      },
+      "total_s": 14.610889700008556
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000003",
+      "num_views": 16,
+      "mesh": "object_database/ycbv/obj_000003/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 17,
+      "timings": {
+        "render": [
+          14.451586945913732
+        ]
+      },
+      "total_s": 14.451586945913732
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000004",
+      "num_views": 16,
+      "mesh": "object_database/ycbv/obj_000004/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 17,
+      "timings": {
+        "render": [
+          14.29465249297209
+        ]
+      },
+      "total_s": 14.29465249297209
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000005",
+      "num_views": 16,
+      "mesh": "object_database/ycbv/obj_000005/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 17,
+      "timings": {
+        "render": [
+          13.982325833989307
+        ]
+      },
+      "total_s": 13.982325833989307
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000001",
+      "num_views": 42,
+      "mesh": "object_database/ycbv/obj_000001/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 43,
+      "timings": {
+        "render": [
+          34.878165307920426
+        ]
+      },
+      "total_s": 34.878165307920426
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000002",
+      "num_views": 42,
+      "mesh": "object_database/ycbv/obj_000002/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 43,
+      "timings": {
+        "render": [
+          34.475393117871135
+        ]
+      },
+      "total_s": 34.475393117871135
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000003",
+      "num_views": 42,
+      "mesh": "object_database/ycbv/obj_000003/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 43,
+      "timings": {
+        "render": [
+          34.68058949802071
+        ]
+      },
+      "total_s": 34.68058949802071
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000004",
+      "num_views": 42,
+      "mesh": "object_database/ycbv/obj_000004/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 43,
+      "timings": {
+        "render": [
+          34.9871805771254
+        ]
+      },
+      "total_s": 34.9871805771254
+    },
+    {
+      "dataset": "ycbv",
+      "object_id": "obj_000005",
+      "num_views": 42,
+      "mesh": "object_database/ycbv/obj_000005/textured_simple.obj",
+      "render_rc": 0,
+      "render_views": 43,
+      "timings": {
+        "render": [
+          34.191202603979036
+        ]
+      },
+      "total_s": 34.191202603979036
+    }
+  ],
+  "stage1_quality_ndcg": {
+    "8": 0.5714,
+    "16": 0.582,
+    "32": 0.58,
+    "42": 0.5868
+  }
+}

@@ -1,0 +1,481 @@
+<title>Zeitbudget der Pipeline</title>
+<style>
+/* Vollstaendige helle Palette auf blankem :root -------------------------- */
+:root{
+  --ground:#F7F7F6; --surface:#FFFFFF; --sunken:#EFEFEE;
+  --ink:#17181A; --ink-2:#55585E; --ink-3:#87898F;
+  --rule:#E2E3E5; --rule-2:#CACCCF;
+  --hot:#B5502A;        /* der teure Posten — der einzige laute Ton */
+  --hot-soft:#F7E7E0;
+  --cool:#3F6B7A;       /* alles, was billig ist */
+  --cool-soft:#E4EDF0;
+  --good:#3C6E4A; --good-soft:#E3EFE6;
+  --shadow:0 1px 2px rgba(23,24,26,.05), 0 10px 28px -18px rgba(23,24,26,.3);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131416; --surface:#1B1D20; --sunken:#232629;
+    --ink:#E9EAEC; --ink-2:#AAADB3; --ink-3:#7E8288;
+    --rule:#2B2E32; --rule-2:#3D4147;
+    --hot:#E08055; --hot-soft:#3A211A;
+    --cool:#79ADBE; --cool-soft:#182A31;
+    --good:#79BC8D; --good-soft:#18291D;
+    --shadow:0 1px 2px rgba(0,0,0,.45), 0 10px 28px -18px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131416; --surface:#1B1D20; --sunken:#232629;
+  --ink:#E9EAEC; --ink-2:#AAADB3; --ink-3:#7E8288;
+  --rule:#2B2E32; --rule-2:#3D4147;
+  --hot:#E08055; --hot-soft:#3A211A;
+  --cool:#79ADBE; --cool-soft:#182A31;
+  --good:#79BC8D; --good-soft:#18291D;
+  --shadow:0 1px 2px rgba(0,0,0,.45), 0 10px 28px -18px rgba(0,0,0,.9);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1000px; margin:0 auto; padding:0 24px 88px}
+h1{font-size:clamp(2rem,5vw,2.9rem); line-height:1.05; letter-spacing:-.03em;
+   font-weight:800; margin:0 0 .5rem; text-wrap:balance}
+h2{font-size:clamp(1.2rem,2.4vw,1.5rem); line-height:1.2; letter-spacing:-.02em;
+   font-weight:750; margin:0 0 .3rem; text-wrap:balance}
+h3{font-size:.98rem; font-weight:700; letter-spacing:-.005em; margin:2rem 0 .5rem}
+p{margin:0 0 1rem; max-width:68ch; color:var(--ink-2)}
+strong{color:var(--ink); font-weight:650}
+code{font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+     font-size:.85em; background:var(--sunken); padding:.12em .38em; border-radius:4px}
+.label{font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase;
+       color:var(--ink-3)}
+
+header{padding:68px 0 36px; border-bottom:1px solid var(--rule)}
+.kicker{display:flex; align-items:center; gap:.6rem; margin-bottom:1rem}
+.kicker .bar{width:30px; height:2px; background:var(--hot)}
+.lede{font-size:1.1rem; color:var(--ink-2); max-width:62ch; margin:0}
+.facts{display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule);
+       grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+       border-radius:10px; overflow:hidden; margin-top:2rem}
+.fact{background:var(--surface); padding:14px 16px}
+.fact .label{display:block; margin-bottom:.25rem}
+.stat{font-size:1.3rem; font-weight:750; letter-spacing:-.02em; display:block;
+      font-variant-numeric:tabular-nums; line-height:1.15}
+.fact small{display:block; color:var(--ink-3); font-size:.76rem; margin-top:.15rem}
+
+section{padding-top:52px}
+.head{display:grid; grid-template-columns:38px 1fr; gap:14px; align-items:start; margin-bottom:1.2rem}
+.num{font-family:ui-monospace,Menlo,monospace; font-size:.75rem; font-weight:700;
+     color:var(--hot); background:var(--hot-soft); border-radius:6px;
+     padding:.4rem 0; text-align:center}
+.head p{margin:.35rem 0 0; font-size:.95rem}
+
+/* Dauerbalken — die Laenge IST die Zeit */
+.chart{border:1px solid var(--rule); border-radius:10px; background:var(--surface);
+       box-shadow:var(--shadow); padding:6px 0; margin:1.3rem 0 .5rem; overflow-x:auto}
+.crow{display:grid; grid-template-columns:130px 1fr 78px 1fr 78px; gap:10px;
+      align-items:center; padding:5px 16px; min-width:600px}
+.crow:hover{background:var(--sunken)}
+.crow.hdr{font-size:.66rem; letter-spacing:.11em; text-transform:uppercase;
+          color:var(--ink-3); font-weight:700; padding-top:10px; padding-bottom:8px;
+          border-bottom:1px solid var(--rule)}
+.crow.tot{border-top:1px solid var(--rule-2); font-weight:750; padding-top:9px; margin-top:3px}
+.cname{font-size:.86rem; color:var(--ink); font-weight:520}
+.track{display:block; height:11px; background:var(--sunken); border-radius:2px; position:relative}
+.crow.tot .track{background:none}
+.fill{display:block; height:100%; border-radius:2px; background:var(--cool);
+      width:calc(var(--w)*100%); min-width:1px}
+.fill.hot{background:var(--hot)}
+.val{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.79rem;
+     font-variant-numeric:tabular-nums; text-align:right; color:var(--ink-2)}
+.val.big{color:var(--ink); font-weight:700}
+.cap{font-size:.79rem; color:var(--ink-3); max-width:70ch; margin:.2rem 0 0}
+
+.tbl{overflow-x:auto; border:1px solid var(--rule); border-radius:10px;
+     background:var(--surface); box-shadow:var(--shadow); margin:1.3rem 0 .5rem}
+table{border-collapse:collapse; width:100%; font-size:.86rem}
+th,td{padding:9px 14px; text-align:right; white-space:nowrap}
+th:first-child,td:first-child{text-align:left; white-space:normal}
+thead th{font-size:.66rem; letter-spacing:.09em; text-transform:uppercase; font-weight:700;
+         color:var(--ink-3); background:var(--sunken); border-bottom:1px solid var(--rule-2)}
+tbody td{border-bottom:1px solid var(--rule); font-family:ui-monospace,Menlo,monospace;
+         font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--ink-2)}
+tbody td:first-child{font-family:inherit; font-size:.86rem; color:var(--ink); font-weight:520}
+tbody tr:last-child td{border-bottom:none}
+.best{color:var(--ink); font-weight:700}
+
+.card{border:1px solid var(--rule); border-left:2px solid var(--hot); background:var(--surface);
+      border-radius:0 10px 10px 0; padding:15px 20px; margin:1.4rem 0}
+.card.q{border-left-color:var(--cool)}
+.card h3{margin:0 0 .35rem; font-size:.96rem}
+.card p{margin:0; font-size:.91rem; max-width:70ch}
+.card p+p{margin-top:.65rem}
+.warn{border-left-color:var(--ink-3); background:var(--sunken)}
+footer{margin-top:64px; padding-top:20px; border-top:1px solid var(--rule);
+       font-size:.79rem; color:var(--ink-3)}
+@media (max-width:640px){
+  .head{grid-template-columns:30px 1fr; gap:10px}
+  header{padding-top:44px}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="kicker"><span class="bar"></span><span class="label">Stage 4 · Latenz</span></div>
+  <h1>Zeitbudget der Pipeline</h1>
+  <p class="lede">Stage 1 bis 3 beantworten, <em>wie gut</em>. Diese Messung beantwortet,
+  <em>zu welchem Preis</em> — und wo die Zeit tatsächlich hingeht.</p>
+  <div class="facts">
+    <div class="fact"><span class="label">Anfrage</span><span class="stat">2,18 s</span>
+      <small>16 Views, bis zur Pose</small></div>
+    <div class="fact"><span class="label">Neues CAD</span><span class="stat">23,5 s</span>
+      <small>16 Views, ohne Geometrie</small></div>
+    <div class="fact"><span class="label">Geometrie</span><span class="stat">+1,84 s</span>
+      <small>je Anfrage, K=5</small></div>
+    <div class="fact"><span class="label">Hardware</span><span class="stat">RTX 4090</span>
+      <small>Container + Host</small></div>
+  </div>
+</header>
+
+<section>
+  <div class="head"><div class="num">1</div><div>
+    <h2>Eine Anfrage, Schritt für Schritt</h2>
+    <p>Sprachprompt → Segmentierung → Punktwolke → drei Kanäle → Fusion → Pose.
+    50 Anfragen je View-Zahl auf YCB-V, keine einzige ohne Detektion.</p>
+    <p class="cap" style="margin-top:.5rem"><strong>Gegen welche Gallery?</strong> Dieselbe wie in
+    Stage&nbsp;3a: <strong>1278 Objekte</strong> = 1257 Proxy-CADs aus drei fremden Datensätzen
+    (GSO 1030, HouseCat6D 199, ITODD 28) <em>plus</em> die 21 YCB-V-Ziel-CADs. Die Anfrage sucht
+    also nicht in einem Katalog von 21 Kandidaten, sondern in einem, der zu 98 % aus Objekten
+    besteht, die mit der Szene nichts zu tun haben — der realistische Fall und zugleich der,
+    dessen Zeitverhalten interessiert.</p>
+  </div></div>
+
+  <div class="chart">
+    <div class="crow hdr"><span>Schritt</span><span>16 Views</span><span></span>
+      <span>42 Views</span><span></span></div>
+    <div class="crow"><span class="cname">io_load</span>
+      <span class="track"><span class="fill" style="--w:.006"></span></span><span class="val">8,8 ms</span>
+      <span class="track"><span class="fill" style="--w:.011"></span></span><span class="val">17,1 ms</span></div>
+    <div class="crow"><span class="cname">segment</span>
+      <span class="track"><span class="fill" style="--w:.155"></span></span><span class="val">230,6 ms</span>
+      <span class="track"><span class="fill" style="--w:.163"></span></span><span class="val">242,1 ms</span></div>
+    <div class="crow"><span class="cname">pointcloud</span>
+      <span class="track"><span class="fill" style="--w:.001"></span></span><span class="val">1,3 ms</span>
+      <span class="track"><span class="fill" style="--w:.001"></span></span><span class="val">1,3 ms</span></div>
+    <div class="crow"><span class="cname">encode_query</span>
+      <span class="track"><span class="fill" style="--w:.025"></span></span><span class="val">37,6 ms</span>
+      <span class="track"><span class="fill" style="--w:.025"></span></span><span class="val">37,8 ms</span></div>
+    <div class="crow"><span class="cname">clip</span>
+      <span class="track"><span class="fill" style="--w:.013"></span></span><span class="val">19,8 ms</span>
+      <span class="track"><span class="fill" style="--w:.013"></span></span><span class="val">18,7 ms</span></div>
+    <div class="crow"><span class="cname">dino</span>
+      <span class="track"><span class="fill" style="--w:.199"></span></span><span class="val">296,3 ms</span>
+      <span class="track"><span class="fill" style="--w:.378"></span></span><span class="val big">561,8 ms</span></div>
+    <div class="crow"><span class="cname">ulip</span>
+      <span class="track"><span class="fill" style="--w:.119"></span></span><span class="val">176,7 ms</span>
+      <span class="track"><span class="fill" style="--w:.148"></span></span><span class="val">219,4 ms</span></div>
+    <div class="crow"><span class="cname">fusion</span>
+      <span class="track"><span class="fill" style="--w:.008"></span></span><span class="val">12,0 ms</span>
+      <span class="track"><span class="fill" style="--w:.008"></span></span><span class="val">12,0 ms</span></div>
+    <div class="crow"><span class="cname">pose</span>
+      <span class="track"><span class="fill hot" style="--w:.943"></span></span><span class="val big">1402 ms</span>
+      <span class="track"><span class="fill hot" style="--w:1"></span></span><span class="val big">1487 ms</span></div>
+    <div class="crow tot"><span class="cname">Ende zu Ende</span>
+      <span class="track"><span class="fill" style="--w:0"></span></span><span class="val big">2,184 s</span>
+      <span class="track"><span class="fill" style="--w:0"></span></span><span class="val big">2,602 s</span></div>
+    <div class="crow"><span class="cname" style="color:var(--hot)">+ Geometrie (K=5)</span>
+      <span class="track"><span class="fill hot" style="--w:0"></span></span><span class="val">—</span>
+      <span class="track"><span class="fill hot" style="--w:1"></span></span><span class="val big">1840 ms</span></div>
+  </div>
+  <p class="cap">Balkenlänge proportional zur Zeit, gemeinsame Skala über beide Spalten.
+  Kaltstart einmalig: Gallery 8,0 s + GroundingDINO/SAM 4,6 s — nicht Teil der Anfrage.</p>
+
+  <div class="card">
+    <h3>Die Pose ist der Flaschenhals, nicht das Retrieval</h3>
+    <p>FoundationPose macht <strong>64 %</strong> der Anfrage aus (57 % bei 42 Views) und ist
+    zugleich der unruhigste Schritt — p95 bis 4,5 s gegenüber 2,2 s im Median. Das ist die
+    Hypothesenverfeinerung, kein Messrauschen. Das gesamte Retrieval über 1278 Objekte
+    kostet weniger als 0,8 s.</p>
+    <p><strong>Nur DINOv2 skaliert mit der View-Zahl</strong> (296 → 562 ms). Alles andere ist
+    konstant: Segmentierung, Punktwolke, CLIP, Fusion und die Pose hängen nicht daran, wie
+    viele Ansichten je Gallery-Objekt gespeichert sind.</p>
+  </div>
+
+  <div class="card">
+    <h3>Geometrisches Re-Ranking verdoppelt die Anfrage</h3>
+    <p>1,84 s für fünf Kandidaten — mehr als die gesamte übrige Kette ohne Pose (≈1,05 s).
+    Zusammen mit Stage 3, wo Geometrie die Genauigkeit in allen vier gemessenen Zellen senkt,
+    ist der Fall entschieden: <strong>der teuerste Schritt ist zugleich der einzige, der
+    schadet.</strong></p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><div class="num">2</div><div>
+    <h2>Ein neues Objekt aufnehmen</h2>
+    <p>Vom CAD-File zur auffindbaren Gallery: Mesh vorbereiten, rendern, Teilwolken erzeugen,
+    beschreiben, encodieren, Cache schreiben. Gemessen über alle 59 Ziel-CADs.</p>
+  </div></div>
+
+  <div class="chart">
+    <div class="crow hdr"><span>Stufe</span><span>16 Views</span><span></span>
+      <span>42 Views</span><span></span></div>
+    <div class="crow"><span class="cname">render (Blender)</span>
+      <span class="track"><span class="fill hot" style="--w:0.4146"></span></span><span class="val big">10,75 s</span>
+      <span class="track"><span class="fill hot" style="--w:1"></span></span><span class="val big">25,93 s</span></div>
+    <div class="crow"><span class="cname">describe (LLaVA)</span>
+      <span class="track"><span class="fill hot" style="--w:0.3953"></span></span><span class="val big">10,25 s</span>
+      <span class="track"><span class="fill hot" style="--w:0.5044"></span></span><span class="val big">13,08 s</span></div>
+    <div class="crow"><span class="cname">partial (HPR)</span>
+      <span class="track"><span class="fill" style="--w:0.0521"></span></span><span class="val">1,35 s</span>
+      <span class="track"><span class="fill" style="--w:0.1064"></span></span><span class="val">2,76 s</span></div>
+    <div class="crow"><span class="cname">embed_ulip</span>
+      <span class="track"><span class="fill" style="--w:0.0228"></span></span><span class="val">0,59 s</span>
+      <span class="track"><span class="fill" style="--w:0.0598"></span></span><span class="val">1,55 s</span></div>
+    <div class="crow"><span class="cname">embed_dino</span>
+      <span class="track"><span class="fill" style="--w:0.0046"></span></span><span class="val">0,12 s</span>
+      <span class="track"><span class="fill" style="--w:0.0112"></span></span><span class="val">0,29 s</span></div>
+    <div class="crow"><span class="cname">embed_clip</span>
+      <span class="track"><span class="fill" style="--w:.0002"></span></span><span class="val">4,6 ms</span>
+      <span class="track"><span class="fill" style="--w:.0002"></span></span><span class="val">4,7 ms</span></div>
+    <div class="crow"><span class="cname">mesh</span>
+      <span class="track"><span class="fill" style="--w:0.0046"></span></span><span class="val">0,12 s</span>
+      <span class="track"><span class="fill" style="--w:.003"></span></span><span class="val">0,10 s</span></div>
+    <div class="crow"><span class="cname">cache laden + schreiben</span>
+      <span class="track"><span class="fill" style="--w:.006"></span></span><span class="val">0,22 s</span>
+      <span class="track"><span class="fill" style="--w:.007"></span></span><span class="val">0,23 s</span></div>
+    <div class="crow tot"><span class="cname">Summe</span>
+      <span class="track"><span class="fill" style="--w:0"></span></span><span class="val big">23,49 s</span>
+      <span class="track"><span class="fill" style="--w:0"></span></span><span class="val big">44,13 s</span></div>
+    <div class="crow"><span class="cname" style="color:var(--hot)">+ dGeDi-Deskriptoren</span>
+      <span class="track"><span class="fill hot" style="--w:0.4358"></span></span><span class="val">11,30 s</span>
+      <span class="track"><span class="fill hot" style="--w:0.3938"></span></span><span class="val">10,21 s</span></div>
+  </div>
+  <p class="cap"><strong>Vollerhebung über alle 59 CADs</strong> für sieben der acht Stufen
+  (nachgezogen am 2026-09-07); nur die dGeDi-Deskriptoren ruhen noch auf 3 Objekten. Render und
+  dGeDi laufen auf dem Host, der Rest im Container. IQR der Render-Stufe: 3,46 s bei 16 Views,
+  8,61 s bei 42.</p>
+
+  <div class="card">
+    <h3>Rendern und Beschreiben sind 89 % — das Encodieren 3 %</h3>
+    <p>Die Intuition sagt, das Teure seien die neuronalen Encoder. Gemessen ist das Gegenteil:
+    DINOv2, CLIP-Text und ULIP-2 kosten zusammen <strong>0,71 s</strong> bei 16 Views. Blender
+    und LLaVA brauchen <strong>21,0 s</strong> — das 30-Fache.</p>
+    <p>Zwei Posten skalieren gar nicht mit der View-Zahl. <strong>CLIP-Text</strong> nicht, weil
+    16 oder 42 kurze Strings in einem Batch durch den Textencoder gehen. <strong>Der
+    Cache-Schreibvorgang</strong> nicht, weil er an der Gallery-Größe hängt, nicht am neuen
+    Objekt. Wer Views spart, spart beim Encoding — nicht beim Cache.</p>
+  </div>
+
+  <div class="card">
+    <h3>Die Geometrie kostet an zwei Stellen</h3>
+    <p>Beim Onboarding <strong>einmalig 10,5 s</strong> je Objekt für die dGeDi-Gallery-Deskriptoren —
+    view-unabhängig, weil sie aus einer einzigen Punktwolke von 10 000 Punkten entstehen.
+    Bei jeder Anfrage nochmals <strong>1,84 s</strong>, weil der Deskriptor der Anfrage-Wolke
+    jedes Mal neu berechnet wird.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><div class="num">3</div><div>
+    <h2>Der Handel: 16 gegen 42 Ansichten</h2>
+    <p>Stage 1 misst die Qualitätsseite, und sie läuft ab 16 Ansichten flach — V32 liegt mit
+    0.5800 sogar unter V16.</p>
+  </div></div>
+
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>16 Views</th><th>42 Views</th><th>Kosten</th><th>nDCG (Stage 1)</th></tr></thead>
+    <tbody>
+      <tr><td>Onboarding je CAD</td><td class="best">23,49 s</td><td>44,13 s</td>
+        <td class="best">53 %</td><td>0.5820 vs 0.5868</td></tr>
+      <tr><td>Anfrage, nur Retrieval</td><td class="best">0,78 s</td><td>1,12 s</td>
+        <td>70 %</td><td></td></tr>
+      <tr><td>Anfrage, Ende zu Ende</td><td>2,18 s</td><td>2,60 s</td>
+        <td>84 %</td><td></td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="card q">
+    <h3>Der Hebel liegt beim Onboarding, nicht bei der Anfrage</h3>
+    <p>Ein neues Objekt kostet bei 16 Ansichten <strong>die Hälfte</strong> — für 0,005 nDCG.
+    Auf der Anfrageseite schrumpft der Vorteil auf 16 %, weil die konstante Pose-Zeit ihn
+    verdünnt. Wer eine große Gallery aufbauen will, spart bei den Views erheblich; wer eine
+    bestehende schneller abfragen will, kaum.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><div class="num">4</div><div>
+    <h2>Inkrementell gegen Invalidierung</h2>
+    <p>Der Cache-Schlüssel ist ein Fingerprint über das gesamte Inventar — je Objekt je
+    Ansicht eine Zeile. Ein neues Objekt ändert den Hash und entwertet alles.</p>
+  </div></div>
+
+  <div class="tbl"><table>
+    <thead><tr><th>Was</th><th>Dauer</th><th>Ordnung</th></tr></thead>
+    <tbody>
+      <tr><td>Ein Objekt aufnehmen (42 Views)</td><td class="best">44,13 s</td><td>O(1)</td></tr>
+      <tr><td>&nbsp;&nbsp;davon Eintrag einfügen</td><td>0,1 ms</td><td>O(1)</td></tr>
+      <tr><td>&nbsp;&nbsp;davon Cache laden + schreiben</td><td>0,23 s</td><td>O(Gallery)</td></tr>
+      <tr><td>Was der Fingerprint erzwingt</td><td class="best">34,7 min</td><td>O(Gallery)</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">Invalidierung hochgerechnet aus 1,657 s je Objekt × 1257 Gallery-Objekte,
+  gemessen am Encoden echter Gallery-Objekte ohne Cache.</p>
+
+  <div class="card">
+    <h3>Selbst ein anhängender Cache zahlt für die ganze Gallery</h3>
+    <p>Das Einfügen eines Eintrags ist mit 0,1 ms echtes O(1). Laden und Zurückschreiben der
+    Datei sind zusammen 0,23 s — und O(Gallery), weil der Cache eine einzige monolithische
+    <code>.pt</code>-Datei ist. Der Unterschied zum heutigen Zustand ist trotzdem gewaltig:
+    <strong>44 Sekunden gegen 35 Minuten</strong>, Faktor 47. Nur eben Serialisierung statt
+    Encoding.</p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><div class="num">5</div><div>
+    <h2>Partielle Wolken oder Full-Mesh — was kostet die Repräsentation?</h2>
+    <p>Der Shape-Kanal kann die Gallery auf zwei Arten vorhalten: N Teilwolken je Objekt
+    oder eine einzige Abtastung des vollständigen Meshes. Stage 1 und 2 entscheiden das
+    nach Qualität — hier steht, was es an Zeit kostet.</p>
+  </div></div>
+
+  <h3>Onboarding: 8 bis 10 %</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Stufe (Median je CAD, n=59)</th><th>16 V</th><th>42 V</th></tr></thead>
+    <tbody>
+      <tr><td><code>partial</code> (HPR) entfällt</td><td>−1,35 s</td><td>−2,76 s</td></tr>
+      <tr><td><code>embed_ulip</code>: N Encodes → einer</td><td>−0,55 s</td><td>−1,51 s</td></tr>
+      <tr><td><code>io_load_clouds</code> entfällt</td><td>−0,03 s</td><td>−0,03 s</td></tr>
+      <tr><td><code>mesh_sample</code> kommt hinzu</td><td>+0,09 s</td><td>+0,08 s</td></tr>
+      <tr class="tot"><td><strong>zurechenbar</strong></td><td class="best">−1,84 s</td><td class="best">−4,22 s</td></tr>
+      <tr><td>gemessene Summe</td><td>23,49 → 21,65 s</td><td>44,13 → 39,91 s</td></tr>
+      <tr><td>Anteil</td><td class="best">−7,8 %</td><td class="best">−9,6 %</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">Bei 42 Views war die <em>beobachtete</em> Differenz mit −5,57 s größer als die
+  zurechenbare. Der Rest sind 1,33 s bei <code>describe</code> — ein Schritt, der sich zwischen
+  den Konfigurationen gar nicht unterscheiden kann (LLaVA über dieselben Renderings). Das ist
+  Lauf-zu-Lauf-Streuung, keine Wirkung; berichtet wird die zurechenbare Zahl.</p>
+
+  <h3>Anfrage: 18 % des Retrievals — aber fast alles davon ist Implementierung</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Median je Anfrage (n=50)</th><th>partial</th><th>full-mesh</th><th>Δ</th></tr></thead>
+    <tbody>
+      <tr><td><code>ulip</code>, 16 Views</td><td>176,7 ms</td><td class="best">38,3 ms</td><td>−138,4 ms</td></tr>
+      <tr><td><code>ulip</code>, 42 Views</td><td>219,4 ms</td><td class="best">38,1 ms</td><td>−181,3 ms</td></tr>
+      <tr><td>Anfrage ohne Pose, 16 V</td><td>783 ms</td><td>641 ms</td><td>−18,2 %</td></tr>
+      <tr><td>Anfrage ohne Pose, 42 V</td><td>1110 ms</td><td>902 ms</td><td>−18,7 %</td></tr>
+      <tr><td>Anfrage mit Pose, 16 V</td><td>2185 ms</td><td>2043 ms</td><td>−6,5 %</td></tr>
+      <tr><td>Anfrage mit Pose, 42 V</td><td>2597 ms</td><td>2389 ms</td><td>−8,0 %</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">Der Full-Mesh-Wert ist <strong>view-unabhängig</strong> (38,3 gegen 38,1 ms) —
+  erwartungsgemäß, denn dort liegt je Objekt genau ein Embedding, egal aus wie vielen Ansichten
+  es einmal gebaut wurde.</p>
+
+  <div class="card warn">
+    <h3>Diese Zahl darf man nicht als Eigenschaft der Repräsentation lesen</h3>
+    <p>Die beiden Zweige sind <strong>unterschiedlich implementiert</strong>. Full-Mesh stapelt
+    die Gallery einmal und rechnet ein Matrixprodukt
+    (<code>step5_shape_matching.py:1513</code>); Partial iteriert in Python über alle 1278
+    Objekte und schiebt jedes einzeln auf die GPU (<code>:1490</code>).</p>
+    <p><strong>Die Rechnung ist nicht der Kostentreiber.</strong> Partial braucht 42-mal mehr
+    Skalarprodukte — 6,9·10⁷ statt 1,6·10⁶ MACs. Das sind auf dieser Karte rund
+    <strong>3 Mikrosekunden</strong> Unterschied. Gemessen sind <strong>138 Millisekunden</strong>,
+    also 0,108 ms je Gallery-Objekt: das ist der Aufwand für Kernel-Start und Datentransfer je
+    Schleifendurchlauf, nicht für Arithmetik.</p>
+    <p><strong>Richtig gelesen heißt der Befund also:</strong> die partielle Repräsentation ist
+    inhärent kaum teurer, aber <em>so wie sie heute gebaut ist</em> kostet sie 138–181 ms je
+    Anfrage. Ein vektorisierter Partial-Pfad läge nahe bei den 38 ms. Die Zahl gehört ins
+    Latenzbudget als Eigenschaft <em>dieses Systems</em> — nicht in eine Begründung dafür,
+    welche Repräsentation man wählen sollte.</p>
+  </div>
+
+  <div class="card q">
+    <h3>Die Wahl ist eine Qualitätsfrage, keine Zeitfrage</h3>
+    <p>Onboarding 8–10 %, Anfrage 6–8 % mit Pose — und das Meiste davon behebbar. Dem stehen
+    Qualitätsunterschiede gegenüber, die je Stage <em>in verschiedene Richtungen</em> zeigen:
+    Stage 1 im pc-Modus fusioniert für Full-Mesh (0.5935 gegen 0.5868 nDCG), Stage 2 im
+    cross-Modus fusioniert für Partial (NN 88,44 gegen 86,57). <strong>Wer nach Laufzeit
+    entscheidet, entscheidet nach der kleineren Größe.</strong></p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><div class="num">6</div><div>
+    <h2>Wie gemessen wurde</h2>
+  </div></div>
+
+  <h3>Was genau gestoppt wird</h3>
+  <p>Es wird <strong>kein Benchmark-Nachbau</strong> gemessen, sondern der Pfad, den die Pipeline
+  ohnehin nimmt. Das Messskript ruft <code>run_query</code> bzw. die Onboarding-Stufen genau so
+  auf, wie Stage 1–3 sie aufrufen; die Einzelschritte werden sichtbar, indem das Skript die
+  betreffenden Methoden <em>umhüllt</em> — die von allen Stages geteilten Module bleiben
+  unverändert. Eine eigens für die Messung geschriebene Variante würde etwas anderes messen als
+  das, was läuft.</p>
+  <p><strong>Synchronisiert.</strong> CUDA-Kernel laufen asynchron. Jede Messung wartet vor und
+  nach dem Schritt auf die GPU (<code>torch.cuda.synchronize()</code>), sonst misst man die Zeit
+  bis zum <em>Einreihen</em> des Kernels, nicht bis zum Fertigwerden — und alle GPU-Kosten
+  rutschen in den nächsten Schritt, der zufällig synchronisiert.</p>
+  <p><strong>Die Statistik läuft über Objekte, nicht über Aufrufe.</strong> Ruft ein Schritt
+  innerhalb eines Objekts mehrfach dieselbe Funktion (etwa der Encoder je Batch), werden diese
+  Zeiten <em>vor</em> der Aggregation summiert. Sonst hätte ein Objekt mit vielen kleinen
+  Aufrufen mehr Gewicht als eines mit wenigen großen.</p>
+  <p><strong>Median, IQR und p95</strong> statt Mittelwert und Standardabweichung — Latenzen sind
+  rechtsschief, ein einzelner Ausreißer verschiebt den Mittelwert und sagt nichts über den
+  typischen Fall. p95 steht daneben, weil für ein interaktives System der schlechte Fall zählt.</p>
+  <p><strong>Kalt und warm getrennt.</strong> Modelle und Gallery einmal zu laden kostet ein
+  Vielfaches einer Anfrage (8,0 s Gallery + 4,6 s GroundingDINO/SAM). Eine gemischte Zahl sagt
+  nur, über wie viele Anfragen gemittelt wurde.</p>
+  <p><strong>Das Anhängen ist echt gemessen</strong>, nicht simuliert: bestehenden Cache laden,
+  einen Eintrag einfügen, zurückschreiben.</p>
+
+  <h3>Wie groß die Stichproben sind — und wo das trägt</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Bereich</th><th>n</th><th>Was das ist</th></tr></thead>
+    <tbody>
+      <tr><td>Anfrage, je View-Zahl</td><td class="best">50</td><td>Stichprobe aus den YCB-V-Testzielen</td></tr>
+      <tr><td>Onboarding, 7 von 8 Stufen <em>(inkl. <code>render</code>)</em></td><td class="best">59</td><td><strong>Vollerhebung</strong> — alle Ziel-CADs, keine Stichprobe</td></tr>
+      <tr><td>Onboarding, <code>dgedi</code></td><td>3</td><td>Stichprobe</td></tr>
+      <tr><td>Geometrie je Anfrage</td><td>25 / 12</td><td>zwei unabhängige Läufe</td></tr>
+    </tbody>
+  </table></div>
+  <div class="card warn">
+    <h3>Wo die Messung hält — und was die Nachmessung ergeben hat</h3>
+    <p><strong>Für sieben der acht Onboarding-Stufen ist es keine Stichprobe, sondern eine
+    Vollerhebung</strong> über alle 59 Ziel-CADs; dort ist die Frage nach der Stichprobengröße
+    gegenstandslos. Auch die Anfrageseite mit n=50 je View-Zahl ist ausreichend belegt.</p>
+    <p><strong>Die Render-Stufe lag bis zum 2026-09-07 bei n=5 — und war um 25 % zu hoch.</strong>
+    Die Vollerhebung ergibt <strong>10,75 s</strong> statt 14,45 s (16 Views) und <strong>25,93 s</strong>
+    statt 34,68 s (42 Views). Der Grund ist kein Zufall: <code>--max-objects 5</code> nimmt die
+    <em>ersten fünf</em> Meshes in Sortierreihenfolge, nicht eine Zufallsstichprobe — und die lagen
+    geschlossen am oberen Rand. Der alte Median (14,45 s) trifft exakt das <strong>Maximum</strong>
+    über alle 59 CADs. Ebenso irreführend war die scheinbare Präzision: der IQR der fünf lag bei
+    0,32 s, der wahre liegt bei <strong>3,46 s</strong> — mehr als das Zehnfache.</p>
+    <p><strong>Was sich dadurch ändert und was nicht.</strong> Die Onboarding-Summe sinkt von
+    27,18 auf <strong>23,49 s</strong> (16 Views) und von 52,97 auf <strong>44,13 s</strong> (42).
+    Alle Schlussfolgerungen des Kapitels bleiben: Rendern und Beschreiben sind weiterhin 89 %,
+    das Encoding 3 %, und 16 Views kosten weiterhin gut die Hälfte von 42 (53 % statt 51 %). Die
+    Größenordnungen trugen — die absoluten Zahlen taten es nicht.</p>
+    <p><strong>Die Geometriezahl ist die reproduzierte.</strong> Eine erste Messung ergab 5,45 s
+    und reproduziert nicht — zwei spätere Läufe liefern 1,84 s (n=25) und 2,07 s (n=12, dieselbe
+    Stichprobengröße wie die erste). Dazwischen wurde der dGeDi-Dienst zweimal neu gestartet;
+    das ist eine Vermutung, keine Erklärung. Berichtet wird der reproduzierte Wert.</p>
+    <p><strong>Offen bleiben zwei Dinge:</strong> die dGeDi-Onboarding-Stufe ruht weiter auf n=3, und
+    gemessen wurde auf der Anfrageseite nur YCB-V. Ob die Segmentierung auf texturlosen Objekten
+    (T-LESS, ITODD) teurer wird, ist damit unbeantwortet — die einzige Lücke, die eine
+    <em>inhaltliche</em> Aussage betrifft und nicht nur eine Fehlerschranke.</p>
+  </div>
+</section>
+
+<footer>
+  Stage 4 · OSCAR+ · Masterarbeit TU Wien · RTX 4090 · gemessen 4. September 2026 ·
+  <code>scripts/stage4_onboarding.sh</code> und <code>scripts/stage4_query.sh</code>
+</footer>
+
+</div>

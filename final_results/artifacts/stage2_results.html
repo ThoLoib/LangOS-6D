@@ -1,0 +1,554 @@
+<title>Stage-2 Ergebnisse</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#F5F6F9; --surface:#FFFFFF; --surface-2:#EDEFF5;
+    --ink:#1A1D26; --ink-soft:#39404D; --muted:#616A7A; --border:#E0E4EC;
+    --accent:#2B5578; --accent-2:#1C3D59; --accent-soft:#E3EBF2;
+    --amber:#8F5600; --amber-soft:#F8EAD6; --green:#256B45; --green-soft:#DDEFE4;
+    --red:#A6392F; --red-soft:#F5E1DE;
+    --text-c:#7C5295; --view-c:#1F6B74; --shape-c:#B0632A;
+    --shadow:0 1px 2px rgba(20,30,40,.05),0 6px 18px rgba(20,30,40,.06);
+    --serif:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:"SF Mono","JetBrains Mono","Fira Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#101319; --surface:#181C24; --surface-2:#1E232C;
+      --ink:#E6EAF0; --ink-soft:#C2C9D3; --muted:#8D96A5; --border:#293039;
+      --accent:#7FAAD0; --accent-2:#A6C6E2; --accent-soft:#182533;
+      --amber:#DBA35C; --amber-soft:#2A2216; --green:#6FC495; --green-soft:#16261D;
+      --red:#E58B80; --red-soft:#2A1A18;
+      --text-c:#B693CE; --view-c:#5EB4BE; --shape-c:#DFA06A;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 22px rgba(0,0,0,.38);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#101319; --surface:#181C24; --surface-2:#1E232C;
+    --ink:#E6EAF0; --ink-soft:#C2C9D3; --muted:#8D96A5; --border:#293039;
+    --accent:#7FAAD0; --accent-2:#A6C6E2; --accent-soft:#182533;
+    --amber:#DBA35C; --amber-soft:#2A2216; --green:#6FC495; --green-soft:#16261D;
+    --red:#E58B80; --red-soft:#2A1A18;
+    --text-c:#B693CE; --view-c:#5EB4BE; --shape-c:#DFA06A;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 22px rgba(0,0,0,.38);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+  header.top{border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--accent-soft),transparent)}
+  .top-inner{padding:44px 0 30px}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 14px;font-weight:600}
+  h1.title{font-family:var(--serif);font-weight:700;line-height:1.08;text-wrap:balance;font-size:clamp(2rem,4.6vw,3rem);margin:0 0 12px;letter-spacing:-.01em}
+  .lede{font-size:1.08rem;color:var(--ink-soft);max-width:66ch;margin:0 0 20px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:.86rem;color:var(--muted)}
+  .meta .mono{font-family:var(--mono);font-size:.8rem}
+  article{min-width:0}
+  section{scroll-margin-top:20px;margin:0 0 8px;padding:26px 0}
+  section+section{border-top:1px solid var(--border)}
+  h2{font-family:var(--serif);font-weight:700;font-size:1.62rem;letter-spacing:-.01em;margin:0 0 8px;line-height:1.15;text-wrap:balance;display:flex;gap:.5em;align-items:baseline}
+  h2 .sec-n{font-family:var(--mono);font-size:.82rem;font-weight:600;color:var(--accent);flex:none}
+  h3{font-family:var(--serif);font-weight:700;font-size:1.16rem;margin:26px 0 8px}
+  h4{font-family:var(--serif);font-weight:700;font-size:1rem;margin:24px 0 4px}
+  p{margin:0 0 14px;max-width:74ch}
+  strong{color:var(--ink);font-weight:700}
+  code,.mono{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:.1em .38em;border-radius:5px;color:var(--ink-soft)}
+  ul,ol{margin:0 0 14px;padding-left:1.2em;max-width:74ch}
+  li{margin:.3em 0} li::marker{color:var(--accent)}
+  .layout{display:grid;grid-template-columns:222px minmax(0,1fr);gap:52px;align-items:start;padding:40px 0 80px}
+  nav.toc{position:sticky;top:20px;font-size:.85rem}
+  nav.toc .toc-h{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+  nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 10px;border-radius:7px;border-left:2px solid transparent;line-height:1.35}
+  nav.toc a .n{font-family:var(--mono);font-size:.78em;color:var(--accent);margin-right:.5em}
+  nav.toc a:hover{color:var(--ink);background:var(--surface-2)}
+  nav.toc a.active{color:var(--ink);background:var(--accent-soft);border-left-color:var(--accent);font-weight:600}
+  .theme-btn{margin-top:22px;font-family:var(--mono);font-size:.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;width:100%;text-align:left}
+  .theme-btn:hover{color:var(--ink);border-color:var(--accent)}
+  .tbl{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;font-variant-numeric:tabular-nums}
+  caption{caption-side:top;text-align:left;font-size:.82rem;color:var(--muted);padding:12px 14px 0;font-style:italic}
+  th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+  thead th{background:var(--accent-soft);color:var(--accent-2);font-weight:700;font-size:.78rem;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--surface-2)}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-size:.85rem}
+  .best td{background:color-mix(in srgb,var(--accent-soft) 60%,var(--surface));font-weight:600}
+  .best td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+  .dim td{color:var(--muted)}
+  .call{border-radius:11px;padding:18px 20px;margin:20px 0;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow)}
+  .call .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;margin:0 0 8px;display:block}
+  .call p:last-child{margin-bottom:0}
+  .call.key{border-left:3px solid var(--accent);background:linear-gradient(100deg,var(--accent-soft),var(--surface) 60%)}
+  .call.key .k{color:var(--accent)}
+  .call.warn{border-left:3px solid var(--amber);background:linear-gradient(100deg,var(--amber-soft),var(--surface) 70%)}
+  .call.warn .k{color:var(--amber)}
+  .tldr{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;box-shadow:var(--shadow)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.82rem;color:var(--muted);margin:6px 0 14px;align-items:center}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:.4em;vertical-align:-1px}
+  .ramp{display:inline-block;width:118px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:.4em}
+  /* shortlist schematic */
+  .slist{display:grid;gap:3px;margin:16px 0 6px}
+  .srow{display:grid;grid-template-columns:132px 1fr;gap:12px;align-items:center;font-size:.83rem}
+  .slab{text-align:right;color:var(--ink-soft);font-weight:600}
+  .sbar{display:flex;height:22px;border-radius:4px;overflow:hidden;border:1px solid var(--border)}
+  .sseg{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.68rem;color:#fff;white-space:nowrap;overflow:hidden}
+  .s-re{background:var(--accent)} .s-clip{background:var(--surface-2);color:var(--muted)}
+  /* ternary */
+  figure.tri{margin:0;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:12px 12px 6px;box-shadow:var(--shadow);max-width:640px}
+  figure.tri figcaption{font-family:var(--mono);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+  figure.tri canvas{width:100%;height:auto;display:block}
+  /* category bars */
+  .catgrid{display:grid;gap:7px;margin:18px 0}
+  .catrow{display:grid;grid-template-columns:96px 1fr 34px;gap:10px;align-items:center;font-size:.84rem}
+  .catname{font-weight:600;text-align:right;color:var(--ink-soft)}
+  .bars{display:grid;gap:2px}
+  .bar{height:8px;border-radius:2px;min-width:1px}
+  .bar.t{background:var(--text-c)} .bar.v{background:var(--view-c)} .bar.s{background:var(--shape-c)}
+  .bar.f{background:var(--accent);height:10px}
+  .catn{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+  .foot{color:var(--muted);font-size:.84rem;border-top:1px solid var(--border);padding:26px 0 60px;max-width:78ch}
+  @media (max-width:900px){
+    .layout{grid-template-columns:1fr;gap:0;padding:24px 0 60px}
+    nav.toc{position:static;margin-bottom:26px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    nav.toc .toc-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+    .catrow{grid-template-columns:80px 1fr 30px}
+    .srow{grid-template-columns:96px 1fr}
+  }
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <p class="eyebrow">OSCAR+ · Stage 2 · MI3DOR</p>
+    <h1 class="title">Stage-2 Ergebnisse</h1>
+    <p class="lede">Der Transfertest ohne Tiefe: dieselbe Pipeline, aber die Query ist ein monokulares Bild. Was das den Shape-Kanal kostet, warum ausgerechnet der schwächere Kanal die Fusion am meisten hebt — und warum die OSCAR-Kaskade den Kopf der Liste verbessert, ohne die Liste zu verbessern.</p>
+    <div class="meta">
+      <span class="mono">2026-09-07</span><span>·</span>
+      <span class="mono">cross · 42 Views · k=5 · w=(0.3,&nbsp;0.4,&nbsp;0.3)</span><span>·</span>
+      <span>10.500 Queries / 3.848 CADs / 21 Kategorien</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="layout">
+    <nav class="toc" aria-label="Inhalt">
+      <p class="toc-h">Inhalt</p>
+      <div class="toc-grid">
+        <a href="#s0"><span class="n">0</span>Konfiguration</a>
+        <a href="#sm"><span class="n">0</span>Metriken</a>
+        <a href="#s1"><span class="n">1</span>Die sieben Arme</a>
+        <a href="#s2"><span class="n">2</span>Gewichtskarte</a>
+        <a href="#s3"><span class="n">3</span>Partial vs. Full-Mesh</a>
+        <a href="#s4"><span class="n">4</span>OSCAR-Legacy (V=8)</a>
+        <a href="#s5"><span class="n">5</span>Kategorien</a>
+        <a href="#s6"><span class="n">6</span>Diskussion</a>
+      </div>
+      <button class="theme-btn" id="themeToggle" type="button">◐ Theme</button>
+    </nav>
+
+    <article>
+      <section id="s0">
+        <h2><span class="sec-n">§0</span>Konfiguration</h2>
+        <div class="tbl"><table>
+          <thead><tr><th>Komponente</th><th>Wert</th></tr></thead>
+          <tbody>
+            <tr><td><strong>S_text</strong></td><td>CLIP ViT-B/32, Query-Bild gegen Per-View-Beschreibungen, max über Views</td></tr>
+            <tr><td><strong>S_view</strong></td><td>DINOv2-base, <strong>mean</strong>-Pooling, <strong>42 Views</strong>, top-k-softmax k=5, τ=0.5</td></tr>
+            <tr><td><strong>S_shape</strong></td><td>ULIP-2 coloured (1280-d), <strong>cross-Modus</strong> (Query-<strong>Bild</strong> über den OpenCLIP-ViT-bigG-Turm), Gallery-Repräsentation <strong>partial</strong> (beste) bzw. <strong>full-mesh</strong> — beide gemessen, §3</td></tr>
+            <tr><td><strong>Fusion</strong></td><td>Weighted Sum, w = <strong>(0.3, 0.4, 0.3)</strong>, volle Datenbank (alle 3848 CADs)</td></tr>
+            <tr><td>Kaskaden-Arme</td><td>CLIP-Schwellwert <strong>τ = 0.37</strong>, Top-20-Fallback</td></tr>
+            <tr><td>Geometrie</td><td><strong>keine</strong> — MI3DOR hat keine Query-Punktwolken</td></tr>
+            <tr><td>Metrik-Tiefe</td><td>top-k = 15, TOP_F = 20</td></tr>
+          </tbody>
+        </table></div>
+        <div class="call key">
+          <span class="k">Warum cross-Modus — und was das laut Stage 1 kostet</span>
+          <p>MI3DOR liefert <strong>monokulare Bilder ohne Tiefe</strong>. Es existiert keine Query-Punktwolke, der Shape-Kanal <em>muss</em> also das Bild encodieren. Stage-1-A5 beziffert diesen Wechsel vorab: pc → cross kostet dort <strong>−0.054 nDCG</strong> bzw. <strong>−19,5 % hit@1</strong>. Stage 2 prüft, ob die Fusion das trägt.</p>
+        </div>
+      </section>
+
+      <section id="sm">
+        <h2><span class="sec-n">§0</span>Die Metriken</h2>
+        <p>Andere Konvention als Stage 1 — hier gibt es <strong>keine Subkategorien</strong>, die Relevanz ist <strong>binär auf Kategorieebene</strong>: relevant = eine der 21 Kategorien getroffen.</p>
+        <div class="tbl"><table>
+          <thead><tr><th>Metrik</th><th>Was sie misst</th></tr></thead>
+          <tbody>
+            <tr class="best"><td><strong>NN</strong></td><td>Nearest Neighbour — ist der <strong>Top-1</strong>-Treffer aus der richtigen Kategorie? (in %) · das Pendant zu Stage-1s hit@1</td></tr>
+            <tr class="best"><td><strong>FT</strong> (First Tier)</td><td>Anteil relevanter Treffer in den Top-<strong>C</strong> (C = Kategoriegröße, hier 31…250, im Mittel 183) · die Listenqualität</td></tr>
+            <tr><td>ST (Second Tier)</td><td>relevante Treffer in den Top-<strong>2C</strong>, normiert auf C (nicht 2C)</td></tr>
+            <tr><td>F1</td><td>harmonisches Mittel aus Precision und Recall bei TOP_F = 20</td></tr>
+            <tr><td>nDCG@2R</td><td>DCG über Top-2C, normiert auf das ideale DCG über C</td></tr>
+            <tr><td>mAP</td><td>Average Precision über die Rangliste</td></tr>
+            <tr><td>ANMRR ↓</td><td>Average Normalized Modified Retrieval Rank — <strong>kleiner ist besser</strong></td></tr>
+          </tbody>
+        </table></div>
+        <p><strong>Headline: NN und FT.</strong> Die beiden trennen im Folgenden systematisch — und genau daran zeigt sich, was die Kaskade kann und was nicht.</p>
+      </section>
+
+      <section id="s1">
+        <h2><span class="sec-n">§1</span>Die sieben Arme</h2>
+        <div class="tbl"><table>
+          <thead><tr><th>Arm</th><th class="num">NN</th><th class="num">FT</th><th class="num">ST</th><th class="num">F1</th><th class="num">nDCG@2R</th><th class="num">mAP</th><th class="num">ANMRR ↓</th></tr></thead>
+          <tbody>
+            <tr><td>CLIP-Text allein</td><td class="num">67.95</td><td class="num">0.575</td><td class="num">0.755</td><td class="num">0.160</td><td class="num">0.720</td><td class="num">0.580</td><td class="num">0.339</td></tr>
+            <tr><td>ULIP-2 allein (cross, full-mesh)</td><td class="num">78.10</td><td class="num">0.510</td><td class="num">0.649</td><td class="num">0.188</td><td class="num">0.652</td><td class="num">0.518</td><td class="num">0.409</td></tr>
+            <tr><td>ULIP-2 allein (cross, partial)</td><td class="num">68.11</td><td class="num">0.453</td><td class="num">0.607</td><td class="num">—</td><td class="num">0.598</td><td class="num">0.451</td><td class="num">0.467</td></tr>
+            <tr><td>DINOv2 allein</td><td class="num">83.03</td><td class="num">0.629</td><td class="num">0.753</td><td class="num">0.200</td><td class="num">0.751</td><td class="num">0.647</td><td class="num">0.297</td></tr>
+            <tr><td>CLIP+DINO+ULIP (volle Fusion, <strong>full-mesh</strong>)</td><td class="num">86.57</td><td class="num">0.682</td><td class="num">0.822</td><td class="num">0.215</td><td class="num">0.813</td><td class="num">0.705</td><td class="num">0.238</td></tr>
+            <tr class="best"><td><strong>CLIP+DINO+ULIP (volle Fusion, partial)</strong></td><td class="num"><strong>88.44</strong></td><td class="num"><strong>0.692</strong></td><td class="num"><strong>0.830</strong></td><td class="num"><strong>0.216</strong></td><td class="num"><strong>0.821</strong></td><td class="num"><strong>0.714</strong></td><td class="num"><strong>0.227</strong></td></tr>
+            <tr><td>OSCAR-Kaskade (Hard-Max)</td><td class="num">84.88</td><td class="num">0.575</td><td class="num">0.755</td><td class="num">0.160</td><td class="num">0.733</td><td class="num">0.592</td><td class="num">0.337</td></tr>
+            <tr><td>OSCAR-Kaskade (Softmax)</td><td class="num">85.04</td><td class="num">0.575</td><td class="num">0.755</td><td class="num">0.160</td><td class="num">0.734</td><td class="num">0.592</td><td class="num">0.337</td></tr>
+            <tr><td>CLIP-gepruned + DINO+ULIP</td><td class="num">86.52</td><td class="num">0.575</td><td class="num">0.755</td><td class="num">0.160</td><td class="num">0.735</td><td class="num">0.593</td><td class="num">0.337</td></tr>
+          </tbody>
+        </table></div>
+        <p><strong>Die volle Fusion gewinnt auf jeder Metrik.</strong> Gegenüber dem stärksten Einzelkanal (DINOv2): <strong>+3,5 NN, +0.053 FT, +0.058 mAP, −0.059 ANMRR</strong>. Der Shape-Kanal ist im cross-Modus der <strong>schwächste</strong> Kanal (FT 0.510) — trägt aber trotzdem messbar bei.</p>
+
+        <h3>Die auffällige Zeile: NN fast auf Fusionsniveau, FT exakt auf CLIP-Niveau</h3>
+        <p><code>CLIP-gepruned + DINO+ULIP</code> erreicht <strong>86.52 NN</strong> — 0.05 unter der vollen Fusion — und gleichzeitig <strong>FT 0.575</strong>, also den Wert von CLIP-Text allein, auf drei Nachkommastellen. Beides zugleich ist kein Widerspruch, sondern folgt direkt daraus, <em>worauf</em> DINO und ULIP dort umsortieren.</p>
+        <div class="call key">
+          <span class="k">Auf wie viele Kandidaten wird umsortiert?</span>
+          <p>Die Shortlist S′ entsteht als <code>{o : sim_text(o) ≥ τ}</code> mit τ = 0.37. Gemessen über alle 10.500 Queries:</p>
+          <div class="tbl"><table>
+            <thead><tr><th>Fall</th><th class="num">Queries</th><th class="num">Anteil</th><th>Größe von S′</th></tr></thead>
+            <tbody>
+              <tr class="best"><td>Schwellwert prunt auf <strong>leer</strong> → Top-20-Fallback</td><td class="num">10.174</td><td class="num">96,9 %</td><td class="num">genau 20</td></tr>
+              <tr><td>Schwellwert greift</td><td class="num">326</td><td class="num">3,1 %</td><td class="num">Median <strong>2</strong> (153× nur 1; max 113)</td></tr>
+            </tbody>
+          </table></div>
+          <p>Die Kaskade ist damit faktisch <strong>„CLIP-Top-20 → DINO+ULIP"</strong>. In den seltenen Fällen, in denen τ überhaupt etwas durchlässt, ist die Liste sogar <em>kürzer</em> — meist ein einziger Kandidat, an dem sich nichts mehr umsortieren lässt.</p>
+        </div>
+        <p>Damit erklärt sich die Zeile vollständig:</p>
+        <div class="slist" id="slist"></div>
+        <div class="legend"><span><i style="background:var(--accent)"></i>von DINO+ULIP umsortiert</span><span><i style="background:var(--surface-2);border:1px solid var(--border)"></i>bleibt in CLIP-Reihenfolge</span></div>
+        <ul>
+          <li><strong>NN misst Rang 1</strong> — der liegt immer in den umsortierten 20. Deshalb springt NN von 67.95 auf 86.52 (<strong>+18,6</strong>).</li>
+          <li><strong>FT misst die Top-C</strong>, und C ist im Mittel <strong>183</strong> (bis 250). Die Ränge 21…3848 hat nie jemand angefasst; sie stehen weiter in CLIP-Reihenfolge. Also <strong>fällt FT exakt auf CLIPs Wert zurück</strong> — ebenso ST und F1.</li>
+        </ul>
+        <p><strong>Das ist ein architektonisches Ergebnis, kein Parameterproblem.</strong> Jede Kaskade, deren Shortlist kürzer ist als die Tiefe der Metrik, kann diese Metrik strukturell nicht verbessern. τ zu senken würde die Shortlist nicht verlängern — sie ist ja schon fast immer der 20er-Fallback; man müsste den <strong>Fallback</strong> auf ≥ C anheben, womit das Pruning seinen Zweck verlöre. Die volle Fusion bewertet stattdessen alle 3848 CADs simultan und schlägt die Kaskade auf FT um <strong>+0.107</strong>.</p>
+      </section>
+
+      <section id="s2">
+        <h2><span class="sec-n">§2</span>Gewichtskarte</h2>
+        <p>231 Gitterpunkte über dem Gewichts-Simplex w_text + w_view + w_shape = 1 (Schrittweite 0,05), als Tier-2-Ableitung aus einmalig gecachten Kanal-Scores. <strong>Selbstcheck:</strong> FT bei BASE = 0.6851 gegen 0.682 aus dem Produktionslauf — Abweichung 0,003, der Sweep ist verifiziert.</p>
+        <figure class="tri"><figcaption>MI3DOR, cross-Modus — 231 Punkte, Farbe = FT</figcaption><canvas id="triMI" width="620" height="560"></canvas></figure>
+        <div class="legend" id="triLegend"></div>
+        <div class="tbl"><table>
+          <thead><tr><th>Gewichte (text, view, shape)</th><th class="num">FT</th><th class="num">NN</th></tr></thead>
+          <tbody>
+            <tr class="best"><td><strong>(0.45, 0.35, 0.20)</strong> ← Optimum</td><td class="num"><strong>0.6902</strong></td><td class="num">86.99</td></tr>
+            <tr><td>(0.40, 0.35, 0.25)</td><td class="num">0.6897</td><td class="num">86.97</td></tr>
+            <tr><td>(0.40, 0.40, 0.20)</td><td class="num">0.6894</td><td class="num">87.08</td></tr>
+            <tr><td>(0.45, 0.30, 0.25)</td><td class="num">0.6894</td><td class="num">86.99</td></tr>
+            <tr><td><strong>(0.30, 0.40, 0.30)</strong> ← BASE</td><td class="num">0.6851</td><td class="num">86.84</td></tr>
+          </tbody>
+        </table></div>
+        <div class="call key">
+          <span class="k">Ein Plateau, kein Gipfel</span>
+          <p style="color:var(--muted);font-size:.9rem"><em>Der Sweep lief auf der <strong>Full-Mesh</strong>-Gallery. Sein Optimum (0.6902 FT) liegt damit unter dem neuen BASE auf der partiellen Gallery (0.6918, §3) — die Sensitivitätsaussage bleibt gültig, die absoluten Werte sind mit §3 nicht vergleichbar.</em></p>
+          <p><strong>BASE ist robust:</strong> nur <strong>+0.005 FT</strong> zum Optimum — kein Tuning nötig, dieselbe Schlussfolgerung wie im pc-Modus auf SHREC (+0.003). Die Karte zeigt, warum: eine breite Region um die Mitte-links-Kante liegt innerhalb von 0.01 des Optimums.</p>
+          <p><strong>Richtung des Optimums:</strong> ohne Tiefe gehört der Shape-Kanal <strong>herunter</strong> (0.20 statt 0.30) — das Gewicht wandert aber <strong>zu Text</strong> (0.45), nicht zu View. Eine SHREC-cross-Karte hätte das falsch vorhergesagt (dort wandert es zu View, 0.3/0.6/0.1). <strong>Gemeinsam ist beiden Datensätzen nur „Shape herunter"</strong> — wohin das Gewicht geht, ist datensatzspezifisch und muss gemessen werden.</p>
+        </div>
+      </section>
+
+      <section id="s3">
+        <h2><span class="sec-n">§3</span>Partial-Views vs. Full-Mesh im cross-Modus</h2>
+        <p>Die Gallery-Repräsentation ist die eine Designachse, die MI3DOR und SHREC gemeinsam haben — und sie fällt hier <strong>umgekehrt</strong> aus.</p>
+        <div class="tbl"><table>
+          <caption>Isolierter ULIP-2-Kanal. Beide Läufe config-verifiziert identisch (42 Views, k=5, mean, cross, τ=0.37, gleicher Checkpoint, n=10500); es unterscheidet sich nur die Gallery-Repräsentation.</caption>
+          <thead><tr><th>ULIP-2 isoliert</th><th class="num">partial</th><th class="num">full-mesh</th><th class="num">Δ</th></tr></thead>
+          <tbody>
+            <tr><td>NN</td><td class="num">68.11</td><td class="num"><strong>78.10</strong></td><td class="num"><strong>+9.99</strong></td></tr>
+            <tr><td>FT</td><td class="num">0.453</td><td class="num"><strong>0.510</strong></td><td class="num">+0.057</td></tr>
+            <tr><td>ST</td><td class="num">0.607</td><td class="num"><strong>0.649</strong></td><td class="num">+0.042</td></tr>
+            <tr><td>nDCG@2R</td><td class="num">0.598</td><td class="num"><strong>0.652</strong></td><td class="num">+0.054</td></tr>
+            <tr><td>mAP</td><td class="num">0.451</td><td class="num"><strong>0.518</strong></td><td class="num">+0.067</td></tr>
+            <tr><td>ANMRR ↓</td><td class="num">0.467</td><td class="num"><strong>0.409</strong></td><td class="num">besser</td></tr>
+          </tbody>
+        </table></div>
+        <div class="call key">
+          <span class="k">Die Referenz muss zur Natur der Query passen</span>
+          <p><strong>Full-Mesh gewinnt auf jeder Metrik — exakt umgekehrt zu SHREC</strong> (dort partial +0.0397 nDCG isoliert). Kein Widerspruch, sondern der verwertbare Teil: SHREC fragt mit einer <em>partiellen Punktwolke</em> (pc-Modus) → eine partielle Referenz ist geometrisch vergleichbar. MI3DOR fragt mit einem <em>Bild</em> (cross-Modus) → das Bild zeigt das <strong>vollständige</strong> Objekt, also passt die Full-Mesh-Referenz besser.</p>
+          <p>Stage 1 bestätigt das unabhängig auf demselben Datensatz: dort ist im cross-Modus die partielle Referenz nur noch um 0.024 (isoliert) vorn statt um 0.040 im pc-Modus — die Achse dreht sich mit dem Query-Modus.</p>
+        </div>
+        <h3>Fusioniert kehrt sich das um</h3>
+        <div class="tbl"><table>
+          <caption>Volle Fusion, w = (0.3, 0.4, 0.3). Nachgerechnet am 2026-09-07; es unterscheidet sich
+          allein die Gallery-Repräsentation des Shape-Kanals.</caption>
+          <thead><tr><th>volle Fusion</th><th class="num">partial</th><th class="num">full-mesh</th><th class="num">Δ</th></tr></thead>
+          <tbody>
+            <tr class="best"><td>NN</td><td class="num"><strong>88.44</strong></td><td class="num">86.57</td><td class="num"><strong>+1.87</strong></td></tr>
+            <tr><td>FT</td><td class="num"><strong>0.6918</strong></td><td class="num">0.6818</td><td class="num">+0.0100</td></tr>
+            <tr><td>ST</td><td class="num"><strong>0.830</strong></td><td class="num">0.822</td><td class="num">+0.008</td></tr>
+            <tr><td>nDCG@2R</td><td class="num"><strong>0.821</strong></td><td class="num">0.813</td><td class="num">+0.008</td></tr>
+            <tr><td>mAP</td><td class="num"><strong>0.714</strong></td><td class="num">0.705</td><td class="num">+0.009</td></tr>
+            <tr><td>ANMRR ↓</td><td class="num"><strong>0.227</strong></td><td class="num">0.238</td><td class="num">besser</td></tr>
+          </tbody>
+        </table></div>
+        <div class="call key">
+          <span class="k">Der schwächere Kanal trägt mehr bei</span>
+          <p>Full-mesh ist <strong>isoliert um 9.99 NN besser</strong> und <strong>fusioniert um 1.87 NN
+          schlechter</strong>. Das Vorzeichen dreht also nicht, weil der partielle Kanal genauer wäre — er
+          ist es messbar nicht —, sondern weil seine Fehler mit denen von Text und Erscheinung
+          <strong>weniger korrelieren</strong>. Ein Kanal, der dasselbe falsch macht wie DINOv2, fügt der
+          Fusion nichts hinzu, auch wenn er für sich stärker ist.</p>
+          <p><strong>Damit reproduziert MI3DOR das Stage-1-Muster exakt:</strong> dort ist im cross-Modus
+          fusioniert ebenfalls partial vorn (0.5588 gegen 0.5511 nDCG). Fusioniert stimmen beide
+          cross-Datensätze überein; isoliert widersprechen sie sich (SHREC partial +0.024, MI3DOR
+          full-mesh +0.057) — was daran liegen dürfte, dass MI3DORs Partialwolken aus <em>gerenderten</em>
+          Ansichten stammen und SHRECs aus echten Scans.</p>
+          <p><strong>Die frühere Schlussfolgerung „im cross-Modus ist Full-Mesh die überlegene Wahl" galt
+          nur für den isolierten Kanal.</strong> Für das Gesamtsystem ist die beste Stage-2-Konfiguration
+          <strong>cross × partial: NN 88.44 / FT 0.6918</strong>.</p>
+        </div>
+        <div class="call warn">
+          <span class="k">Wie dieser Lauf abgesichert ist</span>
+          <p>Es gibt auf dieser Maschine <strong>keine</strong> MI3DOR-<code>*_partial.npz</code> mehr, nur
+          einen 791-MB-Cache. Ohne die Env-Variable <code>SHREC_FORCE_PARTIAL_CACHE</code> (nicht
+          SHREC-spezifisch) fällt der Pass still auf Full-Mesh zurück. Drei Prüfungen: der Cache wurde
+          nachweislich erzwungen (3848 Modelle), der Config-Block sagt <code>ulip2_use_partial_views=True</code>,
+          und der ULIP-Arm unterscheidet sich vom Full-Mesh-Lauf.</p>
+          <p><strong>Die stärkste Prüfung ist die dritte:</strong> der isolierte Arm trifft einen Lauf vom
+          2026-08-07, der noch <em>echte</em> <code>*_partial.npz</code> las, auf allen fünf Metriken
+          <strong>exakt</strong> — größte Abweichung 0.0e+00. Der Cache bildet die Rohdateien bitgenau ab.</p>
+        </div>
+
+        <h3>Die MI3DOR-Meshes tragen keine Farbe</h3>
+        <p>Nachgeprüft: <strong>alle 3848 Meshes liefern beim Sampling dieselbe Farbe (0.4, 0.4, 0.4)</strong> — trimeshs Standardgrau. Die Dateien enthalten weder Vertex- noch Flächenfarben und keine Textur. Zum Vergleich die Standardabweichung der gesampelten Farbe je Objekt über alle Datensätze:</p>
+        <div class="tbl"><table>
+          <thead><tr><th>Datensatz</th><th>Mesh-Farbe</th></tr></thead>
+          <tbody>
+            <tr><td>GSO, YCB-V, SHREC'18</td><td>Textur vorhanden (0.10–0.28)</td></tr>
+            <tr><td>LM-O</td><td>Vertexfarben, 0.04–0.18</td></tr>
+            <tr><td><strong>MI3DOR</strong>, T-LESS, ITODD, HouseCat6D</td><td><strong>0.0 — keine Farbe in den Dateien</strong></td></tr>
+          </tbody>
+        </table></div>
+        <div class="call warn">
+          <span class="k">Ein plausibler zweiter Grund für den schwachen Shape-Kanal</span>
+          <p>Der verwendete ULIP-2-Backbone ist der <strong>farbige</strong> (<code>pointbert_colored</code>, 6-Kanal-Eingang, 1280-d) — und bekommt über die gesamte Gallery ein <strong>konstantes, informationsloses RGB</strong>. Drei seiner sechs Eingangskanäle tragen nichts. Das verzerrt die Gallery nicht <em>untereinander</em> (die Konstante trifft alle 3848 Objekte gleich), setzt aber jedes Gallery-Embedding in einen Bereich des Merkmalsraums, für den der Encoder nicht trainiert wurde — während die Query durch den Bildturm kommt, der Farbe sehr wohl sieht.</p>
+          <p>Dass ULIP-2 hier der schwächste Kanal ist (FT 0.510 gegen DINOv2 0.629), wurde bisher allein der cross-modalen Schwierigkeit zugeschrieben. <strong>Die farblose Gallery ist ein zweiter, ebenso plausibler Grund.</strong> Belegt ist das nicht — prüfbar wäre es über partielle Punktwolken aus den vorhandenen Renderings, was einen kompletten Stage-2-Neulauf bedeutet.</p>
+          <p><strong>Für die Schlussfolgerung des Kapitels ändert das nichts, es verschiebt die Begründung:</strong> dass Shape ohne Tiefe heruntergewichtet gehört (§2), gilt weiterhin — die Ursache ist aber vermutlich nicht nur die fehlende Tiefe, sondern auch eine Gallery, der genau die Information fehlt, mit der dieser Encoder rechnet.</p>
+        </div>
+      </section>
+
+      <section id="s4">
+        <h2><span class="sec-n">§4</span>OSCAR-Legacy-Vergleich (V = 8)</h2>
+        <p>Die publizierte OSCAR-Kaskade wird mit <strong>8 Views</strong> beschrieben. Derselbe Mechanismus, unser Evaluator, unsere Gallery — nur der View-Count wechselt:</p>
+        <div class="tbl"><table>
+          <thead><tr><th>Arm</th><th class="num">NN (V=8)</th><th class="num">NN (V=42)</th><th class="num">FT (V=8)</th><th class="num">FT (V=42)</th></tr></thead>
+          <tbody>
+            <tr><td>DINOv2 allein</td><td class="num">81.96</td><td class="num">83.03</td><td class="num">0.591</td><td class="num">0.629</td></tr>
+            <tr><td>OSCAR-Kaskade (Hard-Max)</td><td class="num">84.40</td><td class="num">84.88</td><td class="num">0.575</td><td class="num">0.575</td></tr>
+            <tr class="best"><td>volle Fusion</td><td class="num"><strong>86.62</strong></td><td class="num">86.57</td><td class="num">0.665</td><td class="num">0.682</td></tr>
+          </tbody>
+        </table></div>
+        <p><strong>Der View-Count ist auf MI3DOR fast wirkungslos.</strong> DINOv2 allein verliert bei 8 Views 1,07 NN, die Kaskade 0,48 NN, und die volle Fusion ist praktisch identisch (86.62 vs. 86.57). OSCARs 8-View-Konfiguration war also <strong>kein Handicap</strong> — anders als auf SHREC, wo mehr Views durchgehend halfen.</p>
+        <div class="call warn">
+          <span class="k">Warum wir die Zahlen nicht direkt gegen die Publikation stellen</span>
+          <p>Pullis Evaluator wendet die CLIP-Shortlist <strong>nicht</strong> auf das Ranking an (<code>keep</code> fließt nirgends in <code>sims_full</code>); die publizierten Zahlen sind also reines DINOv2-Retrieval über eine <strong>andere Gallery</strong> (1817 Objekte × 1 View statt 3848 × 42). Ein direkter Zahlenvergleich ist nicht zulässig — wir reproduzieren den <strong>Mechanismus</strong>, nicht ihre Messung.</p>
+        </div>
+      </section>
+
+      <section id="s5">
+        <h2><span class="sec-n">§5</span>Kategorien-Analyse</h2>
+        <p>Per-Kategorie-NN (Anteil korrekter Top-1-Treffer), alle 21 Kategorien mit je 500 Queries. Die drei dünnen Balken sind die isolierten Kanäle, der dicke darunter die volle Fusion.</p>
+        <div class="legend">
+          <span><i style="background:var(--text-c)"></i>S_text (CLIP)</span>
+          <span><i style="background:var(--view-c)"></i>S_view (DINOv2)</span>
+          <span><i style="background:var(--shape-c)"></i>S_shape (ULIP-2, cross)</span>
+          <span><i style="background:var(--accent)"></i>volle Fusion</span>
+          <span>Balkenlänge = NN (0…1)</span>
+        </div>
+        <div class="catgrid" id="catgrid"></div>
+        <div class="call key">
+          <span class="k">Die Spezialisierung ist auch ohne Tiefe systematisch</span>
+          <p><strong>S_shape ist in 10 von 21 Kategorien der beste Einzelkanal</strong> — und teils dramatisch: <code>camera</code> 0.990 gegen 0.346 (text), <code>motorcycle</code> 0.974 gegen 0.868 (view), <code>vase</code> 0.416 gegen 0.182 (view). Selbst im cross-Modus, wo er insgesamt der schwächste Kanal ist, trägt er bei knapp der Hälfte der Klassen am meisten.</p>
+          <p><strong>S_view gewinnt ebenfalls in 10</strong> — vor allem bei texturreichen, gut sichtbaren Objekten (bed, bicycle, plant, keyboard, rifle, wardrobe). <strong>S_text gewinnt genau einmal:</strong> <code>monitor</code> (0.666) — und dort bricht der Shape-Kanal auf <strong>0.124</strong> ein. Ein Monitor ist ein flaches Rechteck; ohne Tiefe geometrisch praktisch nicht bestimmbar, sprachlich aber eindeutig.</p>
+        </div>
+
+        <h3>Die feste Gewichtung schadet in 9 von 21 Kategorien</h3>
+        <div class="tbl"><table>
+          <caption>Alle 21 Kategorien, nach Δ sortiert. Δ = volle Fusion − bester Einzelkanal, Metrik NN, gepaart über dieselben 500 Queries je Klasse.</caption>
+          <thead><tr><th>Kategorie</th><th class="num">text</th><th class="num">view</th><th class="num">shape</th><th>bester Einzelkanal</th><th class="num">Fusion</th><th class="num">Δ</th></tr></thead>
+          <tbody id="mlosstable"></tbody>
+        </table></div>
+        <div class="call warn">
+          <span class="k">Derselbe Befund wie in Stage 1 — über zwei Datensätze und beide Query-Modi</span>
+          <p>Wo <strong>ein</strong> Kanal dominiert, zieht die feste Gewichtung (0.3/0.4/0.3) ihn zu den schwachen herunter. Am deutlichsten bei <code>vase</code>: Shape allein 0.416, Fusion nur 0.284 — Text (0.166) und View (0.182) sind dort fast blind und ziehen den einen funktionierenden Kanal mit nach unten. Umgekehrt gewinnt die Fusion am meisten, wo die Kanäle <em>ähnlich stark</em> sind (<code>radio</code> 0.516/0.636/0.684 → 0.756, <code>stairs</code> 0.494/0.774/0.778 → 0.834).</p>
+          <p>In Stage 1 sind es <strong>12 von 20</strong> Kategorien, hier <strong>9 von 21</strong>. Der Gesamtgewinn der Fusion ist damit auf beiden Datensätzen ein <strong>Mittelwert über gegenläufige Effekte</strong> — und das ist das stärkste Argument für adaptive oder per-Query gewählte Gewichte.</p>
+        </div>
+      </section>
+
+      <section id="s6">
+        <h2><span class="sec-n">§6</span>Diskussionswürdige Punkte</h2>
+        <ol>
+          <li><strong>Der Shape-Kanal ist im cross-Modus der schwächste — und trotzdem unverzichtbar.</strong> Isoliert FT 0.510 gegen DINOv2 0.629, aber er hebt die Fusion um <strong>+0.053 FT</strong> und ist bei <strong>10 von 21 Kategorien der beste Einzelkanal</strong>. Der Mittelwert verdeckt, wo er trägt.</li>
+          <li><strong>Die Kaskade kann Listen-Metriken strukturell nicht verbessern.</strong> FT/ST/F1 aller Kaskaden-Arme sind identisch mit CLIP-Text allein, weil die 20er-Shortlist die Top-C-Tiefe (im Mittel 183) nicht füllen kann. Sie verbessert nur den Kopf (NN +18,6). Ein <strong>architektonisches</strong> Argument, kein Parameterproblem (§1).</li>
+          <li><strong>τ = 0.37 greift praktisch nie:</strong> bei <strong>96,9 %</strong> der Queries prunt der Schwellwert auf leer, es übernimmt der Top-20-Fallback. Konsistent mit SHREC (98,3 %). Wo er greift, ist die Shortlist mit Median 2 sogar zu kurz zum Umsortieren.</li>
+          <li><strong>Die partial-vs-full-mesh-Antwort kippt zwischen isoliert und fusioniert</strong> (§3): full-mesh ist für sich um 9.99 NN besser und verliert fusioniert um 1.87 NN. Nicht die Genauigkeit eines Kanals entscheidet über seinen Beitrag, sondern die <strong>Korrelation seiner Fehler</strong> mit den übrigen. Fusioniert stimmen MI3DOR und SHREC im cross-Modus überein, isoliert nicht.</li>
+          <li><strong>Der View-Count ist auf MI3DOR fast wirkungslos</strong> (V8 ≈ V42, volle Fusion 86.62 vs. 86.57), anders als auf SHREC. Plausibel: bei Bild-Queries gegen gerenderte Ansichten reichen wenige Blickwinkel, während die pc-Query auf SHREC von jeder zusätzlichen Partialansicht profitiert.</li>
+          <li><strong>Feste Gewichte kosten auch hier</strong> — negativ in 9 von 21 Kategorien, bis −0.132. Zusammen mit Stage 1 (12 von 20) ein über zwei Datensätze reproduzierter Befund.</li>
+          <li><strong>BASE-Gewichte sind robust</strong> (+0.005 zum Optimum), aber das Optimum verschiebt sich <strong>text-lastig</strong> (0.45/0.35/0.20). Wer im cross-Modus tunen wollte, müsste Text stärken und Shape schwächen — <em>nicht</em> View stärken, wie ein SHREC-Proxy nahegelegt hätte.</li>
+          <li><strong>Die farblose Gallery ist eine offene Variable.</strong> Der farbige ULIP-2-Backbone bekommt auf MI3DOR ein konstantes RGB (§3). Ob der schwache Shape-Kanal an der fehlenden Tiefe, der fehlenden Farbe oder an beidem liegt, trennt dieser Datensatz nicht.</li>
+        </ol>
+      </section>
+
+      <p class="foot">Stage-2 Ergebnisse — OSCAR+, TU&nbsp;Wien Masterarbeit. Quelle: <code>docs/STAGE2_RESULTS.md</code>, Ergebnisordner <code>results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix/fullmesh</code> (lokal + Drive); Gewichtskarte aus <code>results_mi3dor_wsweep/weight_sweep_mi3dor.csv</code>. Alle Zahlen: cross-Modus, mean-Pooling, 42 Views, k=5, τ=0.37, n=10.500.</p>
+    </article>
+  </div>
+</div>
+
+<script>
+  var WMI=[[0,0,1,0.5100],[0,0.05,0.95,0.5311],[0,0.1,0.9,0.5509],[0,0.15,0.85,0.5692],[0,0.2,0.8,0.5856],[0,0.25,0.75,0.6001],[0,0.3,0.7,0.6127],[0,0.35,0.65,0.6234],[0,0.4,0.6,0.6322],[0,0.45,0.55,0.6392],[0,0.5,0.5,0.6444],[0,0.55,0.45,0.6481],[0,0.6,0.4,0.6503],[0,0.65,0.35,0.6511],[0,0.7,0.3,0.6505],[0,0.75,0.25,0.6487],[0,0.8,0.2,0.6462],[0,0.85,0.15,0.6427],[0,0.9,0.1,0.6387],[0,0.95,0.05,0.6343],[0,1,0,0.6292],[0.05,0,0.95,0.5276],[0.05,0.05,0.9,0.5484],[0.05,0.1,0.85,0.5678],[0.05,0.15,0.8,0.5856],[0.05,0.2,0.75,0.6011],[0.05,0.25,0.7,0.6149],[0.05,0.3,0.65,0.6265],[0.05,0.35,0.6,0.6362],[0.05,0.4,0.55,0.6443],[0.05,0.45,0.5,0.6502],[0.05,0.5,0.45,0.6545],[0.05,0.55,0.4,0.6571],[0.05,0.6,0.35,0.6582],[0.05,0.65,0.3,0.6578],[0.05,0.7,0.25,0.6561],[0.05,0.75,0.2,0.6533],[0.05,0.8,0.15,0.6500],[0.05,0.85,0.1,0.6459],[0.05,0.9,0.05,0.6412],[0.05,0.95,0,0.6359],[0.1,0,0.9,0.5443],[0.1,0.05,0.85,0.5650],[0.1,0.1,0.8,0.5840],[0.1,0.15,0.75,0.6009],[0.1,0.2,0.7,0.6157],[0.1,0.25,0.65,0.6286],[0.1,0.3,0.6,0.6394],[0.1,0.35,0.55,0.6482],[0.1,0.4,0.5,0.6551],[0.1,0.45,0.45,0.6601],[0.1,0.5,0.4,0.6632],[0.1,0.55,0.35,0.6648],[0.1,0.6,0.3,0.6647],[0.1,0.65,0.25,0.6631],[0.1,0.7,0.2,0.6603],[0.1,0.75,0.15,0.6567],[0.1,0.8,0.1,0.6525],[0.1,0.85,0.05,0.6477],[0.1,0.9,0,0.6423],[0.15,0,0.85,0.5605],[0.15,0.05,0.8,0.5805],[0.15,0.1,0.75,0.5988],[0.15,0.15,0.7,0.6152],[0.15,0.2,0.65,0.6292],[0.15,0.25,0.6,0.6411],[0.15,0.3,0.55,0.6511],[0.15,0.35,0.5,0.6590],[0.15,0.4,0.45,0.6649],[0.15,0.45,0.4,0.6688],[0.15,0.5,0.35,0.6707],[0.15,0.55,0.3,0.6710],[0.15,0.6,0.25,0.6696],[0.15,0.65,0.2,0.6669],[0.15,0.7,0.15,0.6633],[0.15,0.75,0.1,0.6589],[0.15,0.8,0.05,0.6539],[0.15,0.85,0,0.6485],[0.2,0,0.8,0.5756],[0.2,0.05,0.75,0.5951],[0.2,0.1,0.7,0.6127],[0.2,0.15,0.65,0.6282],[0.2,0.2,0.6,0.6415],[0.2,0.25,0.55,0.6525],[0.2,0.3,0.5,0.6618],[0.2,0.35,0.45,0.6685],[0.2,0.4,0.4,0.6733],[0.2,0.45,0.35,0.6759],[0.2,0.5,0.3,0.6767],[0.2,0.55,0.25,0.6756],[0.2,0.6,0.2,0.6732],[0.2,0.65,0.15,0.6693],[0.2,0.7,0.1,0.6650],[0.2,0.75,0.05,0.6599],[0.2,0.8,0,0.6542],[0.25,0,0.75,0.5893],[0.25,0.05,0.7,0.6082],[0.25,0.1,0.65,0.6252],[0.25,0.15,0.6,0.6401],[0.25,0.2,0.55,0.6526],[0.25,0.25,0.5,0.6628],[0.25,0.3,0.45,0.6707],[0.25,0.35,0.4,0.6764],[0.25,0.4,0.35,0.6802],[0.25,0.45,0.3,0.6815],[0.25,0.5,0.25,0.6809],[0.25,0.55,0.2,0.6786],[0.25,0.6,0.15,0.6751],[0.25,0.65,0.1,0.6706],[0.25,0.7,0.05,0.6655],[0.25,0.75,0,0.6598],[0.3,0,0.7,0.6018],[0.3,0.05,0.65,0.6202],[0.3,0.1,0.6,0.6365],[0.3,0.15,0.55,0.6505],[0.3,0.2,0.5,0.6621],[0.3,0.25,0.45,0.6714],[0.3,0.3,0.4,0.6783],[0.3,0.35,0.35,0.6828],[0.3,0.4,0.3,0.6851],[0.3,0.45,0.25,0.6852],[0.3,0.5,0.2,0.6834],[0.3,0.55,0.15,0.6801],[0.3,0.6,0.1,0.6758],[0.3,0.65,0.05,0.6706],[0.3,0.7,0,0.6649],[0.35,0,0.65,0.6130],[0.35,0.05,0.6,0.6307],[0.35,0.1,0.55,0.6461],[0.35,0.15,0.5,0.6592],[0.35,0.2,0.45,0.6701],[0.35,0.25,0.4,0.6782],[0.35,0.3,0.35,0.6838],[0.35,0.35,0.3,0.6872],[0.35,0.4,0.25,0.6882],[0.35,0.45,0.2,0.6871],[0.35,0.5,0.15,0.6843],[0.35,0.55,0.1,0.6801],[0.35,0.6,0.05,0.6749],[0.35,0.65,0,0.6690],[0.4,0,0.6,0.6225],[0.4,0.05,0.55,0.6394],[0.4,0.1,0.5,0.6543],[0.4,0.15,0.45,0.6665],[0.4,0.2,0.4,0.6761],[0.4,0.25,0.35,0.6832],[0.4,0.3,0.3,0.6876],[0.4,0.35,0.25,0.6897],[0.4,0.4,0.2,0.6894],[0.4,0.45,0.15,0.6872],[0.4,0.5,0.1,0.6835],[0.4,0.55,0.05,0.6785],[0.4,0.6,0,0.6726],[0.45,0,0.55,0.6303],[0.45,0.05,0.5,0.6466],[0.45,0.1,0.45,0.6605],[0.45,0.15,0.4,0.6716],[0.45,0.2,0.35,0.6804],[0.45,0.25,0.3,0.6862],[0.45,0.3,0.25,0.6894],[0.45,0.35,0.2,0.6902],[0.45,0.4,0.15,0.6888],[0.45,0.45,0.1,0.6855],[0.45,0.5,0.05,0.6807],[0.45,0.55,0,0.6752],[0.5,0,0.5,0.6365],[0.5,0.05,0.45,0.6521],[0.5,0.1,0.4,0.6648],[0.5,0.15,0.35,0.6750],[0.5,0.2,0.3,0.6824],[0.5,0.25,0.25,0.6869],[0.5,0.3,0.2,0.6889],[0.5,0.35,0.15,0.6886],[0.5,0.4,0.1,0.6860],[0.5,0.45,0.05,0.6818],[0.5,0.5,0,0.6763],[0.55,0,0.45,0.6408],[0.55,0.05,0.4,0.6553],[0.55,0.1,0.35,0.6672],[0.55,0.15,0.3,0.6761],[0.55,0.2,0.25,0.6821],[0.55,0.25,0.2,0.6854],[0.55,0.3,0.15,0.6862],[0.55,0.35,0.1,0.6846],[0.55,0.4,0.05,0.6812],[0.55,0.45,0,0.6764],[0.6,0,0.4,0.6431],[0.6,0.05,0.35,0.6565],[0.6,0.1,0.3,0.6671],[0.6,0.15,0.25,0.6749],[0.6,0.2,0.2,0.6796],[0.6,0.25,0.15,0.6818],[0.6,0.3,0.1,0.6813],[0.6,0.35,0.05,0.6789],[0.6,0.4,0,0.6745],[0.65,0,0.35,0.6432],[0.65,0.05,0.3,0.6552],[0.65,0.1,0.25,0.6647],[0.65,0.15,0.2,0.6713],[0.65,0.2,0.15,0.6748],[0.65,0.25,0.1,0.6758],[0.65,0.3,0.05,0.6743],[0.65,0.35,0,0.6709],[0.7,0,0.3,0.6408],[0.7,0.05,0.25,0.6517],[0.7,0.1,0.2,0.6600],[0.7,0.15,0.15,0.6651],[0.7,0.2,0.1,0.6676],[0.7,0.25,0.05,0.6675],[0.7,0.3,0,0.6650],[0.75,0,0.25,0.6359],[0.75,0.05,0.2,0.6458],[0.75,0.1,0.15,0.6526],[0.75,0.15,0.1,0.6565],[0.75,0.2,0.05,0.6580],[0.75,0.25,0,0.6568],[0.8,0,0.2,0.6285],[0.8,0.05,0.15,0.6370],[0.8,0.1,0.1,0.6428],[0.8,0.15,0.05,0.6458],[0.8,0.2,0,0.6463],[0.85,0,0.15,0.6186],[0.85,0.05,0.1,0.6261],[0.85,0.1,0.05,0.6305],[0.85,0.15,0,0.6328],[0.9,0,0.1,0.6061],[0.9,0.05,0.05,0.6125],[0.9,0.1,0,0.6161],[0.95,0,0.05,0.5913],[0.95,0.05,0,0.5967],[1,0,0,0.5747]];
+  var MCATS=[
+    ["car",0.976,1.000,1.000,1.000,"shape",1.000,0.0000],
+    ["guitar",0.986,1.000,0.998,1.000,"view",1.000,0.0000],
+    ["airplane",0.988,0.988,1.000,0.992,"shape",1.000,-0.0080],
+    ["plant",0.906,0.968,0.640,0.990,"view",0.968,0.0220],
+    ["bed",0.892,0.978,0.858,0.976,"view",0.978,-0.0020],
+    ["camera",0.346,0.928,0.990,0.974,"shape",0.990,-0.0160],
+    ["tent",0.880,0.772,0.966,0.972,"shape",0.966,0.0060],
+    ["motorcycle",0.768,0.868,0.974,0.964,"shape",0.974,-0.0100],
+    ["rifle",0.860,0.910,0.878,0.950,"view",0.910,0.0400],
+    ["keyboard",0.728,0.922,0.832,0.942,"view",0.922,0.0200],
+    ["chair",0.726,0.884,0.886,0.926,"shape",0.886,0.0400],
+    ["bicycle",0.696,0.962,0.804,0.916,"view",0.962,-0.0460],
+    ["wardrobe",0.502,0.906,0.890,0.906,"view",0.906,0.0000],
+    ["knife",0.630,0.806,0.846,0.896,"shape",0.846,0.0500],
+    ["flower_pot",0.570,0.772,0.814,0.842,"shape",0.814,0.0280],
+    ["stairs",0.494,0.774,0.778,0.834,"shape",0.778,0.0560],
+    ["bookshelf",0.614,0.860,0.540,0.788,"view",0.860,-0.0720],
+    ["radio",0.516,0.636,0.684,0.756,"shape",0.684,0.0720],
+    ["pistol",0.360,0.736,0.484,0.670,"view",0.736,-0.0660],
+    ["monitor",0.666,0.584,0.124,0.602,"text",0.666,-0.0640],
+    ["vase",0.166,0.182,0.416,0.284,"shape",0.416,-0.1320]];
+
+  /* ---------- shortlist schematic ---------- */
+  (function(){
+    var el=document.getElementById('slist'); if(!el) return;
+    var rows=[['NN — Rang 1',1,'Rang 1 liegt immer in den 20'],
+              ['F1 — Top-20',20,'genau die Shortlist'],
+              ['FT — Top-C ≈ 183',183,'163 der 183 Ränge nie angefasst'],
+              ['ST — Top-2C ≈ 366',366,'346 der 366 nie angefasst']];
+    rows.forEach(function(r){
+      var d=document.createElement('div'); d.className='srow';
+      var re=Math.min(20,r[1]), rest=r[1]-re;
+      var pRe=re/366*100, pRest=rest/366*100;
+      d.innerHTML='<div class="slab">'+r[0]+'</div>'+
+        '<div class="sbar" title="'+r[2]+'">'+
+        '<div class="sseg s-re" style="width:'+pRe+'%">'+(re>=20?'20':'')+'</div>'+
+        (rest>0?'<div class="sseg s-clip" style="width:'+pRest+'%">'+rest+' in CLIP-Reihenfolge</div>':'')+
+        '<div style="flex:1"></div></div>';
+      el.appendChild(d);
+    });
+  })();
+
+  /* ---------- ternary weight map ---------- */
+  function cssv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function ramp(t){
+    var stops=[[0.00,[104,116,132]],[0.45,[43,85,120]],[0.75,[92,150,128]],[1.00,[200,140,60]]];
+    for(var i=1;i<stops.length;i++){
+      if(t<=stops[i][0]||i===stops.length-1){
+        var a=stops[i-1],b=stops[i],u=(t-a[0])/Math.max(b[0]-a[0],1e-9);
+        u=Math.max(0,Math.min(1,u));
+        return 'rgb('+Math.round(lerp(a[1][0],b[1][0],u))+','+Math.round(lerp(a[1][1],b[1][1],u))+','+Math.round(lerp(a[1][2],b[1][2],u))+')';
+      }
+    }
+  }
+  function drawTri(id,data,base,opt){
+    var cv=document.getElementById(id); if(!cv) return;
+    var dpr=window.devicePixelRatio||1, W=620, H=560;
+    if(cv.dataset.scaled!=='1'){cv.width=W*dpr;cv.height=H*dpr;cv.dataset.scaled='1';}
+    var x=cv.getContext('2d'); x.setTransform(dpr,0,0,dpr,0,0); x.clearRect(0,0,W,H);
+    var pad=48, side=W-2*pad, h=side*Math.sqrt(3)/2, oy=(H-h)/2+8;
+    function pt(wt,wv,ws){ return [pad+(wv+ws/2)*side, oy+h-ws*h]; }
+    var vals=data.map(function(d){return d[3];}), lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+    var A=pt(1,0,0),B=pt(0,1,0),C=pt(0,0,1);
+    x.beginPath();x.moveTo(A[0],A[1]);x.lineTo(B[0],B[1]);x.lineTo(C[0],C[1]);x.closePath();
+    x.fillStyle=cssv('--surface-2');x.fill();
+    x.strokeStyle=cssv('--border');x.lineWidth=1;x.stroke();
+    var r=side*0.026;
+    data.forEach(function(d){
+      var p=pt(d[0],d[1],d[2]), t=(d[3]-lo)/Math.max(hi-lo,1e-9);
+      x.beginPath();x.arc(p[0],p[1],r,0,6.2832);x.fillStyle=ramp(t);x.fill();
+    });
+    function mark(w,label,dash){
+      var p=pt(w[0],w[1],w[2]);
+      x.beginPath();x.arc(p[0],p[1],r+6,0,6.2832);
+      x.strokeStyle=cssv('--ink');x.lineWidth=2;x.setLineDash(dash?[3,3]:[]);x.stroke();x.setLineDash([]);
+      x.fillStyle=cssv('--ink');x.font='600 12px monospace';x.textAlign='center';
+      x.fillText(label,p[0],p[1]-r-12);
+    }
+    mark(base,'BASE',true); mark(opt,'Optimum',false);
+    x.fillStyle=cssv('--muted');x.font='11px sans-serif';
+    x.textAlign='right'; x.fillText('nur Text',A[0]+8,A[1]+20);
+    x.textAlign='left';  x.fillText('nur View',B[0]-8,B[1]+20);
+    x.textAlign='center';x.fillText('nur Shape',C[0],C[1]-13);
+    return [lo,hi];
+  }
+  (function(){
+    function paint(){
+      var a=drawTri('triMI',WMI,[0.30,0.40,0.30],[0.45,0.35,0.20]);
+      var lg=document.getElementById('triLegend');
+      if(lg&&a){
+        var grad='linear-gradient(90deg,'+[0,.25,.5,.75,1].map(ramp).join(',')+')';
+        lg.innerHTML='<span><i class="ramp" style="background:'+grad+'"></i>FT niedrig → hoch</span>'+
+          '<span>'+a[0].toFixed(4)+' … '+a[1].toFixed(4)+'</span>'+
+          '<span>231 Punkte, Schrittweite 0,05</span>';
+      }
+    }
+    paint();
+    window.addEventListener('resize',function(){var c=document.getElementById('triMI');if(c)c.dataset.scaled='';paint();});
+    var mq=window.matchMedia('(prefers-color-scheme: dark)');
+    if(mq.addEventListener) mq.addEventListener('change',paint);
+    document.addEventListener('oscar:theme',paint);
+  })();
+
+  /* ---------- category bars + loss table ---------- */
+  (function(){
+    var g=document.getElementById('catgrid');
+    MCATS.forEach(function(c){
+      var row=document.createElement('div'); row.className='catrow';
+      var nm=document.createElement('div'); nm.className='catname'; nm.textContent=c[0];
+      var bars=document.createElement('div'); bars.className='bars';
+      [['t',c[1]],['v',c[2]],['s',c[3]],['f',c[4]]].forEach(function(b){
+        var d=document.createElement('div'); d.className='bar '+b[0];
+        d.style.width=Math.max(b[1]*100,0.6)+'%'; d.title=b[1].toFixed(3); bars.appendChild(d);
+      });
+      var n=document.createElement('div'); n.className='catn'; n.textContent=c[4].toFixed(2);
+      row.appendChild(nm); row.appendChild(bars); row.appendChild(n); g.appendChild(row);
+    });
+    var tb=document.getElementById('mlosstable');
+    MCATS.slice().sort(function(a,b){return a[7]-b[7];}).forEach(function(c){
+      var tr=document.createElement('tr');
+      if(c[7]>0) tr.className='best'; else if(c[7]===0) tr.className='dim';
+      tr.innerHTML='<td><strong>'+c[0]+'</strong></td>'+
+        '<td class="num">'+c[1].toFixed(3)+'</td><td class="num">'+c[2].toFixed(3)+'</td><td class="num">'+c[3].toFixed(3)+'</td>'+
+        '<td>'+c[5]+' '+c[6].toFixed(3)+'</td><td class="num">'+c[4].toFixed(3)+'</td>'+
+        '<td class="num">'+(c[7]>0?'+':'')+c[7].toFixed(3)+'</td>';
+      tb.appendChild(tr);
+    });
+  })();
+
+  /* ---------- theme + toc ---------- */
+  (function(){
+    var root=document.documentElement, btn=document.getElementById('themeToggle');
+    if(btn){btn.addEventListener('click',function(){
+      var cur=root.getAttribute('data-theme');
+      var sysDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches;
+      root.setAttribute('data-theme',(cur==='dark')?'light':(cur==='light')?'dark':(sysDark?'light':'dark'));
+      document.dispatchEvent(new CustomEvent('oscar:theme'));
+    });}
+    var links=[].slice.call(document.querySelectorAll('nav.toc a'));
+    var map={};links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+    if('IntersectionObserver' in window){
+      var obs=new IntersectionObserver(function(es){es.forEach(function(e){
+        if(e.isIntersecting){links.forEach(function(l){l.classList.remove('active');});
+          var a=map[e.target.id]; if(a)a.classList.add('active');}});},
+        {rootMargin:'-15% 0px -70% 0px',threshold:0});
+      [].forEach.call(document.querySelectorAll('section[id]'),function(s){obs.observe(s);});
+    }
+  })();
+</script>
