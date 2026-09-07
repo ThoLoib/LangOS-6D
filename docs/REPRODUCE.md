@@ -156,10 +156,14 @@ Eine Szene aus YCB-V gegen die Stage-3a-Gallery, bis zur Pose:
 
 ```
 docker compose up -d foundationpose
-docker compose run --rm oscar python3 -m pipeline.run_pipeline --rgb eval/datasets/ycbv/test/000048/rgb/000001.png --depth eval/datasets/ycbv/test/000048/depth/000001.png --camera eval/datasets/ycbv/test/000048/scene_camera.json --prompt "the yellow mustard bottle" --descriptions object_database/ycbv/descriptions_attributes.json --reference_images object_images/ycbv/ --cad_models object_database/ycbv/ --ulip_mode cross --pose_method foundationpose
+docker compose run --rm oscar python3 -m pipeline.run_pipeline --rgb eval/datasets/ycbv/test/000048/rgb/000001.png --depth eval/datasets/ycbv/test/000048/depth/000001.png --camera eval/datasets/ycbv/test/000048/scene_camera.json --prompt "the blue coffee can" --descriptions object_database/ycbv/descriptions_attributes.json --reference_images object_images/ycbv/ --cad_models object_database/ycbv/ --ulip_repo /ulip --ulip_checkpoint /ulip/checkpoints/ulip2_pointbert_10k.pt --ulip_mode cross --pose_method foundationpose
 ```
 
-`--pose_method icp` läuft ohne FoundationPose-Dienst (Fallback).
+`--pose_method icp` läuft ohne FoundationPose-Dienst (Fallback). Erwartetes
+Ergebnis des Beispiels: `best_model: obj_000001` (Master-Chef-Dose),
+`pose_method: foundationpose`, ~20 s inklusive Kaltstart. Das Ergebnis einer
+einzelnen freien Anfrage ist promptabhängig — die belastbaren Zahlen liefern
+die Stage-Läufe oben.
 
 ## Übersichten regenerieren
 

@@ -1,0 +1,6 @@
+rank,object_id,shape_score,best_view_idx,registration_fitness,registration_rmse,cad_model_path
+1,obj_000001,0.230328,-1,0.0,0.0,/app/object_retrieval/../object_database/ycbv/obj_000001/textured_simple.obj
+2,obj_000021,0.210122,-1,0.0,0.0,/app/object_retrieval/../object_database/ycbv/obj_000021/textured_simple.obj
+3,obj_000005,0.200737,-1,0.0,0.0,/app/object_retrieval/../object_database/ycbv/obj_000005/textured_simple.obj
+4,obj_000004,0.199863,-1,0.0,0.0,/app/object_retrieval/../object_database/ycbv/obj_000004/textured_simple.obj
+5,obj_000006,0.182803,-1,0.0,0.0,/app/object_retrieval/../object_database/ycbv/obj_000006/textured_simple.obj

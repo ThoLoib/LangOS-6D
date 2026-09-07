@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-07T18:26:58.833622",
+  "object_detected": true,
+  "detection_confidence": 0.8471263647079468,
+  "prompt": "blue coffee can",
+  "best_model": "obj_000001",
+  "fusion_score": 1.0,
+  "fusion_method": "weighted_sum",
+  "scale_factor": 1.2079232926328936,
+  "pose_confidence": 117.515625,
+  "pose_method": "foundationpose",
+  "translation": [
+    -0.0284029021859169,
+    -0.010470226407051086,
+    0.8838585019111633
+  ],
+  "total_time_s": 21.295617818832397
+}
