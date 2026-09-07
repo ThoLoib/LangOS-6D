@@ -295,6 +295,15 @@ def main(argv=None):
     ap.add_argument("--views", default="42",
                     help="Komma-Liste, z.B. '16,42'. Filtert nur den Cache, "
                          "encodiert nichts neu.")
+    ap.add_argument("--shape-source", choices=["partial", "fullmesh"],
+                    default="partial",
+                    help="Gallery-Repraesentation des Shape-Kanals. 'partial' "
+                         "(Standard) vergleicht gegen N View-Embeddings je Objekt, "
+                         "'fullmesh' gegen EINES. Achtung bei der Deutung: die "
+                         "beiden Zweige sind unterschiedlich implementiert "
+                         "(step5_shape_matching.py:1490 Schleife vs :1513 "
+                         "vektorisiert), der Zeitunterschied ist deshalb zum Teil "
+                         "Implementierung und nicht Repraesentation.")
     ap.add_argument("--proxy-only", action="store_true",
                     help="Gallery ohne die Ziel-CADs (3b-Fall, Proxy noetig).")
     ap.add_argument("--geometry", action="store_true",
@@ -324,7 +333,8 @@ def main(argv=None):
     with cold.measure("gallery_assembly"):
         gallery = assemble_gallery(
             target_datasets=() if args.proxy_only else (args.dataset,),
-            proxy_ds=PROXY_DATASETS)
+            proxy_ds=PROXY_DATASETS,
+            use_partial=(args.shape_source == "partial"))
     pcfg, clip_retr, dino_rer, fusion_mod, shape_m = gallery.components()
 
     with cold.measure("load_groundingdino_sam"):

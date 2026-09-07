@@ -173,3 +173,68 @@ die konstante Pose-Zeit ihn verdünnt.
 - Die Onboarding-Stufe `dgedi` (GeDi-Deskriptoren für ein neues Objekt) ist implementiert,
   aber nicht gelaufen — nur relevant, wenn geometrisches Re-Ranking benutzt wird, was Stage 3
   für BOP widerlegt hat.
+
+---
+
+## 6. Partielle Wolken gegen Full-Mesh — was die Repräsentation kostet
+
+Gemessen am 2026-09-07 mit `--shape-source fullmesh` (Onboarding n=59, Anfrage n=50).
+
+### Onboarding: −7,8 % (16 V) / −9,6 % (42 V)
+
+| Stufe (Median je CAD) | 16 V | 42 V |
+|---|---|---|
+| `partial` (HPR) entfällt | −1,35 s | −2,76 s |
+| `embed_ulip`: N Encodes → einer | −0,55 s | −1,51 s |
+| `io_load_clouds` entfällt | −0,03 s | −0,03 s |
+| `mesh_sample` kommt hinzu | +0,09 s | +0,08 s |
+| **zurechenbar** | **−1,84 s** | **−4,22 s** |
+
+> Bei 42 Views war die *beobachtete* Differenz mit −5,57 s größer. Die restlichen 1,33 s
+> stecken in `describe` — einem Schritt, der sich zwischen den Konfigurationen gar nicht
+> unterscheiden kann. Lauf-zu-Lauf-Streuung, keine Wirkung; berichtet wird das Zurechenbare.
+
+### Anfrage: −18 % des Retrievals, −6 bis −8 % mit Pose
+
+| Median je Anfrage (n=50) | partial | full-mesh | Δ |
+|---|---|---|---|
+| `ulip`, 16 Views | 176,7 ms | **38,3 ms** | −138,4 ms |
+| `ulip`, 42 Views | 219,4 ms | **38,1 ms** | −181,3 ms |
+| ohne Pose, 16 V | 783 ms | 641 ms | −18,2 % |
+| ohne Pose, 42 V | 1110 ms | 902 ms | −18,7 % |
+| mit Pose, 16 V | 2185 ms | 2043 ms | −6,5 % |
+| mit Pose, 42 V | 2597 ms | 2389 ms | −8,0 % |
+
+Der Full-Mesh-Wert ist **view-unabhängig** (38,3 vs 38,1 ms) — je Objekt liegt genau ein
+Embedding vor.
+
+### ⚠️ Die Query-Zahl ist keine Eigenschaft der Repräsentation
+
+Die Zweige sind unterschiedlich implementiert: Full-Mesh stapelt die Gallery einmal und
+rechnet **ein** Matrixprodukt (`step5_shape_matching.py:1513`), Partial iteriert in Python
+über alle 1278 Objekte und schiebt jedes einzeln auf die GPU (`:1490`).
+
+**Die Arithmetik ist nicht der Kostentreiber.** Partial braucht 42× mehr Skalarprodukte —
+6,9·10⁷ statt 1,6·10⁶ MACs, also rund **3 Mikrosekunden** Unterschied auf dieser Karte.
+Gemessen sind **138 ms**, das sind 0,108 ms je Gallery-Objekt: Kernel-Start und Transfer je
+Schleifendurchlauf, nicht Rechnen.
+
+Richtig gelesen: die partielle Repräsentation ist **inhärent kaum teurer**, kostet aber *so
+wie sie heute gebaut ist* 138–181 ms je Anfrage. Ein vektorisierter Partial-Pfad läge nahe
+bei 38 ms. Die Zahl gehört ins Latenzbudget dieses Systems — **nicht** in eine Begründung
+dafür, welche Repräsentation man wählen sollte.
+
+### Fazit
+
+Onboarding 8–10 %, Anfrage 6–8 % mit Pose, das Meiste davon behebbar. Dem stehen
+Qualitätsunterschiede gegenüber, die je Stage in **verschiedene Richtungen** zeigen: Stage 1
+pc-Modus fusioniert für Full-Mesh (0.5935 vs 0.5868 nDCG), Stage 2 cross-Modus fusioniert für
+Partial (NN 88,44 vs 86,57). Wer nach Laufzeit entscheidet, entscheidet nach der kleineren
+Größe.
+
+**Reproduktion:**
+```bash
+bash scripts/stage4_onboarding.sh --shape-source fullmesh --no-render
+python3 experiments/experiment4_query_latency.py --dataset ycbv --n-queries 50 \
+    --views 16,42 --shape-source fullmesh --no-pose
+```
