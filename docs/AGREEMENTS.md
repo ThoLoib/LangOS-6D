@@ -174,3 +174,16 @@ Hilfetext und einem Beispiel im Kopf des Skripts, kein Einmal-Schnipsel:
 `pipeline.step5_shape_matching.sample_pointcloud_from_mesh` mit `ulip2_num_points` und
 `ulip2_use_colors` aus derselben Config. Und er scheitert **laut**, wenn kein Mesh gesetzt ist:
 ein still fehlender Shape-Kanal ergäbe eine zu niedrige Onboarding-Summe, ohne aufzufallen.
+
+## 2026-09-07 — Branch eval_final: Reproduzierbarkeits-Umbau
+- Neuer Branch `eval_final` (von `tessa-pc` @ 9d03f109). Ziel: alles aus
+  final_results/RESULTS.md einzeln per Terminalzeile reproduzierbar, identische
+  Metriken. Einstiege: `repro_preprocess.py` (generisches Preprocessing, fremde
+  Datensaetze via --cad-dir) und `repro_experiment.py` (ein Aufruf je Ergebnis;
+  setzt die stillen Env-Schalter selbst). Zuordnung: docs/REPRODUCE.md,
+  Beschaffung: docs/DATASETS.md. Keine Bash-Wrapper mehr.
+- Loeschpolitik (vom Nutzer bestaetigt): NUR Ueberholtes loeschen (Smoke-/v1-/
+  mean-Aera-Laeufe, Einmal-Skripte, Backups) — alle Ergebnisordner, die
+  RESULTS.md decken, bleiben inkl. results_per_query lokal UND auf Drive.
+  Die grossen vorverarbeiteten Galerien bleiben auf Drive (Repro-Abkuerzung).
+- Reproduktionslaeufe schreiben in results_repro_* — Originalordner sind tabu.
