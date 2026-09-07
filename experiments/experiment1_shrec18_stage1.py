@@ -1329,7 +1329,7 @@ def run_pass(pass_key: str, paths: dict, index: List[dict],
         # comparable rerun. The DINO gallery cache is keyed by pooling
         # (step4._cache_path), so cls and mean never collide.
         pipeline_overrides={"num_views": None,
-                            "dino_pooling": os.environ.get("SHREC_DINO_POOLING", "cls"),
+                            "dino_pooling": os.environ.get("SHREC_DINO_POOLING", "mean"),
                             **pdef["overrides"]},
     )
     if "shape" not in need:
@@ -2081,9 +2081,9 @@ QUERY_MAX_PTS = 500_000   # cap on query cloud size fed to GeDi/RANSAC
                           # (larger clouds crash the service; see _query_cloud)
 
 # --- dGeDi geometry backend (cross-stage: the SAME service Stage 3 uses) -------
-# STAGE1_GEOMETRY_BACKEND: "gedi" (default, the legacy in-process UnitSphere
-# GeDi re-ranker = the archived winner) or "dgedi" (the dGeDi HTTP service,
-# object_retrieval/dgedi_bridge, for a cross-stage-comparable geometry arm).
+# STAGE1_GEOMETRY_BACKEND: "dgedi" (default — der dGeDi-HTTP-Dienst,
+# object_retrieval/dgedi_bridge; ALLE publizierten Geometrie-Zahlen) oder
+# "gedi" (das archivierte In-Process-UnitSphere-Legacy, nur historisch).
 #
 # SCALE: SHREC'18 queries are SceneNN-metric crops, CADs are ShapeNet arbitrary
 # units — they share NO physical scale, so dGeDi's native per-candidate diameter
@@ -2093,7 +2093,7 @@ QUERY_MAX_PTS = 500_000   # cap on query cloud size fed to GeDi/RANSAC
 # self-normalized by prep_cloud, and here the query is divided by its own
 # diameter. The SHREC gallery's diameters.json MUST be 1.0 so the server's
 # per-candidate co-scale is a no-op (built that way in run_reruns.sh).
-STAGE1_GEOMETRY_BACKEND = os.environ.get("STAGE1_GEOMETRY_BACKEND", "gedi")
+STAGE1_GEOMETRY_BACKEND = os.environ.get("STAGE1_GEOMETRY_BACKEND", "dgedi")
 DGEDI_KP = int(os.environ.get("DGEDI_KP", "6000"))        # repo config
 DGEDI_MAXIT = int(os.environ.get("DGEDI_MAXIT", "10000"))
 DGEDI_USE_ICP = os.environ.get("DGEDI_USE_ICP", "1") != "0"

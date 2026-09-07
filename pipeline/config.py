@@ -85,7 +85,7 @@ class PipelineConfig:
     appearance_encoder: str = "dinov2"  # "dinov2" (default) | "siglip" (ablation E4)
     dino_model_name: str = "facebook/dinov2-base"
     siglip_model_name: str = "google/siglip-base-patch16-224"  # SigLIP ViT-B/16
-    dino_pooling: str = "cls"    # "cls" = CLS token (CNOS/thesis default), "mean" = average pooling (legacy)
+    dino_pooling: str = "mean"   # "mean" = Patch-Mittel (Konfiguration ALLER Experimente) | "cls" = CLS-Token
     dino_top_k: int = 5          # Anzahl der DINOv2-Kandidaten nach Re-Ranking
 
     # Multi-view aggregation for DINOv2 re-ranking (inspired by OPEN, Chu et al. 2024)
@@ -156,7 +156,6 @@ class PipelineConfig:
     # Rotation sensitivity evaluation for ULIP Top-K candidates
     ulip2_rotation_eval: bool = False
     ulip2_rotation_eval_top_k: int = 5
-    ulip2_rotation_eval_method: str = "icp"  # initially only "icp"
     ulip2_rotation_eval_weight: float = 0.0  # 0.0 = debug-only, >0 = optional rerank contribution
 
     # Pfad zu den CAD-Modellen (OBJ/PLY/GLB)
@@ -192,11 +191,6 @@ class PipelineConfig:
     gedi_url: str = "http://gedi:5060"          # GeDi service URL (docker-compose service name)
     gedi_repo_path: str = "/gedi"             # Path to cloned fabiopoiesi/gedi repo (inside GeDi container)
     gedi_checkpoint: str = "/gedi/data/chkpts/3dmatch/chkpt.tar"  # GeDi pretrained checkpoint
-    gedi_dim: int = 32                       # Descriptor output dimension
-    gedi_r_lrf: float = 0.5                  # Local reference frame radius
-    gedi_samples_per_batch: int = 500        # Batch size for GPU descriptor computation
-    gedi_samples_per_patch_lrf: int = 4000   # Points for LRF computation
-    gedi_samples_per_patch_out: int = 512    # Points sampled for PointNet++
     gedi_num_keypoints: int = 5000           # Number of keypoints to sample per cloud
     # Directory for the on-disk descriptor cache. None = disabled (compute on
     # every call, the historical behaviour). Descriptors are a per-CLOUD cost

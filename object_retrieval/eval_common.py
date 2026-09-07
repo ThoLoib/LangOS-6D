@@ -85,9 +85,12 @@ class EvalConfig:
     clip_prune_mode: str = "topk"
     clip_tau: float = 0.37
     clip_fallback_k: int = 20
-    weight_clip: float = 0
-    weight_dino: float = 0.5
-    weight_ulip: float = 0.5
+    # Defaults = die BASE-Gewichte der Evaluation. Frueher 0/0.5/0.5 — eine
+    # dokumentierte Falle (Stage-2-Gewichtsbug): Treiber setzen die Gewichte
+    # weiterhin explizit, der Default darf nur nicht mehr davon abweichen.
+    weight_clip: float = 0.3
+    weight_dino: float = 0.4
+    weight_ulip: float = 0.3
 
     ulip_repo_path: str = "/ulip"
     ulip2_checkpoint: str = "/ulip/checkpoints/ulip2_pointbert_10k.pt"
@@ -445,33 +448,16 @@ def build_pipeline(cfg, cad_mesh_items=None):
             # Fallback hat nachweislich Laeufe verfaelscht.
             partial_items = shape_m._collect_partial_items(cfg.ref_dir)
             if not partial_items:
-                want = shape_m._expected_partial_dim()
-                for fn in sorted(os.listdir(cfg.ref_dir)
-                                 if os.path.isdir(cfg.ref_dir) else []):
-                    if fn.startswith(".ulip_partial_cache_") and fn.endswith(".pt"):
-                        if shape_m._try_load_partial_cache(
-                                os.path.join(cfg.ref_dir, fn), expected_dim=want):
-                            _mmap = {oid: p for oid, p in cad_mesh_items}
-                            for oid in shape_m._cad_embeddings:
-                                if oid not in shape_m._cad_paths and oid in _mmap:
-                                    shape_m._cad_paths[oid] = _mmap[oid]
-                            print(f"[init] ULIP partial-view cache (dim={want}) "
-                                  f"geladen ({len(shape_m._cad_embeddings)} "
-                                  f"models) <- {fn}")
-                            _cache_ok = True
-                            break
-                if not _cache_ok:
-                    raise FileNotFoundError(
-                        f"Partial-Referenz angefragt, aber unter {cfg.ref_dir} "
-                        f"liegen weder *_partial.npz noch ein Embedding-Cache "
-                        f"mit dim={want} (.ulip_partial_cache_*.pt).\n"
-                        f"Erzeugen (Repo-Root):\n"
-                        f"  python3 repro_preprocess.py --dataset <name> --step partial\n"
-                        f"  python3 repro_preprocess.py --dataset <name> --step embed "
-                        f"--passes "
-                        f"{'ulip_pc_xyz' if want == 512 else 'uni3d' if want == 1024 else 'base'}\n"
-                        f"Fertige Caches: gdrive:Masterthesis/OSCAR/object_images/"
-                        f"<name>/ (docs/DATASETS.md).")
+                if not shape_m._load_partial_cache_by_dim(cfg.ref_dir):
+                    raise shape_m._partial_cache_error(cfg.ref_dir)
+                _mmap = {oid: p for oid, p in cad_mesh_items}
+                for oid in shape_m._cad_embeddings:
+                    if oid not in shape_m._cad_paths and oid in _mmap:
+                        shape_m._cad_paths[oid] = _mmap[oid]
+                print(f"[init] ULIP partial-view cache geladen "
+                      f"({len(shape_m._cad_embeddings)} models, "
+                      f"dim={shape_m._expected_partial_dim()}).")
+                _cache_ok = True
 
         if shape_m is not None and cfg.ulip2_use_partial_views and not _cache_ok:
             mesh_map = {oid: p for oid, p in cad_mesh_items}

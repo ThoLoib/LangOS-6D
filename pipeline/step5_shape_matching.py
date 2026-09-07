@@ -1069,31 +1069,10 @@ class ShapeMatcher:
         partial_items = self._collect_partial_items(partial_pc_dir)
         self._partial_view_paths = dict(partial_items)
         if not partial_items:
-            # Die rohen *_partial.npz sind verzichtbar, sobald ihr Embedding-
-            # Cache existiert: er haelt jedes Per-View-Embedding. Der passende
-            # Cache wird ueber die Embedding-Dimension der aktiven Config
-            # eindeutig gewaehlt (coloured 1280 / xyz 512 / uni3d 1024).
-            # Fehlt beides, ist das ein harter Fehler — der fruehere stille
-            # Full-Mesh-Fallback hat nachweislich Laeufe verfaelscht.
-            want = self._expected_partial_dim()
-            for fn in sorted(os.listdir(partial_pc_dir)
-                             if os.path.isdir(partial_pc_dir) else []):
-                if fn.startswith(".ulip_partial_cache_") and fn.endswith(".pt"):
-                    p = os.path.join(partial_pc_dir, fn)
-                    if self._try_load_partial_cache(p, expected_dim=want):
-                        self._apply_partial_view_limit()
-                        return
-            raise FileNotFoundError(
-                f"Partial-Referenz angefragt, aber unter {partial_pc_dir} liegen "
-                f"weder *_partial.npz noch ein Embedding-Cache mit dim={want} "
-                f"(.ulip_partial_cache_*.pt).\n"
-                f"Erzeugen (Repo-Root):\n"
-                f"  python3 repro_preprocess.py --dataset <name> --step partial\n"
-                f"  python3 repro_preprocess.py --dataset <name> --step embed "
-                f"--passes {'ulip_pc_xyz' if want == 512 else 'uni3d' if want == 1024 else 'base'}\n"
-                f"Fertige Caches der Evaluation: "
-                f"gdrive:Masterthesis/OSCAR/object_images/<name>/ (docs/DATASETS.md)."
-            )
+            if self._load_partial_cache_by_dim(partial_pc_dir):
+                self._apply_partial_view_limit()
+                return
+            raise self._partial_cache_error(partial_pc_dir)
 
         # Also need mesh paths for cad_model_path in results
         mesh_items_dict = {
@@ -1259,6 +1238,39 @@ class ShapeMatcher:
         if getattr(self.config, "shape_encoder", "ulip2") == "uni3d":
             return int(getattr(self.config, "uni3d_embed_dim", 1024))
         return int(self.config.ulip2_embed_dim)
+
+    def _load_partial_cache_by_dim(self, partial_pc_dir: str) -> bool:
+        """Die rohen *_partial.npz sind verzichtbar, sobald ihr Embedding-Cache
+        existiert. Waehlt unter ``partial_pc_dir`` den Cache, dessen
+        Embedding-Dimension zur aktiven Config passt."""
+        if not os.path.isdir(partial_pc_dir):
+            return False
+        want = self._expected_partial_dim()
+        for fn in sorted(os.listdir(partial_pc_dir)):
+            if fn.startswith(".ulip_partial_cache_") and fn.endswith(".pt"):
+                if self._try_load_partial_cache(
+                        os.path.join(partial_pc_dir, fn), expected_dim=want):
+                    return True
+        return False
+
+    def _partial_cache_error(self, partial_pc_dir: str) -> FileNotFoundError:
+        """Einheitliche Fehlermeldung: wo die Caches liegen muessen und wie
+        man sie erzeugt. Kein stiller Fallback — der hat nachweislich
+        Laeufe verfaelscht."""
+        want = self._expected_partial_dim()
+        pass_name = ("ulip_pc_xyz" if want == 512
+                     else "uni3d" if want == 1024 else "base")
+        return FileNotFoundError(
+            f"Partial-Referenz angefragt, aber unter {partial_pc_dir} liegen "
+            f"weder *_partial.npz noch ein Embedding-Cache mit dim={want} "
+            f"(.ulip_partial_cache_*.pt).\n"
+            f"Erzeugen (Repo-Root):\n"
+            f"  python3 repro_preprocess.py --dataset <name> --step partial\n"
+            f"  python3 repro_preprocess.py --dataset <name> --step embed "
+            f"--passes {pass_name}\n"
+            f"Fertige Caches der Evaluation: "
+            f"gdrive:Masterthesis/OSCAR/object_images/<name>/ "
+            f"(docs/DATASETS.md).")
 
     def _try_load_partial_cache(self, cache_path: str,
                                 expected_dim: Optional[int] = None) -> bool:
