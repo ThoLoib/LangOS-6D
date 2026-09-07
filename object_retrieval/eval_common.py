@@ -434,34 +434,46 @@ def build_pipeline(cfg, cad_mesh_items=None):
                 print(f"[init] ULIP model load failed: {exc}")
                 shape_m = None
 
-        _forced_ok = False
+        _cache_ok = False
         if shape_m is not None and cfg.ulip2_use_partial_views:
-            # Restored-from-Drive shortcut: force-load a prebuilt partial-view
-            # cache when the raw *_partial.npz are absent (the cache already
-            # holds every per-view embedding; the .npz only fingerprint the
-            # cache name). Point SHREC_FORCE_PARTIAL_CACHE at the cache .pt to
-            # bypass discovery + fingerprint. The cache keeps all 42 views, so a
-            # downstream shape-view sweep (A7) still pools the first N per query.
-            _forced = os.environ.get("SHREC_FORCE_PARTIAL_CACHE", "").strip()
-            if _forced and os.path.isfile(_forced) and shape_m._try_load_partial_cache(_forced):
-                _mmap = {oid: p for oid, p in cad_mesh_items}
-                for oid in shape_m._cad_embeddings:
-                    if oid not in shape_m._cad_paths and oid in _mmap:
-                        shape_m._cad_paths[oid] = _mmap[oid]
-                print(f"[init] ULIP partial-view cache FORCE-loaded "
-                      f"({len(shape_m._cad_embeddings)} models) <- {_forced}")
-                _forced_ok = True
-
-        if shape_m is not None and cfg.ulip2_use_partial_views and not _forced_ok:
-            # --- Partial-view path: encode per-view .npz embeddings ---
+            # Die rohen *_partial.npz sind verzichtbar, sobald ihr Embedding-
+            # Cache existiert (er haelt jedes Per-View-Embedding; ein
+            # Shape-View-Sweep poolt weiterhin die ersten N je Objekt). Der
+            # passende Cache wird ueber die Embedding-Dimension der aktiven
+            # Config eindeutig gewaehlt (coloured 1280 / xyz 512 / uni3d 1024).
+            # Fehlt beides: harter Fehler — der fruehere stille Full-Mesh-
+            # Fallback hat nachweislich Laeufe verfaelscht.
             partial_items = shape_m._collect_partial_items(cfg.ref_dir)
             if not partial_items:
-                print(f"[init] WARNING: no partial PCs found in {cfg.ref_dir}. "
-                      f"Falling back to full-mesh encoding.")
-                cfg.ulip2_use_partial_views = False
-                config.ulip2_use_partial_views = False
+                want = shape_m._expected_partial_dim()
+                for fn in sorted(os.listdir(cfg.ref_dir)
+                                 if os.path.isdir(cfg.ref_dir) else []):
+                    if fn.startswith(".ulip_partial_cache_") and fn.endswith(".pt"):
+                        if shape_m._try_load_partial_cache(
+                                os.path.join(cfg.ref_dir, fn), expected_dim=want):
+                            _mmap = {oid: p for oid, p in cad_mesh_items}
+                            for oid in shape_m._cad_embeddings:
+                                if oid not in shape_m._cad_paths and oid in _mmap:
+                                    shape_m._cad_paths[oid] = _mmap[oid]
+                            print(f"[init] ULIP partial-view cache (dim={want}) "
+                                  f"geladen ({len(shape_m._cad_embeddings)} "
+                                  f"models) <- {fn}")
+                            _cache_ok = True
+                            break
+                if not _cache_ok:
+                    raise FileNotFoundError(
+                        f"Partial-Referenz angefragt, aber unter {cfg.ref_dir} "
+                        f"liegen weder *_partial.npz noch ein Embedding-Cache "
+                        f"mit dim={want} (.ulip_partial_cache_*.pt).\n"
+                        f"Erzeugen (Repo-Root):\n"
+                        f"  python3 repro_preprocess.py --dataset <name> --step partial\n"
+                        f"  python3 repro_preprocess.py --dataset <name> --step embed "
+                        f"--passes "
+                        f"{'ulip_pc_xyz' if want == 512 else 'uni3d' if want == 1024 else 'base'}\n"
+                        f"Fertige Caches: gdrive:Masterthesis/OSCAR/object_images/"
+                        f"<name>/ (docs/DATASETS.md).")
 
-        if shape_m is not None and cfg.ulip2_use_partial_views and not _forced_ok:
+        if shape_m is not None and cfg.ulip2_use_partial_views and not _cache_ok:
             mesh_map = {oid: p for oid, p in cad_mesh_items}
             shape_m._partial_view_paths = dict(partial_items)
             cache_path = shape_m._get_partial_cache_path(
@@ -509,7 +521,7 @@ def build_pipeline(cfg, cad_mesh_items=None):
                     shape_m._partial_mode = True
                     shape_m._save_partial_cache(cache_path)
 
-        elif shape_m is not None and not _forced_ok:
+        elif shape_m is not None and not _cache_ok:
             # --- Full-mesh path (legacy) ---
             print(f"[init] Encoding {len(cad_mesh_items)} ULIP CAD meshes...")
             all_paths = [p for _, p in cad_mesh_items]

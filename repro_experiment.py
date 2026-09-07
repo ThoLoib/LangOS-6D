@@ -3,9 +3,11 @@
 repro_experiment.py — ein Aufruf pro Ergebnis aus final_results/RESULTS.md.
 
 Flach und flag-basiert. Das Skript setzt alle "stillen" Lauf-Variablen
-(SHREC_FORCE_PARTIAL_CACHE, SHREC_DINO_POOLING, STAGE1_GEOMETRY_BACKEND,
-DGEDI_CACHE_DIR, PYTHONHASHSEED, ...) SELBST aus den Flags ab — der Aufrufer
-muss keine Env-Variablen kennen (docs/REPRO_SPEC.md, Anforderung 1). Stufen,
+(SHREC_DINO_POOLING, STAGE1_GEOMETRY_BACKEND, DGEDI_CACHE_DIR,
+PYTHONHASHSEED, ...) SELBST aus den Flags ab — der Aufrufer muss keine
+Env-Variablen kennen (docs/REPRO_SPEC.md, Anforderung 1). Die Partial-Caches
+findet die Pipeline selbst (Auswahl per Embedding-Dimension; fehlt der Cache,
+gibt es einen harten Fehler mit Generierungsanleitung). Stufen,
 die im oscar-Container laufen muessen, wrappt es automatisch in
 `docker compose run`. Jeder Lauf schreibt seine volle Konfiguration als
 run_config.json neben die Ergebnisse und druckt am Ende die Headline-Metrik.
@@ -41,20 +43,10 @@ import urllib.request
 ROOT = os.path.dirname(os.path.abspath(__file__))
 IN_CONTAINER = os.path.exists("/.dockerenv")
 
-# Partial-Caches (Fingerprints der Eval-Galerien; siehe docs/REPRO_SPEC.md P4)
-CACHE = {
-    "shrec_coloured": "object_images/shrec18_v2/.ulip_partial_cache_c3b88090d599c522.pt",
-    "shrec_xyz":      "object_images/shrec18_v2/.ulip_partial_cache_641102dfbaf4e90c.pt",
-    "shrec_uni3d":    "object_images/shrec18_v2/.ulip_partial_cache_eabcf9b9096553c9.pt",
-    "mi3dor":         "object_images/MI3DOR/.ulip_partial_cache_f6bcf93bb6c92c68.pt",
-}
-
-# Stage-1-Arme: welcher Shape-Cache, ob Geometrie. Alles andere leitet der
-# Treiber (experiments/experiment1_shrec18_stage1.py) aus dem Arm-Namen ab.
-S1_FULLMESH = {"E2b_fullmesh", "E2b_fullmesh_geo", "E2b_fullmesh_shape_only",
-               "E7_ulip2_cross_fullmesh", "E7_ulip2_cross_fullmesh_shape_only"}
-S1_XYZ      = {"O5_xyz_only", "O5_xyz_shape_only"}
-S1_UNI3D    = {"E7_uni3d", "E7_uni3d_shape_only"}
+# Stage-1-Arme mit Geometrie-Re-Ranking. Alles andere (inkl. Wahl des
+# Partial-Caches) leitet die Pipeline selbst aus der Arm-Config ab: die
+# Caches werden in step5 ueber die Embedding-Dimension eindeutig erkannt,
+# fehlende Caches sind ein harter Fehler mit Generierungsanleitung.
 S1_GEOMETRY = {"E2_fitness", "E2_chamfer_ransac", "E2_both",
                "O1c_gedi_post_fusion", "O1e_gedi_with_base", "E2b_fullmesh_geo"}
 
@@ -184,14 +176,6 @@ def main():
         prefix = "/app/" if IN_CONTAINER else ""
         if args.subset:
             env["SHREC_QUERY_SUBSET"] = prefix + args.subset
-        if args.arm in S1_FULLMESH:
-            pass                                   # KEIN Partial-Cache erzwingen
-        elif args.arm in S1_XYZ:
-            env["SHREC_FORCE_PARTIAL_CACHE"] = prefix + CACHE["shrec_xyz"]
-        elif args.arm in S1_UNI3D:
-            env["SHREC_FORCE_PARTIAL_CACHE"] = prefix + CACHE["shrec_uni3d"]
-        else:
-            env["SHREC_FORCE_PARTIAL_CACHE"] = prefix + CACHE["shrec_coloured"]
         geo = args.arm in S1_GEOMETRY
         if geo:
             env.update({"STAGE1_GEOMETRY_BACKEND": "dgedi",
@@ -233,9 +217,6 @@ def main():
                "MI3DOR_RESULT_FOLDER": args.out or "results_repro_stage2"}
         if args.limit:
             env["MI3DOR_MAX_QUERIES_PER_CAT"] = str(args.limit)
-        if args.gallery == "partial":
-            env["SHREC_FORCE_PARTIAL_CACHE"] = (
-                ("/app/" if IN_CONTAINER else "") + CACHE["mi3dor"])
         if not IN_CONTAINER and not args.no_docker:
             reexec_in_container(env)
         outdir = os.path.join(ROOT, "object_retrieval", env["MI3DOR_RESULT_FOLDER"])

@@ -35,7 +35,11 @@ Ergebnisordner mit `results_per_query`-Daten bleiben erhalten (Keep-Liste in
   `dgedi` (Port 5061) mit `DGEDI_CACHE_DIR` zur Gallery-Wahl — `repro_experiment.py`
   prüft die geladene Gallery vor jedem Geometrie-Lauf.
 - SHREC/MI3DOR-Partialwolken existieren nur noch als `.ulip_partial_cache_*.pt`;
-  die Erzwingung übernimmt `repro_experiment.py` (Arm-abhängig).
+  die Pipeline findet den passenden Cache selbst (Auswahl per
+  Embedding-Dimension: coloured 1280 / xyz 512 / uni3d 1024). Fehlt er, gibt es
+  einen **harten Fehler** mit Generierungsanleitung — den früheren stillen
+  Full-Mesh-Fallback und den Env-Schalter `SHREC_FORCE_PARTIAL_CACHE` gibt es
+  nicht mehr.
 - Blender muss exakt 3.4.1 sein (3.3.x scheitert still mit rc=0).
 - GPU-Jobs strikt sequenziell (24-GB-Karte).
 - Reproduktionsläufe schreiben nach `results_repro_*`; Originalordner sind tabu.

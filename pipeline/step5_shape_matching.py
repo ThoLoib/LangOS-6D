@@ -1065,30 +1065,35 @@ class ShapeMatcher:
             cad_dir, partial_pc_dir,
         )
 
-        # Restored-from-Drive shortcut: force-load a prebuilt partial-view cache
-        # when the raw *_partial.npz are absent. The cache already holds every
-        # per-view embedding; the .npz are only needed to fingerprint the cache
-        # name, so with them gone the normal path can't find it and falls back
-        # to full-mesh. Point SHREC_FORCE_PARTIAL_CACHE at the cache .pt to
-        # bypass discovery + fingerprint entirely.
-        _forced = os.environ.get("SHREC_FORCE_PARTIAL_CACHE", "").strip()
-        if _forced and os.path.isfile(_forced) and self._try_load_partial_cache(_forced):
-            logger.warning(
-                "Partial-view cache force-loaded (npz discovery bypassed): %s", _forced)
-            self._apply_partial_view_limit()
-            return
-
         # Discover objects and their partial .npz files (also stored for rotation eval)
         partial_items = self._collect_partial_items(partial_pc_dir)
         self._partial_view_paths = dict(partial_items)
         if not partial_items:
-            logger.warning(
-                "Keine partial PCs gefunden in %s. Fallback auf full mesh.",
-                partial_pc_dir,
+            # Die rohen *_partial.npz sind verzichtbar, sobald ihr Embedding-
+            # Cache existiert: er haelt jedes Per-View-Embedding. Der passende
+            # Cache wird ueber die Embedding-Dimension der aktiven Config
+            # eindeutig gewaehlt (coloured 1280 / xyz 512 / uni3d 1024).
+            # Fehlt beides, ist das ein harter Fehler — der fruehere stille
+            # Full-Mesh-Fallback hat nachweislich Laeufe verfaelscht.
+            want = self._expected_partial_dim()
+            for fn in sorted(os.listdir(partial_pc_dir)
+                             if os.path.isdir(partial_pc_dir) else []):
+                if fn.startswith(".ulip_partial_cache_") and fn.endswith(".pt"):
+                    p = os.path.join(partial_pc_dir, fn)
+                    if self._try_load_partial_cache(p, expected_dim=want):
+                        self._apply_partial_view_limit()
+                        return
+            raise FileNotFoundError(
+                f"Partial-Referenz angefragt, aber unter {partial_pc_dir} liegen "
+                f"weder *_partial.npz noch ein Embedding-Cache mit dim={want} "
+                f"(.ulip_partial_cache_*.pt).\n"
+                f"Erzeugen (Repo-Root):\n"
+                f"  python3 repro_preprocess.py --dataset <name> --step partial\n"
+                f"  python3 repro_preprocess.py --dataset <name> --step embed "
+                f"--passes {'ulip_pc_xyz' if want == 512 else 'uni3d' if want == 1024 else 'base'}\n"
+                f"Fertige Caches der Evaluation: "
+                f"gdrive:Masterthesis/OSCAR/object_images/<name>/ (docs/DATASETS.md)."
             )
-            self.config.ulip2_use_partial_views = False
-            self.load_cad_models(cad_dir=cad_dir, allowed_extensions=allowed_extensions)
-            return
 
         # Also need mesh paths for cad_model_path in results
         mesh_items_dict = {
@@ -1248,8 +1253,17 @@ class ShapeMatcher:
         fname = f".ulip_partial_cache_{digest}.pt"
         return os.path.join(partial_pc_dir, fname)
 
-    def _try_load_partial_cache(self, cache_path: str) -> bool:
-        """Load partial-view cache if it exists."""
+    def _expected_partial_dim(self) -> int:
+        """Embedding-Dimension der aktiven Shape-Config — unterscheidet die
+        drei Partial-Caches eindeutig (coloured 1280 / xyz 512 / uni3d 1024)."""
+        if getattr(self.config, "shape_encoder", "ulip2") == "uni3d":
+            return int(getattr(self.config, "uni3d_embed_dim", 1024))
+        return int(self.config.ulip2_embed_dim)
+
+    def _try_load_partial_cache(self, cache_path: str,
+                                expected_dim: Optional[int] = None) -> bool:
+        """Load partial-view cache if it exists (optionally nur bei passender
+        Embedding-Dimension)."""
         if not os.path.isfile(cache_path):
             return False
 
@@ -1270,6 +1284,15 @@ class ShapeMatcher:
 
             if not loaded_emb:
                 return False
+
+            if expected_dim:
+                got = int(next(iter(loaded_emb.values())).shape[-1])
+                if got != int(expected_dim):
+                    logger.info(
+                        "Partial-Cache %s passt nicht zur Config "
+                        "(dim %d != %d) — uebersprungen.",
+                        cache_path, got, expected_dim)
+                    return False
 
             self._cad_embeddings = loaded_emb
             self._cad_paths = {k: v for k, v in paths.items() if isinstance(v, str)}

@@ -77,7 +77,7 @@ docker compose run --rm oscar python3 experiments/experiment1_shrec18_stage1.py 
 docker compose run --rm oscar python3 experiments/experiment1_shrec18_stage1.py --weight-sweep --weight-step 0.1 --sweep-shape-pass base --results-root object_retrieval/results_repro_stage1
 
 # 1.5 C2 Shortlist-Tiefe: identischer Arm mit kleinerem K (nutzt den K=50-Registrierungs-Cache):
-docker compose run --rm -e SHREC_DINO_POOLING=mean -e PYTHONHASHSEED=0 -e STAGE1_GEOMETRY_BACKEND=dgedi -e DGEDI_CACHE_DIR=.dgedi_gallery_shrec -e GEOM_VOXEL=0.02 -e SHREC_FORCE_PARTIAL_CACHE=/app/object_images/shrec18_v2/.ulip_partial_cache_c3b88090d599c522.pt oscar python3 experiments/experiment1_shrec18_stage1.py --ablations E2_chamfer_ransac --with-geometry --geom-k 20 --results-root object_retrieval/results_repro_stage1_k20
+docker compose run --rm -e SHREC_DINO_POOLING=mean -e PYTHONHASHSEED=0 -e STAGE1_GEOMETRY_BACKEND=dgedi -e DGEDI_CACHE_DIR=.dgedi_gallery_shrec -e GEOM_VOXEL=0.02 oscar python3 experiments/experiment1_shrec18_stage1.py --data-root eval/datasets/shrec18/shrec18_full --images-dir object_images/shrec18_v2 --desc-file object_database/shrec18_v2/descriptions_attributes.json --ablations E2_chamfer_ransac --with-geometry --geom-k 20 --results-root object_retrieval/results_repro_stage1_k20
 #   (K=5 analog mit --geom-k 5; erwartet 0.6279 bzw. 0.6022)
 
 # 1.6 Per-Query-Bilanzen:
