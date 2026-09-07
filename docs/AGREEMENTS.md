@@ -135,3 +135,17 @@ neue Fusionsvariante einen vollen Lauf (~5 h) statt Minuten.
 **Stichprobengrößen werden benannt, nicht beschönigt.** Stage 4: 6 der 8 Onboarding-Stufen
 sind Vollerhebungen (n=59), nicht Stichproben. `render` (n=5) ist mit >50 % der Onboarding-Zeit
 der größte Posten und die schwächste Stelle — nachholbar in ~48 min.
+
+## 2026-09-07 — Stage-2-Konfiguration gewechselt
+
+**Die beste MI3DOR-Konfiguration ist `cross × partial`, fusioniert: NN 88.44 / FT 0.6918.**
+Der frühere Produktionswert (full-mesh, 86.57 / 0.6818) ist damit abgelöst.
+
+*Warum das zählt:* full-mesh ist **isoliert** um 9.99 NN besser und **fusioniert** um 1.87 NN
+schlechter. Die Genauigkeit eines Kanals sagt seinen Beitrag zur Fusion nicht vorher — die
+Korrelation seiner Fehler mit den übrigen Kanälen tut es. Die frühere Aussage „im cross-Modus
+ist Full-Mesh die überlegene Wahl" galt nur für den isolierten Arm.
+
+*Wie anwenden:* `SHREC_FORCE_PARTIAL_CACHE` ist **nicht** SHREC-spezifisch und muss für jeden
+MI3DOR-Partial-Pass gesetzt werden — es gibt keine `*_partial.npz` mehr, nur den Cache. Ohne
+die Variable läuft der Pass still als full-mesh.

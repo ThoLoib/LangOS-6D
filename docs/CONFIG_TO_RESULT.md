@@ -102,6 +102,13 @@
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | 42 | `oscar_maxview` | 84.88 | 0.575 | 0.000 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | 42 | `oscar_softmax` | 85.04 | 0.575 | 0.000 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | 42 | `clip_pruned_dino_ulip` | 85.04 | 0.575 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `clip_only` | 67.95 | 0.575 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `dino_only_full` | 83.03 | 0.629 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `ulip_only_full` | 68.11 | 0.453 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `clip_dino_ulip_full` | 88.44 | 0.692 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `oscar_maxview` | 84.88 | 0.575 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `oscar_softmax` | 85.04 | 0.575 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | 42 | `clip_pruned_dino_ulip` | 85.70 | 0.575 | 0.000 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | 42 | `clip_only` | 67.95 | 0.575 | 0.000 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | 42 | `dino_only_full` | 83.03 | 0.629 | 0.000 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | 42 | `ulip_only_full` | 78.10 | 0.510 | 0.000 |

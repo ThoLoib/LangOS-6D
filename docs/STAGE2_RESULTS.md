@@ -1,9 +1,9 @@
 # Stage 2 — MI3DOR Transfer-Test: vollständige Ergebnisse
 
-*Alle Arme der gewählten Config mit vollständigen Metriken, plus A4-Transfer,
+*Alle Arme beider Gallery-Repräsentationen mit vollständigen Metriken, plus
 Gewichts-Heatmap, OSCAR-Legacy-Vergleich und Kategorien-Analyse. Ergebnisordner:
-`object_retrieval/results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix/fullmesh`.
-Stand 2026-09-06. n = 10.500 Queries / 3.848 CADs / 21 Kategorien.*
+`..._dinomean_ulipfix/fullmesh` und `..._dinomean_partialforce/partial`.
+Stand 2026-09-07. n = 10.500 Queries / 3.848 CADs / 21 Kategorien.*
 
 Begleitdokumente: `STAGE1_RESULTS.md` · `EVALUATION_STORY_AND_PLAN.md` ·
 `CONFIG_COMPARISON.md`.
@@ -26,12 +26,10 @@ Begleitdokumente: `STAGE1_RESULTS.md` · `EVALUATION_STORY_AND_PLAN.md` ·
 > Query-Punktwolke, der Shape-Kanal *muss* also das Bild encodieren. Genau das misst
 > Stage-1-A5 vorab: der Wechsel pc → cross kostet dort −0.054 nDCG bzw. **−19,5 % hit@1**.
 
-> ⚠️ **Full-Mesh statt Partial-Views.** Auf dieser Maschine fehlen die MI3DOR-`*_partial.npz`;
-> `build_pipeline` fällt still auf Full-Mesh zurück (Logbeleg: *„no partial PCs found …
-> Falling back to full-mesh encoding"*). Das war eine **Nebenwirkung, keine Entscheidung** —
-> inhaltlich aber die bessere Wahl, siehe §3.
-
----
+> **Zwei Gallery-Repräsentationen, beide gemessen.** Die Produktionszahlen dieses Dokuments
+> stammen aus dem Full-Mesh-Lauf. Seit 2026-09-07 liegt der fusionierte Partial-Gegenpart vor
+> (`..._partialforce/partial`) — und er ist **besser**: NN 88.44 / FT 0.6918 gegen 86.57 / 0.6818.
+> Siehe §3; die Arm-Tabelle in §1 führt beide.
 
 ## 0.1 Die Metriken (MI3DOR/SHREC-08-Konvention)
 
@@ -58,9 +56,11 @@ FT die Listenqualität. ANMRR wird als rangbasiertes Gegenstück mitberichtet.
 | Arm | NN | FT | ST | F1 | nDCG@2R | mAP | ANMRR ↓ |
 |---|---|---|---|---|---|---|---|
 | CLIP-Text allein | 67.95 | 0.575 | 0.755 | 0.160 | 0.720 | 0.580 | 0.339 |
-| ULIP-2 allein (cross) | 78.10 | 0.510 | 0.649 | 0.188 | 0.652 | 0.518 | 0.409 |
+| ULIP-2 allein (cross, full-mesh) | 78.10 | 0.510 | 0.649 | 0.188 | 0.652 | 0.518 | 0.409 |
+| ULIP-2 allein (cross, partial) | 68.11 | 0.453 | 0.607 | — | 0.598 | 0.451 | 0.467 |
 | DINOv2 allein | 83.03 | 0.629 | 0.753 | 0.200 | 0.751 | 0.647 | 0.297 |
-| **CLIP+DINO+ULIP (volle Fusion)** | **86.57** | **0.682** | **0.822** | **0.215** | **0.813** | **0.705** | **0.238** |
+| CLIP+DINO+ULIP (volle Fusion, full-mesh) | 86.57 | 0.682 | 0.822 | 0.215 | 0.813 | 0.705 | 0.238 |
+| **CLIP+DINO+ULIP (volle Fusion, partial)** | **88.44** | **0.692** | **0.830** | **0.216** | **0.821** | **0.714** | **0.227** |
 | OSCAR-Kaskade (Hard-Max) | 84.88 | 0.575 | 0.755 | 0.160 | 0.733 | 0.592 | 0.337 |
 | OSCAR-Kaskade (Softmax) | 85.04 | 0.575 | 0.755 | 0.160 | 0.734 | 0.592 | 0.337 |
 | CLIP-gepruned + DINO+ULIP | 86.52 | 0.575 | 0.755 | 0.160 | 0.735 | 0.593 | 0.337 |
@@ -125,13 +125,13 @@ das Gewicht wandert aber **zu Text** (0.45), nicht zu View.
 
 ---
 
-## 3. A4-Transfer — Partial-Views vs. Full-Mesh im cross-Modus
+## 3. Partial-Views vs. Full-Mesh im cross-Modus
 
-Aus `..._tau037_dinomean/{partial,fullmesh}` (07./08.08.), dem einzigen MI3DOR-Lauf, in dem
-`ulip2_use_partial_views=True` tatsächlich griff. Config verifiziert identisch zur heutigen
-(42 Views, k=5, mean, cross, τ=0.37, gleicher Checkpoint, n=10500); einziger Unterschied sind
-die Fusionsgewichte (0, 0.5, 0.5) — **für die isolierten Arme wirkungslos**, da sie kein
-gewichtetes Ranking bilden. Die fusionierten Arme jenes Laufs werden deshalb **nicht** zitiert.
+Die Gallery-Repräsentation ist die eine Designachse, die MI3DOR und SHREC gemeinsam haben.
+**Sie fällt isoliert und fusioniert entgegengesetzt aus** — das ist der Kernbefund dieses
+Abschnitts.
+
+### 3.1 Isoliert: full-mesh gewinnt klar
 
 | ULIP-2 isoliert | partial | **full-mesh** | Δ |
 |---|---|---|---|
@@ -142,16 +142,54 @@ gewichtetes Ranking bilden. Die fusionierten Arme jenes Laufs werden deshalb **n
 | mAP | 0.451 | **0.518** | +0.067 |
 | ANMRR ↓ | 0.467 | **0.409** | besser |
 
-**Full-mesh gewinnt auf jeder Metrik — exakt umgekehrt zu SHREC** (dort partial +0.0397 nDCG
-isoliert). Kein Widerspruch, sondern ein verwertbarer Befund:
+### 3.2 Fusioniert: partial gewinnt
 
-> **Die Referenz muss zur Natur der Query passen.** SHREC fragt mit einer *partiellen
-> Punktwolke* (pc-Modus) → eine partielle Referenz ist geometrisch vergleichbar. MI3DOR fragt
-> mit einem *Bild* (cross-Modus) → das Bild zeigt das **vollständige** Objekt, also passt die
-> Full-Mesh-Referenz besser.
+| volle Fusion | **partial** | full-mesh | Δ |
+|---|---|---|---|
+| NN | **88.44** | 86.57 | **+1.87** |
+| FT | **0.6918** | 0.6818 | +0.0100 |
+| ST | **0.830** | 0.822 | +0.008 |
+| nDCG@2R | **0.821** | 0.813 | +0.008 |
+| mAP | **0.714** | 0.705 | +0.009 |
+| ANMRR ↓ | **0.227** | 0.238 | besser |
 
-Damit ist der Full-Mesh-Fallback aus §0 **inhaltlich kein Schaden** — im cross-Modus ist er die
-überlegene Wahl.
+> **Der schwächere Kanal trägt mehr bei.** Full-mesh ist für sich um 9.99 NN besser und
+> verliert fusioniert um 1.87 NN. Das Vorzeichen dreht sich also **nicht** deshalb, weil der
+> partielle Kanal genauer wäre — er ist es messbar nicht —, sondern weil seine Fehler mit denen
+> von Text und Erscheinung **weniger korrelieren**. Ein Kanal, der dasselbe falsch macht wie
+> DINOv2, fügt der Fusion nichts hinzu, auch wenn er isoliert stärker ist.
+
+Damit reproduziert MI3DOR das Muster aus Stage 1 exakt: dort ist im cross-Modus fusioniert
+ebenfalls partial vorn (0.5588 gegen 0.5511 nDCG). **Fusioniert stimmen beide cross-Datensätze
+überein.** Isoliert widersprechen sie sich (SHREC: partial +0.024; MI3DOR: full-mesh +0.057) —
+was daran liegen dürfte, dass MI3DORs partielle Punktwolken aus gerenderten Ansichten stammen
+und SHRECs aus echten Scans.
+
+### 3.3 Was das für die Konfiguration heißt
+
+Die frühere Schlussfolgerung „im cross-Modus ist die Full-Mesh-Referenz die überlegene Wahl"
+galt **nur für den isolierten Kanal** und ist für das Gesamtsystem nicht haltbar. Die beste
+Stage-2-Konfiguration ist **cross × partial, fusioniert: NN 88.44 / FT 0.6918.**
+
+Nebenwirkung auf §2: der dortige Gewichts-Sweep lief auf der **Full-Mesh**-Gallery; sein
+Optimum (0.6902 FT) liegt damit **unter** dem neuen BASE auf der partiellen Gallery (0.6918).
+Die Aussage des Sweeps — BASE liegt nahe am Optimum, Shape gehört ohne Tiefe herunter — bleibt
+davon unberührt, seine absoluten Werte sind aber nicht mit §3.2 vergleichbar.
+
+### 3.4 Wie der Lauf abgesichert ist
+
+Auf dieser Maschine existieren **keine** MI3DOR-`*_partial.npz` mehr; der Lauf nutzt den
+vorhandenen Cache über `SHREC_FORCE_PARTIAL_CACHE` (die Variable ist nicht SHREC-spezifisch).
+Drei unabhängige Prüfungen:
+
+1. **Cache wirklich erzwungen** — Logzeile `ULIP partial-view cache FORCE-loaded (3848 models)`,
+   und `ulip2_use_partial_views=True` im geschriebenen Config-Block.
+2. **Kein stiller Fallback** — der ULIP-Arm unterscheidet sich vom Full-Mesh-Lauf (68.11 vs 78.10).
+3. **Bitgenaue Reproduktion**: der isolierte Arm trifft den Lauf vom 2026-08-07, der noch echte
+   `*_partial.npz` las, auf **allen fünf Metriken exakt** (größte Abweichung 0.0e+00). Der Cache
+   bildet also genau ab, was die Rohdateien erzeugt hätten.
+
+---
 
 ### Die MI3DOR-Meshes tragen keine Farbe — ein möglicher Grund für den schwachen Shape-Kanal
 
@@ -300,8 +338,10 @@ Query-Modi.
 3. **τ = 0.37 greift praktisch nie:** bei **96,9 %** der Queries prunt der Schwellwert auf leer,
    es übernimmt der Top-20-Fallback. Die „Schwellwert-Kaskade" ist faktisch „CLIP-Top-20 →
    DINO". Konsistent mit SHREC (98,3 %).
-4. **Die partial-vs-full-mesh-Antwort kippt mit dem Query-Modus** — die Referenz muss zur Natur
-   der Query passen (§3). Das verbindet A4 und A5 zu einer Aussage statt zweier Einzelbefunde.
+4. **Die partial-vs-full-mesh-Antwort kippt zwischen isoliert und fusioniert** (§3): full-mesh
+   ist für sich um 9.99 NN besser, verliert fusioniert aber um 1.87 NN. Nicht Genauigkeit
+   entscheidet, sondern **Fehlerkorrelation** mit den anderen Kanälen. Fusioniert stimmen
+   MI3DOR und SHREC im cross-Modus überein (beide zugunsten von partial), isoliert nicht.
 5. **Der View-Count ist auf MI3DOR fast wirkungslos** (V8 ≈ V42, volle Fusion 86.62 vs 86.57),
    anders als auf SHREC. Plausibel: bei Bild-Queries auf gerenderte Ansichten reichen wenige
    Blickwinkel, während die pc-Query auf SHREC von jeder zusätzlichen Partialansicht profitiert.

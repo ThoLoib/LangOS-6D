@@ -187,3 +187,25 @@ Ergebnis aus einer Quelle in eine Tabelle laufen.
 Die Skript- und Umgebungsspalten stammen aus den Skripten selbst und werden **von Hand**
 gepflegt — die Treiber schreiben sie nicht mit. Genau das war die Lücke, durch die der
 Full-Mesh-Fallback vom 06.09. schlüpfen konnte.
+
+### MI3DOR partial, fusioniert (2026-09-07) — der fehlende A4-Gegenpart
+
+| | |
+|---|---|
+| Skript | `scripts/run_stage2_partial_fused.sh` |
+| Treiber | `object_retrieval/retrieval_mi3dor_eval_oscarplus.py` |
+| Ergebnisordner | `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce/partial` |
+| **Env** | `SHREC_FORCE_PARTIAL_CACHE=/app/object_images/MI3DOR/.ulip_partial_cache_f6bcf93bb6c92c68.pt` |
+| | `MI3DOR_MODES=partial` · `MI3DOR_DINO_POOLING=mean` · `MI3DOR_RESULT_FOLDER=…partialforce` · `PYTHONHASHSEED=0` |
+| Gewichte | (0.3, 0.4, 0.3) — Treiber-Default, verifiziert im Config-Block |
+| Ergebnis | fusioniert **NN 88.44 / FT 0.6918** · ULIP isoliert NN 68.11 / FT 0.4529 |
+| Laufzeit | 19:39 → 02:44 (7 h 05), 2,36 s/Query |
+
+**Warum die Env-Variable nötig ist:** auf dieser Maschine gibt es **null** MI3DOR-`*_partial.npz`
+(nur den 791-MB-Cache). Ohne `SHREC_FORCE_PARTIAL_CACHE` fällt `build_pipeline` still auf
+Full-Mesh zurück — genau das ist `..._ulipfix/partial` passiert, dessen Config-Block deshalb
+`ulip2_use_partial_views=False` zeigt. Die Variable ist **nicht** SHREC-spezifisch.
+
+**Validierung:** der isolierte ULIP-Arm trifft den Lauf `..._dinomean/partial` vom 2026-08-07
+(der noch echte `*_partial.npz` las) auf allen fünf Metriken **exakt** — größte Abweichung
+0.0e+00. Der Cache bildet die Rohdateien bitgenau ab.

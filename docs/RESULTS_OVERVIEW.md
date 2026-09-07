@@ -3,7 +3,7 @@
 > **Generiert** von `tools/results_overview.py`. Nicht von Hand ändern —
 > nach jedem Lauf neu erzeugen. Handgepflegte Tabellen driften.
 
-Stand: 2026-09-06 18:38
+Stand: 2026-09-07 02:47
 
 
 ## Stage 1 — SHREC'18 (43 Arme)
@@ -54,7 +54,7 @@ Stand: 2026-09-06 18:38
 | `O5_xyz_only` | 0.5880 | 0.3541 | object_retrieval/ |
 | `O5_xyz_shape_only` | 0.5422 | 0.3598 | object_retrieval/ |
 
-## Stage 2 — MI3DOR (56 Zeilen)
+## Stage 2 — MI3DOR (63 Zeilen)
 
 | Ordner | Modus | Arm | NN | FT | mAP |
 |---|---|---|---|---|---|
@@ -100,6 +100,13 @@ Stand: 2026-09-06 18:38
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | `oscar_maxview` | 84.88 | 0.575 | 0.592 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | `oscar_softmax` | 85.04 | 0.575 | 0.592 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_fixedw` | partial | `ulip_only_full` | 0.00 | 0.000 | 0.000 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `clip_dino_ulip_full` | 88.44 | 0.692 | 0.718 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `clip_only` | 67.95 | 0.575 | 0.580 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `clip_pruned_dino_ulip` | 85.70 | 0.575 | 0.592 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `dino_only_full` | 83.03 | 0.629 | 0.647 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `oscar_maxview` | 84.88 | 0.575 | 0.592 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `oscar_softmax` | 85.04 | 0.575 | 0.592 |
+| `results_mi3dor_oscarplus_v2_tau037_dinomean_partialforce` | partial | `ulip_only_full` | 68.11 | 0.453 | 0.451 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | `clip_dino_ulip_full` | 86.57 | 0.682 | 0.705 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | `clip_only` | 67.95 | 0.575 | 0.580 |
 | `results_mi3dor_oscarplus_v2_tau037_dinomean_ulipfix` | fullmesh | `clip_pruned_dino_ulip` | 86.52 | 0.575 | 0.593 |
