@@ -149,3 +149,28 @@ ist Full-Mesh die überlegene Wahl" galt nur für den isolierten Arm.
 *Wie anwenden:* `SHREC_FORCE_PARTIAL_CACHE` ist **nicht** SHREC-spezifisch und muss für jeden
 MI3DOR-Partial-Pass gesetzt werden — es gibt keine `*_partial.npz` mehr, nur den Cache. Ohne
 die Variable läuft der Pass still als full-mesh.
+
+## 2026-09-07 — Verdeckung als eigene Achse; Full-Mesh-Latenz messbar gemacht
+
+**Verdeckung ist der stärkste gemessene Faktor und gehört in die Ergebnisse.** R@1 fällt von
+0,627 (>95 % sichtbar) auf 0,098 (<50 %) — innerhalb der Datensätze eine Spanne von 0,37 bis
+0,56, gegen 0,033 der größten Designachse. Reproduzierbar über
+`python3 tools/occlusion_analysis.py`; das Skript **bricht ab**, wenn die selbst gerechnete
+R@1 nicht zur publizierten passt.
+*Warum das Skript und nicht nur eine Zahl:* die Auswertung verknüpft zwei Datenquellen über
+`(scene_id, im_id, gt_idx)` — eine falsche Verknüpfung liefert plausible, aber falsche Werte.
+Die Selbstprüfung ist der einzige Schutz davor.
+
+**Zwei Zahlen zur Verdeckung, die NICHT vermischt werden dürfen:** die gepoolte Spanne (0,53)
+überzeichnet, weil T-LESS 73 % des stark verdeckten Bins stellt und ohnehin das schwächste
+Retrieval hat. Berichtet wird die Spanne **je Datensatz**.
+
+**Stage-4-Messcode bleibt von Hand aufrufbar.** Jede Messvariante ist ein CLI-Flag mit
+Hilfetext und einem Beispiel im Kopf des Skripts, kein Einmal-Schnipsel:
+`experiment4_onboarding.py --shape-source {partial,fullmesh}` bzw.
+`scripts/stage4_onboarding.sh --shape-source fullmesh`.
+
+**Der Full-Mesh-Zweig ruft die Pipeline auf, nicht eine Nachbildung** —
+`pipeline.step5_shape_matching.sample_pointcloud_from_mesh` mit `ulip2_num_points` und
+`ulip2_use_colors` aus derselben Config. Und er scheitert **laut**, wenn kein Mesh gesetzt ist:
+ein still fehlender Shape-Kanal ergäbe eine zu niedrige Onboarding-Summe, ohne aufzufallen.

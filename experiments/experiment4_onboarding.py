@@ -51,6 +51,12 @@ Beispiele
     # Aufschlag der Cache-Invalidierung dazu
     python3 experiments/experiment4_onboarding.py --stages embed \\
         --measure-invalidation
+
+    # Shape-Kanal aus dem FULL MESH statt aus N Teilwolken.
+    # 'partial' entfaellt dabei; dafuer kommt die Stufe 'mesh_sample' dazu.
+    python3 experiments/experiment4_onboarding.py --stages mesh,describe,embed \\
+        --shape-source fullmesh --reuse-renders \\
+        --out results_stage4/onboarding_fullmesh.json
 """
 from __future__ import annotations
 
@@ -245,7 +251,13 @@ class Encoders:
     Systemstartkosten, keine Onboarding-Kosten. Sie wird separat berichtet.
     """
 
-    def __init__(self, t: Timings):
+    def __init__(self, t: Timings, fullmesh_shape: bool = False):
+        # fullmesh_shape schaltet den Shape-Kanal von N Teilwolken auf EINE
+        # Mesh-Abtastung um (--shape-source fullmesh). Betrifft NUR den
+        # Shape-Kanal; DINOv2 und CLIP-Text brauchen die Renderings unabhaengig
+        # davon und bleiben unveraendert.
+        self.fullmesh_shape = fullmesh_shape
+        self.mesh_path_for_obj = None      # je Objekt vom Aufrufer gesetzt
         # Ueber build_pipeline, NICHT ueber ein blankes PipelineConfig(): dessen
         # ulip_repo_path ist "" und der Encoder bricht ab. Wichtiger noch — nur
         # so sind Backbone, Checkpoint, Punktzahl und Farbmodus identisch mit der
@@ -307,17 +319,47 @@ class Encoders:
             except Exception as exc:            # nicht abbrechen, nur vermerken
                 info["embed_clip_skipped"] = str(exc)
 
-        npz = sorted(glob.glob(os.path.join(obj_dir, "*_partial.npz")))[:num_views]
-        if npz:
-            clouds = []
-            with t.measure("io_load_clouds"):
-                for p in npz:
-                    d = np.load(p)
-                    clouds.append((d["points"], d.get("colors")))
-            with t.measure("embed_ulip"):
-                for pts, col in clouds:
+        if self.fullmesh_shape:
+            # --- Full-Mesh-Variante des Shape-Kanals (--shape-source fullmesh) --
+            # Statt N Teilwolken wird das Mesh EINMAL abgetastet und EINMAL
+            # encodiert. Beide Schritte kommen aus der Pipeline selbst
+            # (step5.sample_pointcloud_from_mesh / ShapeMatcher.encode_pointcloud),
+            # damit hier nicht etwas anderes gemessen wird als die Pipeline tut.
+            # Getrennt gemessen, weil das Abtasten CPU- und das Encodieren
+            # GPU-Arbeit ist und beide ganz anders skalieren.
+            if self.mesh_path_for_obj:
+                from pipeline.step5_shape_matching import (
+                    sample_pointcloud_from_mesh)
+                cfg = self.ulip.config
+                use_colors = (cfg.ulip2_use_colors
+                              and cfg.ulip2_backbone == "pointbert_colored")
+                with t.measure("mesh_sample"):
+                    pts, col = sample_pointcloud_from_mesh(
+                        self.mesh_path_for_obj,
+                        num_points=cfg.ulip2_num_points,
+                        with_colors=use_colors)
+                with t.measure("embed_ulip"):
                     self.ulip.encode_pointcloud(pts, colors=col)
-            info["n_clouds"] = len(npz)
+                info["n_clouds"] = 1
+                info["shape_source"] = "fullmesh"
+            else:
+                raise RuntimeError(
+                    "--shape-source fullmesh, aber kein Mesh-Pfad gesetzt. "
+                    "Ohne Mesh gaebe es still keinen Shape-Kanal — und die "
+                    "Onboarding-Summe waere zu niedrig, ohne dass es auffiele.")
+        else:
+            npz = sorted(glob.glob(os.path.join(obj_dir, "*_partial.npz")))[:num_views]
+            if npz:
+                clouds = []
+                with t.measure("io_load_clouds"):
+                    for p in npz:
+                        d = np.load(p)
+                        clouds.append((d["points"], d.get("colors")))
+                with t.measure("embed_ulip"):
+                    for pts, col in clouds:
+                        self.ulip.encode_pointcloud(pts, colors=col)
+                info["n_clouds"] = len(npz)
+                info["shape_source"] = "partial"
 
         info.update(self.append_to_cache(num_views, t))
         return info
@@ -431,6 +473,13 @@ def main(argv=None):
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--targets", default="ycbv,tless,lmo",
                     help="Datensaetze, deren CADs onboardet werden (Default: alle 59).")
+    ap.add_argument("--shape-source", choices=["partial", "fullmesh"],
+                    default="partial",
+                    help="Quelle des Shape-Kanals. 'partial' (Standard) encodiert "
+                         "N Teilwolken je Objekt; 'fullmesh' tastet das Mesh EINMAL "
+                         "ab und encodiert es einmal. Betrifft nur den Shape-Kanal — "
+                         "DINOv2 und CLIP-Text brauchen die Renderings so oder so. "
+                         "Mit 'fullmesh' entfaellt zusaetzlich die Stufe 'partial'.")
     ap.add_argument("--stages", default="mesh,partial,describe,embed",
                     help=f"Komma-Liste aus {ALL_STAGES} oder 'all'. Default ist "
                          "die vollstaendige Kette OHNE render — Blender liegt "
@@ -490,7 +539,8 @@ def main(argv=None):
     os.makedirs(args.work_dir, exist_ok=True)
 
     setup = Timings()
-    enc = Encoders(setup) if "embed" in stages else None
+    enc = (Encoders(setup, fullmesh_shape=(args.shape_source == "fullmesh"))
+           if "embed" in stages else None)
 
     by_views, records = {}, []
     for V in view_counts:
@@ -527,6 +577,8 @@ def main(argv=None):
                     # zu ueberspringen.
                     if not glob.glob(os.path.join(obj_dir, "*.png")):
                         src = os.path.join(_ROOT, "object_images", ds, oid)
+                    # Der Full-Mesh-Zweig braucht das Mesh selbst, nicht die Views.
+                    enc.mesh_path_for_obj = mesh
                     rec.update(enc.embed_object(src, V, t))
                 if "dgedi" in stages:
                     rec.update(stage_dgedi(mesh, obj_root, oid, ds, t))

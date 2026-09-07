@@ -6,6 +6,9 @@
 #   bash scripts/stage4_onboarding.sh -n 5             # nur 5 CADs (Schnelltest)
 #   bash scripts/stage4_onboarding.sh -v 42            # nur eine View-Zahl
 #   bash scripts/stage4_onboarding.sh --no-render      # ohne Blender
+#   bash scripts/stage4_onboarding.sh --shape-source fullmesh
+#                                                      # Shape aus dem Full-Mesh
+#                                                      # statt aus N Teilwolken
 #
 # Warum ein Wrapper: die Kette ist auf zwei Umgebungen verteilt. Blender liegt
 # unter /home/tessa/… und ist NICHT ins Compose gemountet, laeuft also auf dem
@@ -24,7 +27,8 @@ NOBJ=0                # 0 = alle 59
 VIEWS="16,42"
 DO_RENDER=1
 NRENDER=3             # Blender ist teuer; wenige Objekte reichen fuer Median+IQR
-OUT="results_stage4/onboarding.json"
+SHAPE_SRC=partial     # partial | fullmesh — Quelle des Shape-Kanals
+OUT=""                # Default haengt von SHAPE_SRC ab, siehe unten
 BLENDER="${BLENDER:-/home/tessa/Cap3D/captioning_pipeline/blender-3.4.1-linux-x64/blender}"
 
 while [ $# -gt 0 ]; do
@@ -33,23 +37,39 @@ while [ $# -gt 0 ]; do
     -v|--views)       VIEWS="$2"; shift 2;;
     --no-render)      DO_RENDER=0; shift;;
     --render-objects) NRENDER="$2"; shift 2;;
+    --shape-source)   SHAPE_SRC="$2"; shift 2;;
     -o|--out)         OUT="$2"; shift 2;;
     -h|--help)        sed -n '2,20p' "$0"; exit 0;;
     *) echo "Unbekannte Option: $1"; exit 2;;
   esac
 done
 
+case "$SHAPE_SRC" in
+  partial|fullmesh) ;;
+  *) echo "--shape-source muss 'partial' oder 'fullmesh' sein, war: $SHAPE_SRC"; exit 2;;
+esac
+# Mit fullmesh entfaellt die Stufe 'partial' (es gibt keine Teilwolken zu bauen);
+# dafuer kommt 'mesh_sample' hinzu. Alles andere bleibt gleich, damit die beiden
+# Laeufe vergleichbar sind.
+if [ "$SHAPE_SRC" = fullmesh ]; then
+  STAGES="mesh,describe,embed"; DEF_OUT="results_stage4/onboarding_fullmesh.json"
+else
+  STAGES="mesh,partial,describe,embed"; DEF_OUT="results_stage4/onboarding.json"
+fi
+OUT="${OUT:-$DEF_OUT}"
+
 mkdir -p logs results_stage4
 LIM=""; [ "$NOBJ" -gt 0 ] && LIM="--max-objects $NOBJ"
 
 echo "== Stage 4a — Onboarding =================================="
-echo "   CADs: $([ "$NOBJ" -gt 0 ] && echo "$NOBJ" || echo "alle 59") | Views: $VIEWS"
+echo "   CADs: $([ "$NOBJ" -gt 0 ] && echo "$NOBJ" || echo "alle 59") | Views: $VIEWS | Shape: $SHAPE_SRC"
+echo "   -> $OUT"
 echo
 
 # ---- 1. Container: mesh, partial, describe, embed, Cache-Anhaengen ---------
 docker compose run --rm oscar bash -lc \
   "cd /app && PYTHONHASHSEED=0 python3 -u experiments/experiment4_onboarding.py \
-   --stages mesh,partial,describe,embed --reuse-renders --num-views $VIEWS \
+   --stages $STAGES --shape-source $SHAPE_SRC --reuse-renders --num-views $VIEWS \
    $LIM --measure-invalidation --out $OUT" 2>&1 | tee logs/stage4_onboarding.log \
   | grep -E "^\[stage4\]|^  [A-Za-z_]+ +[0-9]|SUMME|Gesamt je Objekt|^===|Ladezeit|^    [a-z_]+ +[0-9]"
 
