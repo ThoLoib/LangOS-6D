@@ -146,11 +146,18 @@ def verify_describe(name, ds) -> None:
     p = desc_file(name)
     if not os.path.isfile(p):
         die(f"{p} fehlt.")
-    n = len(json.load(open(p)))
-    log(f"describe: {n} Objekte mit Beschreibungen (erwartet {ds['n_objects']})")
-    if n < ds["n_objects"]:
+    d = json.load(open(p))
+    n_caps = sum(len(v.get("image_descriptions", {})) for v in d.values())
+    empty = [k for k, v in d.items() if not v.get("image_descriptions")]
+    log(f"describe: {len(d)} Objekte, {n_caps} Bildbeschreibungen "
+        f"(erwartet {ds['n_objects']} Objekte)")
+    if len(d) < ds["n_objects"]:
         die("unvollstaendig — haeufigste Ursache: --images_dir zeigte auf den "
             "Objektordner statt auf den Ordner MIT Objektunterordnern.")
+    if empty:
+        die(f"{len(empty)} Objekte OHNE Beschreibungen (z.B. {empty[:3]}). "
+            "Haeufigste Ursache: CUDA OOM je Batch (laufende Dienste belegen "
+            "Speicher) — erneut mit --batch-size 2 ausfuehren.")
 
 
 def verify_embed(name) -> None:
@@ -171,7 +178,11 @@ def main() -> None:
                          "Datensaetze (dann --cad-dir/--id-mode angeben). "
                          "Bekannt: " + ", ".join(DATASETS))
     ap.add_argument("--step", required=True,
-                    choices=["render", "partial", "describe", "embed", "dgedi", "check"])
+                    choices=["render", "partial", "describe", "embed", "dgedi",
+                             "check", "all"],
+                    help="'all' = render -> partial -> describe -> embed in "
+                         "einem Rutsch (vom Host starten; genau das braucht "
+                         "eine neue Gallery fuer pipeline.run_pipeline)")
     # Render
     ap.add_argument("--views", type=int, default=42,
                     help="Anzahl Views (Ikosphaere, FPS-geordnet). Default 42 = Eval.")
@@ -230,6 +241,29 @@ def main() -> None:
     if ds["n_objects"] and abs(len(meshes) - ds["n_objects"]) > 0 and args.step != "check":
         die(f"Meshzahl {len(meshes)} != erwartet {ds['n_objects']} — "
             "Datensatz unvollstaendig? (docs/DATASETS.md)")
+
+    if args.step == "all":
+        if IN_CONTAINER:
+            die("--step all vom HOST starten (render braucht Blender).")
+        argv = []
+        skip_next = False
+        for a in sys.argv[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "--step":
+                skip_next = True
+                continue
+            argv.append(a)
+        for st in ["render", "partial", "describe", "embed"]:
+            log(f"===== Stufe {st} =====")
+            rc = subprocess.call([sys.executable, os.path.abspath(__file__)]
+                                 + argv + ["--step", st])
+            if rc != 0:
+                die(f"Stufe {st} endete mit rc={rc}")
+        log("alle Stufen fertig — Gallery ist einsatzbereit "
+            "(pipeline.run_pipeline --gallery <name>).")
+        return
 
     if args.step == "check":
         for label, fn in [("render (PNGs)", lambda: len(glob.glob(os.path.join(
@@ -303,10 +337,12 @@ def main() -> None:
         run(["python3", "tools/precompute_embeddings.py",
              "--dataset", name,
              "--data-root", ds["cad_dir"],
-             "--mesh-glob", ds["mesh_glob"],
+             # precompute_embeddings erwartet den VOLLEN Glob, nicht relativ
+             "--mesh-glob", os.path.join(ds["cad_dir"], ds["mesh_glob"]),
              "--mesh-id-mode", ds["id_mode"],
              "--images-dir", f"object_images/{name}",
              "--desc-file", f"object_database/{name}/descriptions_attributes.json",
+             "--results-root", f"object_retrieval/results_prep_{name}",
              "--passes", args.passes])
         verify_embed(name)
         return

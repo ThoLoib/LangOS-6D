@@ -1193,9 +1193,16 @@ Beispiel:
     parser.add_argument("--rgb", required=True, help="Pfad zum RGB-Bild")
     parser.add_argument("--depth", required=True, help="Pfad zum Tiefenbild")
     parser.add_argument("--prompt", required=True, help="Sprachprompt, z.B. 'greife nach der Mayonnaisetube'")
-    parser.add_argument("--descriptions", required=True, help="Pfad zur Beschreibungs-JSON")
-    parser.add_argument("--reference_images", required=True, help="Pfad zum Referenzbilder-Ordner")
-    parser.add_argument("--cad_models", required=True, help="Pfad zum CAD-Modell-Ordner")
+    parser.add_argument("--gallery", default="",
+                        help="Gallery-Name nach Standard-Layout: ersetzt "
+                             "--cad_models/--reference_images/--descriptions durch "
+                             "object_database/<name>/, object_images/<name>/ und "
+                             "object_database/<name>/descriptions_attributes.json. "
+                             "Vorbereitung einer neuen Gallery: "
+                             "python3 repro_preprocess.py --dataset <name> --step all")
+    parser.add_argument("--descriptions", default="", help="Pfad zur Beschreibungs-JSON")
+    parser.add_argument("--reference_images", default="", help="Pfad zum Referenzbilder-Ordner")
+    parser.add_argument("--cad_models", default="", help="Pfad zum CAD-Modell-Ordner")
     parser.add_argument("--camera", default=None, help="Pfad zu scene_camera.json (BOP-Format)")
     parser.add_argument("--output", default="pipeline_output", help="Ausgabeordner")
     parser.add_argument("--fusion_method", default="weighted_sum", choices=["weighted_sum", "intersection", "rank_fusion", "majority_voting"])
@@ -1279,6 +1286,35 @@ Beispiel:
 def main():
     """Hauptfunktion für CLI-Ausführung."""
     args = parse_args()
+
+    # --gallery <name>: Kurzform fuer das Standard-Layout einer Gallery.
+    if args.gallery:
+        g = args.gallery
+        args.cad_models = args.cad_models or os.path.join("object_database", g)
+        args.reference_images = args.reference_images or os.path.join("object_images", g)
+        args.descriptions = args.descriptions or os.path.join(
+            "object_database", g, "descriptions_attributes.json")
+    missing = [f for f, v in [("--cad_models", args.cad_models),
+                              ("--reference_images", args.reference_images),
+                              ("--descriptions", args.descriptions)] if not v]
+    if missing:
+        raise SystemExit(
+            f"Es fehlen {', '.join(missing)} — entweder direkt angeben oder "
+            f"per --gallery <name> aus dem Standard-Layout ableiten "
+            f"(object_database/<name>/ + object_images/<name>/).")
+    for label, p in [("--cad_models", args.cad_models),
+                     ("--reference_images", args.reference_images),
+                     ("--descriptions", args.descriptions)]:
+        if not os.path.exists(p):
+            raise SystemExit(
+                f"{label}: {p} existiert nicht. Neue Gallery vorbereiten:\n"
+                f"  python3 repro_preprocess.py --dataset <name> "
+                f"[--cad-dir <ordner>] --step all")
+    # ULIP-Standardpfade des Containers, wenn nicht gesetzt.
+    if not args.ulip_repo and os.path.isdir("/ulip"):
+        args.ulip_repo = "/ulip"
+        args.ulip_checkpoint = (args.ulip_checkpoint
+                                or "/ulip/checkpoints/ulip2_pointbert_10k.pt")
 
     # --- Config aufbauen ---
     config = PipelineConfig(

@@ -165,6 +165,43 @@ Ergebnis des Beispiels: `best_model: obj_000001` (Master-Chef-Dose),
 einzelnen freien Anfrage ist promptabhängig — die belastbaren Zahlen liefern
 die Stage-Läufe oben.
 
+## 6 · Eigene Gallery, eigene Queries
+
+Eine neue Gallery ist ein Ordner nach Standard-Layout — CAD-Dateien unter
+`object_database/<name>/<objekt_id>/<datei>.obj|.ply`. Dann genügen zwei Zeilen:
+
+```
+python3 repro_preprocess.py --dataset <name> --cad-dir object_database/<name> --mesh-glob "*/*.obj" --id-mode parent --step all
+python3 repro_preprocess.py --dataset <name> --cad-dir object_database/<name> --mesh-glob "*/*.obj" --id-mode parent --step check
+```
+
+`--step all` fährt render → partial → describe → embed nacheinander (Render auf
+dem Host via Blender, der Rest wrappt sich selbst in den Container) und prüft
+jede Stufe. Optional `--views 16` für schnelleres Onboarding (Stage 4: halbe
+Kosten für −0.005 nDCG).
+
+Danach beliebige Queries gegen diese Gallery — `--gallery <name>` ersetzt die
+drei Pfad-Flags:
+
+```
+docker compose run --rm oscar python3 -m pipeline.run_pipeline --gallery <name> --rgb <bild>.png --depth <tiefe>.png --camera <scene_camera.json> --prompt "..." --pose_method icp
+```
+
+Query-Format: RGB-PNG + Tiefen-PNG plus `scene_camera.json` im BOP-Format
+(`cam_K` + `depth_scale`); ohne `--camera` gelten die Default-Intrinsics aus
+`pipeline/config.py`. `--pose_method foundationpose` braucht den gestarteten
+FP-Dienst, `icp` läuft ohne. Fehlt etwas an der Gallery, bricht die Pipeline
+mit einer Anleitung ab statt still zurückzufallen.
+
+Verifiziertes Beispiel: `object_database/demo_gallery/` (zwei YCB-V-Objekte,
+exakt mit den zwei Zeilen oben gebaut, `--views 16`); die Query „the blue
+coffee can" gegen Szene 48 liefert `best_model: coffee_can` in ~18 s (ICP).
+Grenze freier Prompts: die Objekt-*Lokalisierung* (GroundingDINO) ist bei
+kleinen/verdeckten Zielobjekten die schwächste Stufe — greift sie das falsche
+Objekt, rankt das Retrieval den falschen Crop korrekt. Genau deshalb läuft die
+Evaluation (Stage 3) mit GT-Masken; `pipeline_output/rankings_*.csv` zeigt je
+Kanal, was das Retrieval gesehen hat.
+
 ## Übersichten regenerieren
 
 ```

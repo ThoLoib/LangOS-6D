@@ -1,2 +1,2 @@
 rank,object_id,fused_score,clip_score,dino_score,ulip_score,fusion_method,cad_model_path
-1,obj_000001,1.0,1.0,1.0,1.0,weighted_sum,/app/object_retrieval/../object_database/ycbv/obj_000001/textured_simple.obj
+1,coffee_can,1.0,1.0,1.0,1.0,weighted_sum,object_database/demo_gallery/coffee_can/textured_simple.obj
