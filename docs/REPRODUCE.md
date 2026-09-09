@@ -20,6 +20,12 @@ exakt. FoundationPose-Hypothesen und RANSAC (3b/gt, Geometrie) sind nicht
 bitreproduzierbar — dort gelten die publizierten `records.json` als Referenz,
 Wiederholungsläufe treffen die Mediane auf ~Zehntel-mm.
 
+**Belegt am 2026-09-08/09** (volle Läufe über diese CLIs, Abgleich in voller
+Präzision gegen die kanonischen Ergebnisordner — maximale Abweichung je 0.0):
+Stage 1 `E1c_full_fusion` (nDCG 0.5868201215, zweifach), Stage 2 fusioniert ×
+partial (alle 7 Arme × 7 Metriken, NN 88.4380952381), Stage 3 `3a --query
+cross --gallery partial` (alle Felder inkl. je Datensatz, R@1 0.4817648974).
+
 ---
 
 ## 0 · Preprocessing (einmalig je Datensatz; entfällt mit den Drive-Galerien)
