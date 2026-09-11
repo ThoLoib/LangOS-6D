@@ -121,3 +121,4 @@ gesetzte Sim-Pose und begrenzt daher auch Sampler und Ausführung, nicht nur die
 6. D_sym-Mediane: `gt` ≈ 2 mm, `proxy` nahe den pMed-Werten der Auswahltabelle (4–12 mm).
 
 Die Auswertung nach dem Lauf steht in `docs/STAGE5_RESULTS.md` (wird aus `REPORT.md` erzeugt).
+Quellen der verwendeten Verfahren: Referenzliste in `grasping/README.md` (im Code als [Rn]).

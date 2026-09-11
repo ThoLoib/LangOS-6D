@@ -21,6 +21,10 @@ Tiers (read the ranking top-down):
 EXCLUDED objects are documented with the reason and can only be run by naming
 them explicitly (`--cases ycbv1`).
 
+Datasets (reference list: grasping/README.md): YCB-V [R6], T-LESS [R7], LM-O
+[R8] as targets; GSO [R10], HouseCat6D [R11], ITODD [R9] as the proxy gallery
+G_proxy of Stage 3b [R5].
+
 This module is pure Python (no numpy) so the instance builder can run on a
 machine without the sim stack.
 """

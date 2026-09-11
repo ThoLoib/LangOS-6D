@@ -4,12 +4,13 @@
 Given the *retrieved proxy CAD mesh* (the output of Stage-3 retrieval), sample
 parallel-jaw **antipodal** grasp candidates on its surface: pairs of contact
 points whose surface normals both lie within the friction cone of the line
-joining them, so the two-finger grip is force-closure under Coulomb friction
-[Nguyen 1988; Chen & Burdick 1993]. Each surviving pair is turned into one or
-more 6-DoF gripper poses, collision-checked against the mesh, scored, and
-de-duplicated. Grasps are produced in the **mesh (object) frame**; applying the
-Stage-3 estimated pose T_obj→cam then places them in the scene for Isaac Sim
-execution (E2).
+joining them, so the two-finger grip is force-closure under Coulomb friction —
+the antipodal condition of Nguyen [R1] and the antipodal-point-grasp search of
+Chen & Burdick [R2] (references: grasping/README.md). Each surviving pair is
+turned into one or more 6-DoF gripper poses, collision-checked against the
+mesh, scored, and de-duplicated. Grasps are produced in the **mesh (object)
+frame**; applying the estimated pose T_obj→world then places them in the scene
+for execution with the Panda in PyBullet (`grasp_execute`).
 
 This module has **no simulator dependency** — it needs only trimesh + numpy
 (+ scipy for the KD-tree). It is deliberately analytic (training-free), matching
@@ -110,7 +111,10 @@ def sample_antipodal_grasps(
     """Sample up to ``top_k`` scored antipodal grasps on ``mesh``.
 
     friction_mu → cone half-angle θ = atan(μ); a pair (p1,p2) is antipodal iff
-    the grasp axis a=(p2−p1)/‖·‖ satisfies  (−n1)·a ≥ cosθ  and  n2·a ≥ cosθ.
+    the grasp axis a=(p2−p1)/‖·‖ satisfies  (−n1)·a ≥ cosθ  and  n2·a ≥ cosθ
+    (two opposing contacts inside their friction cones: force closure for a
+    parallel-jaw gripper [R1]). The scoring (cone alignment, centrality, width)
+    is a plain heuristic of this project, not taken from a publication.
     """
     if trimesh is None:  # pragma: no cover
         raise ImportError(f"trimesh is required: {_TRIMESH_ERR}")

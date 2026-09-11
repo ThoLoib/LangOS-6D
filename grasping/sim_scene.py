@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Stage-5 · 5.1 — Tabletop sim scene from a BOP capture (PyBullet).
+"""Stage-5 · 5.1 — Tabletop sim scene from a BOP capture (PyBullet [R14]).
+
+Reference list: grasping/README.md. BOP datasets and file formats [R5];
+YCB-V [R6], T-LESS [R7], LM-O [R8]; YCB meshes [R16].
 
 Reconstructs a real BOP test frame (YCB-V, T-LESS Primesense or LM-O) inside
 PyBullet: the annotated objects at their ground-truth poses on a table, a Franka
@@ -315,8 +318,8 @@ def fit_table_plane(depth_m: np.ndarray, K: np.ndarray, exclude: Optional[np.nda
                     n_iter: int = 400, thr: float = 0.006, seed: int = 0,
                     anchors: Optional[np.ndarray] = None, band: Tuple[float, float] = (-0.02, 0.40),
                     touch: float = 0.20):
-    """RANSAC plane through the back-projected depth (n·p + d = 0, n unit and
-    pointing "up"). Returns (n, d, inlier_fraction).
+    """RANSAC [R12] plane through the back-projected depth (n·p + d = 0, n unit
+    and pointing "up"). Returns (n, d, inlier_fraction).
 
     `exclude` masks the annotated objects out; `z_range` keeps only depths
     around the objects. `anchors` (N,3, camera frame) are the object centres:
@@ -638,7 +641,8 @@ class TabletopSim:
 
     def _vhacd_collision(self, mesh_path: str, scale) -> int:
         """Convex-decomposition collision shape (cached), falling back to a plain
-        convex hull if V-HACD is unavailable or fails."""
+        convex hull if V-HACD is unavailable or fails. V-HACD is PyBullet's
+        bundled implementation of approximate convex decomposition [R13]."""
         p = self._p
         cache_dir = os.path.join(_ROOT, "_vhacd_cache")
         os.makedirs(cache_dir, exist_ok=True)

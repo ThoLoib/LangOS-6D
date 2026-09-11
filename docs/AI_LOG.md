@@ -62,6 +62,19 @@ Final smoke test after the fixes (one instance each, all four conditions, `--wor
 - The rank-1–10 run was NOT started on 2026-09-10: the laptop was to go to sleep afterwards.
   `python3 grasping/experiment_proxy_grasp.py` starts it; it resumes from its CSV after any interruption.
 
+Clean-up before the hand-over to the Tessa PC (2026-09-11)
+- `experiment_proxy_grasp.py` restructured into plan → caches → trial (CAD, pose, grasp steps)
+  → CSV/manifest → check → report → host wrapper; `--fp-input sim` (the pilot's synthetic
+  input) and the unused `--seed` flag removed; `--help` carries the example commands; the
+  host wrapper now verifies that the docker CLI works (the WSL shim can be dead after a
+  Docker Desktop restart). Default behaviour unchanged: plan identical, report on the 89
+  laptop rows identical, gt_pose and stage3-pose smoke trials pass.
+- References added as [Rn] tags in the code with the list in `grasping/README.md` — only
+  sources that were verified (antipodal grasps: Nguyen 1988, Chen & Burdick 1993; shake test:
+  ACRONYM 2021; FoundationPose 2024; BOP 2018/2020 and the dataset papers; RANSAC 1981;
+  V-HACD 2009; PyBullet; ROCA 2022; YCB 2015). Project-specific heuristics are explicitly
+  marked as uncited.
+
 Run history
 - 2026-09-10 16:27 rank-1–10 run started on the laptop (`gt,proxy`, 120 trials). At ~16:36,
   during trial 10, the machine restarted without a proper shutdown (Kernel-Power 41, no bugcheck
@@ -74,7 +87,7 @@ Run history
 Superseded
 - `experiment_gt_vs_proxy.py` (pilot, 2026-09-06) removed; its 12 rows stay in
   `_s5_out/gt_vs_proxy.csv`. The pilot's design (sim-rendered FP input, one frame per object,
-  no random baseline, no hold phase) is reproducible with `--fp-input sim --per-object 1`.
+  no random baseline, no hold phase) is no longer reproducible after the clean-up (its synthetic-input option was removed).
 
 ## 2026-09-04 The colour fix reversed the full-mesh finding — but only for retrieval, not for pose
 

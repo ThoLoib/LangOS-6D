@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Stage-5 · 5.3 — Grasp execution with a Franka Panda (PyBullet).
+"""Stage-5 · 5.3 — Grasp execution with a Franka Panda (PyBullet [R14]).
+
+Reference list: grasping/README.md. The IK is PyBullet's damped-least-squares
+solver with joint limits, joint ranges and rest poses (null-space variant of
+`calculateInverseKinematics`, PyBullet Quickstart Guide); the arm model is the
+`franka_panda/panda.urdf` shipped with pybullet_data.
 
 Take grasp candidates (from `antipodal_grasp_sampler`, in the object frame),
 transform them by the object's pose into the world, and drive the Panda to
@@ -200,10 +205,12 @@ class PandaGrasper:
         if rose and target_body is not None:
             hold = self._hold_test(target_body, HOLD_STEPS, cap=cap)
 
-        # ACRONYM-style shake test: a real grasp must survive perturbation, not
+        # Shake test in the spirit of ACRONYM [R3] (Eppner et al. 2021 label a
+        # simulated grasp successful only if the object stays in the hand while
+        # the gripper is shaken): a real grasp must survive perturbation, not
         # merely rise. Jerk the gripper along ±x/±y/±z and require the object to
         # stay in the hand — this rejects marginal grips that a lift-only check
-        # would pass.
+        # would pass. Amplitude/direction set are this project's choice.
         held = False
         if hold:
             held = self._shake_test(lift_pose, orn, target_body, cap=cap)
