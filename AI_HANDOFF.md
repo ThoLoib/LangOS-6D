@@ -49,10 +49,17 @@ Ergebnisordner mit `results_per_query`-Daten bleiben erhalten (Keep-Liste in
 Gebaut und per Smoke-Test geprüft: `grasping/experiment_proxy_grasp.py` (Einstieg auch
 `repro_experiment.py --stage 5`), Objektset `grasping/proxy_grasp_cases.py`, eingefrorene
 3b-Instanzen `grasping/proxy_grasp_instances.json`, Protokoll + Vorhersagen
-`docs/STAGE5_PROTOCOL.md`, Zuordnung REPRODUCE.md §7. Voreinstellung `gt` gegen `proxy`,
-Rang 1–10, 120 Trials, fortsetzbar; erster Lauf am 2026-09-10 auf dem Laptop gestartet
-(`_s5_out/proxy_grasp/`). Danach: `docs/STAGE5_RESULTS.md` schreiben, Vorhersagen prüfen,
-Thesis-Tabelle `tab:eval_grasp_results` füllen. Alles noch uncommitted auf dem Laptop.
+`docs/STAGE5_PROTOCOL.md`, Zuordnung REPRODUCE.md §7.
+
+**Kanonischer Lauf ABGESCHLOSSEN 2026-09-11 auf tessa-pc** (Reibung 1.0, YCB-Massen
+eingetragen): 180 Trials (gt/proxy/gt_pose), Ergebnisse in **`docs/STAGE5_RESULTS.md`** —
+Kopfzahl Δ(gt→proxy) **−20 Pp.** (52 %→32 %), YCB-V **+17 Pp.** (Proxy schlägt gt),
+Vorzeichen repliziert im Laptop-Teillauf (µ=2.4). Vorhersagen: 1 und 4 verfehlt, 3 halb,
+2/6 erfüllt, 5 nicht gelaufen; unerwartet: `gt` schlägt `gt_pose` (0:7-Bilanz, §6).
+Rohdaten `_s5_out/proxy_grasp/` (Drive `_s5_out/proxy_grasp_tessa/`), Kopien
+`final_results/stage5/`. Laufabweichungen (pybullet-Image-Fix per docker commit,
+`pre-s5-backup`-Tag): AI_LOG 2026-09-11. Offen: Thesis-Tabelle `tab:eval_grasp_results`
+füllen; alles auf diesem Branch uncommitted (Commit nur auf Ansage).
 
 ## Offene Punkte
 

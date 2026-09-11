@@ -750,7 +750,16 @@ TARGET_MASS_KG = 0.2                 # fallback where no measured mass is known
 # values from the YCB object set list (Calli et al. 2015, ycbbenchmarks.com) —
 # fill in before a run and keep the source in the commit message. T-LESS and
 # LM-O publish no masses: fallback.
-OBJECT_MASS_KG: Dict[Tuple[str, int], float] = {}
+OBJECT_MASS_KG: Dict[Tuple[str, int], float] = {
+    # Quelle: YCB object list (Calli et al. 2015), ycbbenchmarks.com,
+    # object-list-Sheet1.pdf, Spalte "Mass" — abgelesen 2026-09-11.
+    ("ycbv", 2):  0.411,   # Cheez-it Cracker box        411 g
+    ("ycbv", 3):  0.514,   # Domino Sugar box            514 g
+    ("ycbv", 5):  0.603,   # French's Mustard bottle     603 g
+    ("ycbv", 14): 0.118,   # Mug                         118 g
+    ("ycbv", 17): 0.082,   # Scissors                     82 g
+    # T-LESS / LM-O publizieren keine Massen -> TARGET_MASS_KG-Fallback.
+}
 
 
 def object_mass(dataset: str, obj_id: int) -> float:

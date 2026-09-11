@@ -1,0 +1,347 @@
+{
+ "runs": [
+  {
+   "ts": "2026-09-11T11:43:49",
+   "host": "76f4f0456690",
+   "python": "3.11.0rc1",
+   "versions": {
+    "numpy": "2.4.3",
+    "scipy": "1.17.1",
+    "trimesh": "4.11.4",
+    "pybullet": "unavailable (ModuleNotFoundError)"
+   },
+   "git": {
+    "rev": "e937a3c8ab04",
+    "dirty": true,
+    "branch": "lenny-stage5-prep"
+   },
+   "args": {
+    "ranks": "1-10",
+    "cases": null,
+    "exhibits": false,
+    "conditions": "gt,proxy",
+    "per_object": 6,
+    "min_visib": 0.5,
+    "pose_source": "fp",
+    "world": "auto",
+    "n_tries": 5,
+    "exec": true,
+    "verbose": false,
+    "no_docker": false,
+    "check": false,
+    "plan": false,
+    "report": false,
+    "csv": "/app/_s5_out/proxy_grasp/trials.csv",
+    "fresh": false
+   },
+   "conditions": [
+    "gt",
+    "proxy"
+   ],
+   "protocol": {
+    "sampler": {
+     "n_samples": 800,
+     "top_k": 40,
+     "friction_mu": 0.5,
+     "n_approach": 4,
+     "seed": 0,
+     "gripper_min_width_m": 0.005,
+     "gripper_max_width_m": 0.08,
+     "method": "antipodal contact pairs inside the friction cone [R1, R2]"
+    },
+    "executor": {
+     "n_tries": 5,
+     "pregrasp_m": 0.12,
+     "lift_m": 0.15,
+     "rise_min_m": 0.05,
+     "hold_steps": 240,
+     "shake_amp_m": 0.05,
+     "in_hand_m": 0.15,
+     "close_force_n": [
+      20,
+      120
+     ],
+     "reach_tol_mm": 30,
+     "blocked_mm": 30,
+     "success": "rose >= 5 cm AND held 1 s AND survived \u00b15 cm shakes [R3]; trial = any of <= n_tries attempts, full reset before each"
+    },
+    "physics": {
+     "engine": "PyBullet [R14]",
+     "timestep_s": 0.004166666666666667,
+     "gravity": -9.81,
+     "target_mass_kg": "sim_scene.OBJECT_MASS_KG (YCB object list) else 0.2",
+     "target_friction": 1.0,
+     "finger_friction": 1.0,
+     "friction_combination": "product (PyBullet; measured 1.0x1.0 -> 1.01, 1.6x1.5 -> 2.42)",
+     "settle_steps": 60,
+     "collision": "V-HACD [R13] for the target / concave static clutter"
+    },
+    "robot": {
+     "arm": "Franka Panda (pybullet_data franka_panda/panda.urdf)",
+     "pedestal_m": 0.35,
+     "placement": "on the camera's side: 0.55 m from the object centroid along the camera viewing direction projected onto the table"
+    },
+    "world": {
+     "frame": "auto: BOP extrinsics where present (YCB-V, T-LESS), else the table plane fitted to the real depth (LM-O)",
+     "table_plane": "RANSAC [R12], objects masked out, \u00b10.5 m around the object depths, thr 6 mm, candidate planes must carry every object 0\u201340 cm above them",
+     "table_z": "0 = lowest object vertex (bop) / the fitted plane; lowered to the target's own lowest vertex if that is below"
+    },
+    "pose": {
+     "method": "FoundationPose [R4] via eval_bop_pose.estimate_pose",
+     "fp_refine_iter": 5,
+     "input": "real RGB-D + BOP GT mask_visib (Stage 3b)",
+     "d_sym": "stage3_metrics.d_sym, 10 000 surface samples, seed 0"
+    },
+    "sampling": {
+     "min_visib": 0.5,
+     "per_object": 6,
+     "rule": "round-robin over scenes, evenly spaced frames within a scene"
+    }
+   },
+   "instances_sha": "cd0e448cfd68184c",
+   "n_planned": 60,
+   "cases": [
+    "lmo9",
+    "tless10",
+    "tless18",
+    "tless19",
+    "tless22",
+    "tless28",
+    "tless30",
+    "ycbv14",
+    "ycbv17",
+    "ycbv2"
+   ],
+   "threads": "4"
+  },
+  {
+   "ts": "2026-09-11T12:11:51",
+   "host": "77f09a90de7e",
+   "python": "3.11.0rc1",
+   "versions": {
+    "numpy": "2.4.3",
+    "scipy": "1.17.1",
+    "trimesh": "4.11.4",
+    "pybullet": "202010061"
+   },
+   "git": {
+    "rev": "e937a3c8ab04",
+    "dirty": true,
+    "branch": "lenny-stage5-prep"
+   },
+   "args": {
+    "ranks": "1-10",
+    "cases": null,
+    "exhibits": false,
+    "conditions": "gt,proxy",
+    "per_object": 6,
+    "min_visib": 0.5,
+    "pose_source": "fp",
+    "world": "auto",
+    "n_tries": 5,
+    "exec": true,
+    "verbose": false,
+    "no_docker": false,
+    "check": false,
+    "plan": false,
+    "report": false,
+    "csv": "/app/_s5_out/proxy_grasp/trials.csv",
+    "fresh": false
+   },
+   "conditions": [
+    "gt",
+    "proxy"
+   ],
+   "protocol": {
+    "sampler": {
+     "n_samples": 800,
+     "top_k": 40,
+     "friction_mu": 0.5,
+     "n_approach": 4,
+     "seed": 0,
+     "gripper_min_width_m": 0.005,
+     "gripper_max_width_m": 0.08,
+     "method": "antipodal contact pairs inside the friction cone [R1, R2]"
+    },
+    "executor": {
+     "n_tries": 5,
+     "pregrasp_m": 0.12,
+     "lift_m": 0.15,
+     "rise_min_m": 0.05,
+     "hold_steps": 240,
+     "shake_amp_m": 0.05,
+     "in_hand_m": 0.15,
+     "close_force_n": [
+      20,
+      120
+     ],
+     "reach_tol_mm": 30,
+     "blocked_mm": 30,
+     "success": "rose >= 5 cm AND held 1 s AND survived \u00b15 cm shakes [R3]; trial = any of <= n_tries attempts, full reset before each"
+    },
+    "physics": {
+     "engine": "PyBullet [R14]",
+     "timestep_s": 0.004166666666666667,
+     "gravity": -9.81,
+     "target_mass_kg": "sim_scene.OBJECT_MASS_KG (YCB object list) else 0.2",
+     "target_friction": 1.0,
+     "finger_friction": 1.0,
+     "friction_combination": "product (PyBullet; measured 1.0x1.0 -> 1.01, 1.6x1.5 -> 2.42)",
+     "settle_steps": 60,
+     "collision": "V-HACD [R13] for the target / concave static clutter"
+    },
+    "robot": {
+     "arm": "Franka Panda (pybullet_data franka_panda/panda.urdf)",
+     "pedestal_m": 0.35,
+     "placement": "on the camera's side: 0.55 m from the object centroid along the camera viewing direction projected onto the table"
+    },
+    "world": {
+     "frame": "auto: BOP extrinsics where present (YCB-V, T-LESS), else the table plane fitted to the real depth (LM-O)",
+     "table_plane": "RANSAC [R12], objects masked out, \u00b10.5 m around the object depths, thr 6 mm, candidate planes must carry every object 0\u201340 cm above them",
+     "table_z": "0 = lowest object vertex (bop) / the fitted plane; lowered to the target's own lowest vertex if that is below"
+    },
+    "pose": {
+     "method": "FoundationPose [R4] via eval_bop_pose.estimate_pose",
+     "fp_refine_iter": 5,
+     "input": "real RGB-D + BOP GT mask_visib (Stage 3b)",
+     "d_sym": "stage3_metrics.d_sym, 10 000 surface samples, seed 0"
+    },
+    "sampling": {
+     "min_visib": 0.5,
+     "per_object": 6,
+     "rule": "round-robin over scenes, evenly spaced frames within a scene"
+    }
+   },
+   "instances_sha": "cd0e448cfd68184c",
+   "n_planned": 60,
+   "cases": [
+    "lmo9",
+    "tless10",
+    "tless18",
+    "tless19",
+    "tless22",
+    "tless28",
+    "tless30",
+    "ycbv14",
+    "ycbv17",
+    "ycbv2"
+   ],
+   "threads": "4"
+  },
+  {
+   "ts": "2026-09-11T12:52:09",
+   "host": "076dd9f3fc1b",
+   "python": "3.11.0rc1",
+   "versions": {
+    "numpy": "2.4.3",
+    "scipy": "1.17.1",
+    "trimesh": "4.11.4",
+    "pybullet": "202010061"
+   },
+   "git": {
+    "rev": "e937a3c8ab04",
+    "dirty": true,
+    "branch": "lenny-stage5-prep"
+   },
+   "args": {
+    "ranks": "1-10",
+    "cases": null,
+    "exhibits": false,
+    "conditions": "gt_pose,gt,proxy",
+    "per_object": 6,
+    "min_visib": 0.5,
+    "pose_source": "fp",
+    "world": "auto",
+    "n_tries": 5,
+    "exec": true,
+    "verbose": false,
+    "no_docker": false,
+    "check": false,
+    "plan": false,
+    "report": false,
+    "csv": "/app/_s5_out/proxy_grasp/trials.csv",
+    "fresh": false
+   },
+   "conditions": [
+    "gt_pose",
+    "gt",
+    "proxy"
+   ],
+   "protocol": {
+    "sampler": {
+     "n_samples": 800,
+     "top_k": 40,
+     "friction_mu": 0.5,
+     "n_approach": 4,
+     "seed": 0,
+     "gripper_min_width_m": 0.005,
+     "gripper_max_width_m": 0.08,
+     "method": "antipodal contact pairs inside the friction cone [R1, R2]"
+    },
+    "executor": {
+     "n_tries": 5,
+     "pregrasp_m": 0.12,
+     "lift_m": 0.15,
+     "rise_min_m": 0.05,
+     "hold_steps": 240,
+     "shake_amp_m": 0.05,
+     "in_hand_m": 0.15,
+     "close_force_n": [
+      20,
+      120
+     ],
+     "reach_tol_mm": 30,
+     "blocked_mm": 30,
+     "success": "rose >= 5 cm AND held 1 s AND survived \u00b15 cm shakes [R3]; trial = any of <= n_tries attempts, full reset before each"
+    },
+    "physics": {
+     "engine": "PyBullet [R14]",
+     "timestep_s": 0.004166666666666667,
+     "gravity": -9.81,
+     "target_mass_kg": "sim_scene.OBJECT_MASS_KG (YCB object list) else 0.2",
+     "target_friction": 1.0,
+     "finger_friction": 1.0,
+     "friction_combination": "product (PyBullet; measured 1.0x1.0 -> 1.01, 1.6x1.5 -> 2.42)",
+     "settle_steps": 60,
+     "collision": "V-HACD [R13] for the target / concave static clutter"
+    },
+    "robot": {
+     "arm": "Franka Panda (pybullet_data franka_panda/panda.urdf)",
+     "pedestal_m": 0.35,
+     "placement": "on the camera's side: 0.55 m from the object centroid along the camera viewing direction projected onto the table"
+    },
+    "world": {
+     "frame": "auto: BOP extrinsics where present (YCB-V, T-LESS), else the table plane fitted to the real depth (LM-O)",
+     "table_plane": "RANSAC [R12], objects masked out, \u00b10.5 m around the object depths, thr 6 mm, candidate planes must carry every object 0\u201340 cm above them",
+     "table_z": "0 = lowest object vertex (bop) / the fitted plane; lowered to the target's own lowest vertex if that is below"
+    },
+    "pose": {
+     "method": "FoundationPose [R4] via eval_bop_pose.estimate_pose",
+     "fp_refine_iter": 5,
+     "input": "real RGB-D + BOP GT mask_visib (Stage 3b)",
+     "d_sym": "stage3_metrics.d_sym, 10 000 surface samples, seed 0"
+    },
+    "sampling": {
+     "min_visib": 0.5,
+     "per_object": 6,
+     "rule": "round-robin over scenes, evenly spaced frames within a scene"
+    }
+   },
+   "instances_sha": "cd0e448cfd68184c",
+   "n_planned": 60,
+   "cases": [
+    "lmo9",
+    "tless10",
+    "tless18",
+    "tless19",
+    "tless22",
+    "tless28",
+    "tless30",
+    "ycbv14",
+    "ycbv17",
+    "ycbv2"
+   ],
+   "threads": "4"
+  }
+ ]
+}

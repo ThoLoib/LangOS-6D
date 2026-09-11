@@ -1156,3 +1156,33 @@ absoluten Zahlen nicht.
 **Lehre für die Repro-Spec.** Ein `--max-objects`-Flag, das vorne abschneidet, ist als
 Stichprobenmechanismus ungeeignet. Entweder Vollerhebung oder eine echte Zufallsziehung mit
 festem Seed — sonst misst man die Sortierreihenfolge mit.
+
+## 2026-09-11 — Stage-5-Hauptlauf auf tessa-pc (Branch lenny-stage5-prep)
+- **Umgebungsabweichung, kein Protokolleingriff:** Das oscar-Image auf tessa-pc war aelter
+  als Dockerfile:49 — pybullet fehlte. Erster Startversuch endete mit 0 Trials
+  (ModuleNotFoundError je Trial, rc=0 des Wrappers). Voller Rebuild scheiterte an
+  ungepinnten pip-Schichten des alten Basis-Images (setuptools braucht
+  sys.get_int_max_str_digits) UND haette andere Paketversionen erzeugt als die, mit denen
+  alle Ergebnisse verifiziert sind. Fix: pybullet+rtree per `docker commit` in das
+  bestehende Image (torch unveraendert 2.10.0); Original als tholoi/oscar-plus:pre-s5-backup
+  getaggt.
+- Datenpruefung: 60/60 Instanzen, Ebenenwinkel 1.91 Grad (ycbv) / 0.69 Grad (tless) < 3 Grad;
+  LM-O ohne BOP-Extrinsik (Ebene aus Tiefenbild, protokollgemaess), dort bottom_gap bis
+  -39 mm (Objekte auf Clutter; Settling faengt es, settle_mm Median 2.2 mm).
+- Lauf vollstaendig: 120 Trials (gt, proxy) + 60 gt_pose, keine fp_error, keine
+  Wiederholungen noetig. Ergebnisse: docs/STAGE5_RESULTS.md; Rohdaten
+  _s5_out/proxy_grasp/ (Drive: _s5_out/proxy_grasp_tessa/), Kopie final_results/stage5/.
+- Massen ycbv 2/3/5/14/17 aus der YCB-Objektliste (Calli et al. 2015, PDF abgelesen):
+  411/514/603/118/82 g — in grasping/sim_scene.py::OBJECT_MASS_KG mit Quellkommentar.
+
+## 2026-09-11 — Solo-Greifexperiment: nur v2 behalten
+- Auf Nutzeranweisung nur das letzte Experiment behalten: Solo v2 (kanonische
+  Standpose + deterministischer Yaw, 591 Trials) — _s5_out/solo_v2/ (Drive:
+  solo_v2_tessa), Kopie final_results/stage5_solo/. Geloescht (lokal + Drive):
+  Solo v1 (BOP-Posen), solo_smoke, solo_custom, lokale Laptop-Replikat-Kopie
+  (Drive-Original proxy_grasp_laptop_2026-09-11 bleibt). Die Stage-5-
+  Clutter-Studie (_s5_out/proxy_grasp, Drive proxy_grasp_tessa) bleibt
+  bestehen — eigenes protokolliertes Experiment (STAGE5_RESULTS.md).
+  v1-Kennzahlen leben nur noch als Vergleichszeile in solo_v2/AUSWERTUNG.md.
+- plan.json nach solo_v2/ gezogen; solo_trial/build_solo_plan-Defaults auf
+  solo_v2 umgestellt.
