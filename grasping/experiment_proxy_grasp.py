@@ -80,9 +80,11 @@ PROTOCOL = dict(
                   close_force_n=(20, 120), reach_tol_mm=30, blocked_mm=30,
                   success="rose >= 5 cm AND held 1 s AND survived ±5 cm shakes [R3]; "
                           "trial = any of <= n_tries attempts, full reset before each"),
-    physics=dict(engine="PyBullet [R14]", timestep_s=1 / 240, gravity=-9.81, target_mass_kg=0.2,
-                 target_friction=1.6, finger_friction=1.5, settle_steps=60,
-                 collision="V-HACD [R13] for the target / concave static clutter"),
+    physics=dict(engine="PyBullet [R14]", timestep_s=1 / 240, gravity=-9.81,
+                 target_mass_kg="sim_scene.OBJECT_MASS_KG (YCB object list) else 0.2",
+                 target_friction=1.0, finger_friction=1.0,
+                 friction_combination="product (PyBullet; measured 1.0x1.0 -> 1.01, 1.6x1.5 -> 2.42)",
+                 settle_steps=60, collision="V-HACD [R13] for the target / concave static clutter"),
     robot=dict(arm="Franka Panda (pybullet_data franka_panda/panda.urdf)", pedestal_m=0.35,
                placement="on the camera's side: 0.55 m from the object centroid along the "
                          "camera viewing direction projected onto the table"),

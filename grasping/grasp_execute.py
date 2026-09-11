@@ -48,6 +48,7 @@ RISE_MIN_M = 0.05      # the object must have risen at least this much …
 HOLD_STEPS = 240       # … stay in the hand for this many steps (1 s at 240 Hz) …
 SHAKE_AMP_M = 0.05     # … and survive ±x/±y/±z jerks of this amplitude
 IN_HAND_M = 0.15       # object further than this from the TCP == dropped
+FINGER_FRICTION = 1.0  # x sim_scene.TARGET_FRICTION (PyBullet multiplies) = 1.0 effective
 
 
 class PandaGrasper:
@@ -70,9 +71,8 @@ class PandaGrasper:
         self.jr = [u - l for l, u in zip(self.ll, self.ul)]
         self.rp = ARM_REST + [FINGER_OPEN] * (len(self.movable) - len(PANDA_ARM))
         self.jd = [0.05] * len(self.movable)
-        # grippy fingertips so the grasp holds during the lift
         for j in PANDA_FINGERS:
-            p.changeDynamics(self.robot, j, lateralFriction=1.5, spinningFriction=0.005)
+            p.changeDynamics(self.robot, j, lateralFriction=FINGER_FRICTION, spinningFriction=0.005)
 
     # ---- IK ----------------------------------------------------------------
     def _ik(self, pos, orn):

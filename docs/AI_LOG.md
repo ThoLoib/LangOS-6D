@@ -75,6 +75,13 @@ Clean-up before the hand-over to the Tessa PC (2026-09-11)
   V-HACD 2009; PyBullet; ROCA 2022; YCB 2015). Project-specific heuristics are explicitly
   marked as uncited.
 
+Parameters made defensible (2026-09-11, before the canonical run on the Tessa PC)
+- Measured PyBullet's friction combination with a 1 kg box on a plane (push until it slides):
+  0.5 × 0.5 → 0.27, 1.0 × 1.0 → 1.01, 1.6 × 1.5 → 2.42, 2.0 × 0.5 → 1.01 — the product. The
+  pilot's 1.6/1.5 meant an effective 2.4; now 1.0/1.0. Per-object mass hook
+  `sim_scene.OBJECT_MASS_KG` (YCB list to be filled on the Tessa PC). Parameter table with a
+  source column in `docs/STAGE5_PROTOCOL.md`; decision in `DECISIONS.md`.
+
 Run history
 - 2026-09-10 16:27 rank-1–10 run started on the laptop (`gt,proxy`, 120 trials). At ~16:36,
   during trial 10, the machine restarted without a proper shutdown (Kernel-Power 41, no bugcheck

@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-09-11 Stage-5 parameters: sourced where possible, shared by all conditions, friction set to a measured 1.0
+
+Decision
+- The grasp study is framed as an illustrative downstream test; only the paired difference
+  between conditions is interpreted. Every parameter is listed with its origin in
+  `docs/STAGE5_PROTOCOL.md` (Franka Hand datasheet, PyBullet default, dataset, or project choice).
+- Contact friction is 1.0 × 1.0 (fingers × object). PyBullet combines the two coefficients
+  multiplicatively — measured, not assumed: 1.0 × 1.0 → 1.01, 1.6 × 1.5 → 2.42. The pilot's
+  1.6 × 1.5 was therefore an effective 2.4 and is dropped before the canonical run.
+- Object masses come from the YCB object list for YCB-V (`sim_scene.OBJECT_MASS_KG`, to be
+  filled from the published list) and default to 0.2 kg for T-LESS/LM-O, which publish none.
+- The `random` control is not run (Thomas, 2026-09-11): a chance-level CAD is already
+  excluded by Stage 3b (D_sym in the centimetre range); `gt_pose` stays as the planner ceiling.
+- No parameter sensitivity sweeps and no second simulator: the laptop replicate (88 trials at
+  effective friction 2.4) serves as the one sensitivity check that touches the comparison.
+
+Alternatives considered
+- Porting the study to an existing grasp simulator (e.g. the PyBullet setup of VGN, Breyer
+  et al. 2020, with a floating gripper) — rejected: the same adaptation work (BOP scenes at GT
+  poses, FoundationPose poses, the pipeline's CADs), new unexplained parameters, and the
+  current results would be void; the citable parts (shake test, gripper) are already referenced.
+- A `--set` override flag plus four sensitivity runs — not built: the framing makes the
+  absolute values immaterial, and the replicate covers friction.
+
 ## 2026-09-10 Stage 5 measures grasp success under a predeclared four-condition protocol on the Stage-3 3b instances
 
 Decision

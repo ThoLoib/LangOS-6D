@@ -98,6 +98,45 @@ Anwendbarkeits-Ausnahme, kein Fehlschlag.
   18) — daher die Kameraseiten-Regel. Beide Änderungen betreffen die Mechanik, nicht die
   Bedingungen; sie wurden festgelegt, bevor ein Trial des Rang-1–10-Sets lief.
 
+## Parameter und ihre Herkunft
+
+Jeder Wert gilt in allen Bedingungen identisch; interpretiert wird nur die Differenz zwischen
+den Bedingungen, nie die absolute Rate (siehe „Was die Studie nicht kann").
+
+| Parameter | Wert | Herkunft |
+|---|---|---|
+| Greiferöffnung | 5–80 mm | Datenblatt Franka Hand (80 mm Hub) |
+| Schließkraft | 20 N, dann 120 N | Datenblatt Franka Hand (70 N Dauer, 140 N max.) |
+| Zeitschritt | 1/240 s | PyBullet-Standard |
+| Reibung Finger × Objekt | 1.0 × 1.0 = 1.0 | physikalisch plausibel (Gummi auf Kunststoff); PyBullet multipliziert, nachgemessen 2026-09-11 |
+| Masse Ziel | YCB-Objektliste (Calli et al. 2015) für YCB-V, sonst 0.2 kg | Datensatz / Projektwahl |
+| Kollision Ziel | V-HACD, 200 000 Voxel, 64 Vertices je Hülle | Projektwahl (PyBullet-Funktion) |
+| Antipodal-Test | Reibkegel µ = 0.5, 800 Kontakte, 4 Anfahrrichtungen, Top 40 | Kriterium: Nguyen 1988; Werte: Projektwahl |
+| Kandidaten-Bewertung | 0.6 Kegel + 0.3 Zentralität + 0.1 Weite | Projektwahl (nur Reihenfolge) |
+| Erreichbarkeitsreihenfolge | 0.5 Bewertung + 0.4 von oben + 0.1 Nähe | Projektwahl (nur Reihenfolge) |
+| Vorgriff / Hub / Anstieg | 12 cm / 15 cm / ≥ 5 cm | Projektwahl |
+| Halten / Schütteln | 1 s / ±5 cm in x, y, z | Schütteltest nach ACRONYM (Eppner et al. 2021); Werte: Projektwahl |
+| Versuche je Trial | 5 (success@k), zusätzlich success@1 | Projektwahl, vorab fixiert |
+| Roboter | Panda, Sockel 0.35 m, 0.55 m auf der Kameraseite | Projektwahl |
+| Tischebene | RANSAC 6 mm, Fenster ±0.5 m, Objekte 0–40 cm über der Ebene | Fischler & Bolles 1981; Werte: Projektwahl, gegen BOP-Extrinsics geprüft |
+| Instanzen | 6 je Objekt, reihum über Szenen, Sichtbarkeit ≥ 0.5 | Projektwahl, vorab fixiert; Schwelle = BOP-Klasse „stark verdeckt" |
+
+**Änderung vor dem kanonischen Lauf (2026-09-11, Tessa-PC):** Reibung von 1.6 × 1.5 auf
+1.0 × 1.0. Grund: PyBullet kombiniert die Reibwerte multiplikativ (nachgemessen: 1.6 × 1.5 →
+2.42, 1.0 × 1.0 → 1.01); der Pilotwert entsprach effektiv 2.4 und war unrealistisch. Der
+Laptop-Lauf vom 10./11.09. (88 Trials) behält 2.4 und dient damit als Reibungs-Sensitivität:
+bleibt das Vorzeichen von Δ(gt, proxy) erhalten, hängt der Befund nicht an der Reibung.
+
+**Formulierung für die Thesis (Rahmung):** *The grasp study is an illustrative downstream
+test, not a grasping benchmark: it asks whether grasps planned on the retrieved proxy CAD
+transfer to the real object as well as grasps planned on the object's own CAD. Every
+simulation parameter (Table X) is shared by both conditions, so only the paired difference
+between them is interpreted; absolute success rates are properties of this simulator, gripper
+and success test and are not claimed to transfer to hardware.* Und zur Reibung: *Contact
+friction is 1.0 between fingers and object (PyBullet multiplies the two coefficients; the
+value was measured, not assumed). A replicate on a second machine with an effective
+coefficient of 2.4 yields the same sign of the difference (see …).*
+
 ## Was die Studie nicht kann
 
 Simulation, keine reale Hardware; statisches Clutter (LM-O-Clutter ohne Annotation fehlt im

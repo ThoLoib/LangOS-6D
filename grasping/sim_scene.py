@@ -303,6 +303,7 @@ class SceneObject:
     mesh_path: str
     gt_idx: int = 0                     # BOP instance index within the frame
     T_cam: Optional[np.ndarray] = None  # 4×4, model→camera (metres)
+    dataset: str = ""                   # for the per-object mass lookup
 
 
 @dataclass
@@ -455,7 +456,7 @@ def scene_from_frame(fr: BopFrame, world: str = "auto", exclude_dilate: int = 6
 
     def _objs(T):
         return [SceneObject(o["obj_id"], T @ T_m2c[i], bop_mesh_path(fr.dataset, o["obj_id"]),
-                            gt_idx=i, T_cam=T_m2c[i]) for i, o in enumerate(fr.gt)]
+                            gt_idx=i, T_cam=T_m2c[i], dataset=fr.dataset) for i, o in enumerate(fr.gt)]
     objs = _objs(T_c2w)
     # lowest vertex of every object in the world: objects rest on the table, so
     # the minimum over the scene should sit at z ≈ 0 (a bad plane shows here).
@@ -626,7 +627,7 @@ class TabletopSim:
             # can't be grasped realistically. (Concave trimesh collision can't be
             # dynamic in PyBullet, hence the decomposition into convex parts.)
             col = self._vhacd_collision(o.mesh_path, S)
-            mass = TARGET_MASS_KG
+            mass = object_mass(o.dataset, o.obj_id)
         else:
             col = p.createCollisionShape(p.GEOM_MESH, fileName=o.mesh_path,
                                          meshScale=S,
@@ -738,8 +739,22 @@ class TabletopSim:
 
 
 # Physics constants of the dynamic target (reported in the experiment manifest).
-TARGET_MASS_KG = 0.2
-TARGET_FRICTION = 1.6
+# PyBullet combines the lateral friction of two bodies MULTIPLICATIVELY (measured
+# 2026-09-11 with a box on a plane: 1.0 x 1.0 -> 1.01, 1.6 x 1.5 -> 2.42), so the
+# finger-object coefficient is TARGET_FRICTION x grasp_execute.FINGER_FRICTION.
+# 1.0 x 1.0 = 1.0 is a plain, physically plausible value (rubber pad on plastic);
+# the pilot's 1.6 x 1.5 = 2.4 was unrealistically high.
+TARGET_FRICTION = 1.0
+TARGET_MASS_KG = 0.2                 # fallback where no measured mass is known
+# Measured object masses in kg, keyed by (dataset, obj_id). YCB objects: take the
+# values from the YCB object set list (Calli et al. 2015, ycbbenchmarks.com) —
+# fill in before a run and keep the source in the commit message. T-LESS and
+# LM-O publish no masses: fallback.
+OBJECT_MASS_KG: Dict[Tuple[str, int], float] = {}
+
+
+def object_mass(dataset: str, obj_id: int) -> float:
+    return OBJECT_MASS_KG.get((dataset, obj_id), TARGET_MASS_KG)
 
 
 # ---------------------------------------------------------------------------
