@@ -35,6 +35,14 @@ PANDA_ARM = list(range(7))            # 7 revolute arm joints
 PANDA_FINGERS = [9, 10]               # prismatic finger joints (0=closed, 0.04=open)
 PANDA_EE = 11                         # panda_grasptarget link (TCP)
 FINGER_OPEN = 0.04
+ARM_REST = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]   # neutral "ready" pose
+
+# Success protocol of one attempt (all values reported in the experiment manifest):
+LIFT_M = 0.15          # lift the closed gripper this high above the grasp
+RISE_MIN_M = 0.05      # the object must have risen at least this much …
+HOLD_STEPS = 240       # … stay in the hand for this many steps (1 s at 240 Hz) …
+SHAKE_AMP_M = 0.05     # … and survive ±x/±y/±z jerks of this amplitude
+IN_HAND_M = 0.15       # object further than this from the TCP == dropped
 
 
 class PandaGrasper:
@@ -43,12 +51,67 @@ class PandaGrasper:
         self.p = sim._p
         self.robot = sim.robot
         assert self.robot is not None, "scene built without a robot"
+        # Movable joints + limits, for LIMIT-AWARE (null-space) IK. Unconstrained
+        # calculateInverseKinematics returns configurations that violate the
+        # Panda joint limits (notably joints 1 & 3); position control then clamps
+        # them and the EE lands ~20 cm off target. Feeding the limits back into
+        # the solver keeps the solution reachable.
+        p = self.p
+        self.movable, self.ll, self.ul = [], [], []
+        for j in range(p.getNumJoints(self.robot)):
+            info = p.getJointInfo(self.robot, j)
+            if info[2] != p.JOINT_FIXED:
+                self.movable.append(j); self.ll.append(info[8]); self.ul.append(info[9])
+        self.jr = [u - l for l, u in zip(self.ll, self.ul)]
+        self.rp = ARM_REST + [FINGER_OPEN] * (len(self.movable) - len(PANDA_ARM))
+        self.jd = [0.05] * len(self.movable)
+        # grippy fingertips so the grasp holds during the lift
+        for j in PANDA_FINGERS:
+            p.changeDynamics(self.robot, j, lateralFriction=1.5, spinningFriction=0.005)
+
+    # ---- IK ----------------------------------------------------------------
+    def _ik(self, pos, orn):
+        return self.p.calculateInverseKinematics(
+            self.robot, PANDA_EE, pos, orn,
+            lowerLimits=self.ll, upperLimits=self.ul, jointRanges=self.jr,
+            restPoses=self.rp, jointDamping=self.jd,
+            maxNumIterations=200, residualThreshold=1e-4)
+
+    def reach_error(self, pos, orn) -> float:
+        """mm error of the limit-clamped IK solution at (pos, orn) — no motion.
+        Used to check a grasp is reachable *before* committing to executing it."""
+        p = self.p
+        q = self._ik(pos, orn)
+        arm_ll, arm_ul = self.ll[:len(PANDA_ARM)], self.ul[:len(PANDA_ARM)]
+        saved = [p.getJointState(self.robot, j)[0] for j in PANDA_ARM]
+        for j, qi, lo, hi in zip(PANDA_ARM, q[:7], arm_ll, arm_ul):
+            p.resetJointState(self.robot, j, min(max(qi, lo), hi))
+        st = p.getLinkState(self.robot, PANDA_EE, computeForwardKinematics=True)
+        err = float(np.linalg.norm(np.array(st[4]) - np.asarray(pos)) * 1000)
+        for j, qi in zip(PANDA_ARM, saved):                # restore
+            p.resetJointState(self.robot, j, qi)
+        return err
+
+    def home(self):
+        """Snap the arm to the neutral rest pose (reset between tries)."""
+        for j, qi in zip(PANDA_ARM, ARM_REST):
+            self.p.resetJointState(self.robot, j, qi, targetVelocity=0.0)
+        self._drive_arm(ARM_REST)          # motors must not chase the previous target
+
+    def reset(self):
+        """Full robot reset between attempts: arm at rest, fingers open, zero
+        velocities — an instantaneous teleport, so every attempt starts from
+        the same state (the scene objects are reset by the sim)."""
+        self.home()
+        for j in PANDA_FINGERS:
+            self.p.resetJointState(self.robot, j, FINGER_OPEN, targetVelocity=0.0)
+        self.set_gripper(FINGER_OPEN * 2)
 
     # ---- low-level control -------------------------------------------------
-    def _drive_arm(self, q: List[float]):
+    def _drive_arm(self, q: List[float], force: float = 400):
         for j, qi in zip(PANDA_ARM, q):
             self.p.setJointMotorControl2(self.robot, j, self.p.POSITION_CONTROL,
-                                         qi, force=200)
+                                         qi, force=force)
 
     def set_gripper(self, width: float, force: float = 40):
         w = float(np.clip(width / 2, 0.0, FINGER_OPEN))
@@ -56,16 +119,23 @@ class PandaGrasper:
             self.p.setJointMotorControl2(self.robot, j, self.p.POSITION_CONTROL,
                                          w, force=force)
 
-    def move_to(self, pos, orn_quat, steps: int = 240, cap=None):
-        """IK to an EE pose, drive there, step the sim (rendering frames if cap)."""
-        q = self.p.calculateInverseKinematics(self.robot, PANDA_EE, pos, orn_quat,
-                                              maxNumIterations=100,
-                                              residualThreshold=1e-4)
-        self._drive_arm(q[:7])
+    def move_to(self, pos, orn_quat, steps: int = 400, cap=None, force: float = 400):
+        """Limit-aware IK to an EE pose, drive there, step until the arm settles.
+
+        Position control leaves a small steady-state joint residual that compounds
+        to several cm at the gripper, so we settle until the max joint error is
+        tiny (<0.005 rad ≈ ~1 cm at the TCP) rather than a fixed step count."""
+        q = self._ik(pos, orn_quat)
+        self._drive_arm(q[:7], force=force)
         for i in range(steps):
             self.p.stepSimulation()
             if cap is not None and i % 12 == 0:
                 cap()
+            if i > 40 and i % 20 == 0:
+                jerr = max(abs(self.p.getJointState(self.robot, j)[0] - qi)
+                           for j, qi in zip(PANDA_ARM, q[:7]))
+                if jerr < 0.005:
+                    break
 
     # ---- one grasp attempt -------------------------------------------------
     def execute(self, grasp_world: Grasp, cap=None) -> dict:
@@ -77,10 +147,33 @@ class PandaGrasper:
         pregrasp = center - z * 0.12                  # 12 cm back along approach
 
         self.set_gripper(FINGER_OPEN * 2)             # open
-        self.move_to(pregrasp, orn, 180, cap)
-        self.move_to(center - z * 0.01, orn, 160, cap)   # approach to contacts
-        self.set_gripper(grasp_world.width * 0.6, force=60)  # close (slightly < width)
+        self.move_to(pregrasp, orn, 400, cap)
+        self.move_to(center - z * 0.01, orn, 400, cap)   # approach to contacts
+
+        # Verify the gripper actually ARRIVED. A straight-line approach can be
+        # blocked by clutter (the arm rams a neighbouring object) or fail to
+        # converge; closing then just grasps air. Bail out fast so the caller can
+        # try the next candidate — this is the clutter-avoidance mechanism (pick a
+        # grasp whose approach corridor happens to be clear), short of full
+        # collision-aware motion planning.
+        tcp = np.array(p.getLinkState(self.robot, PANDA_EE,
+                                      computeForwardKinematics=True)[4])
+        approach_err = float(np.linalg.norm(tcp - (center - z * 0.01)))
+        if approach_err > 0.03:                       # >3 cm short == blocked
+            return {"success": False, "lift_cm": 0.0, "rose": False,
+                    "held": False, "blocked": True,
+                    "approach_err_mm": round(approach_err * 1000)}
+
+        # Two-stage close: a GENTLE pre-close establishes light contact without
+        # shoving the (unfixtured) object away, then a firm clamp secures it.
+        # (A single hard close ejects thin/off-centre objects before it grips.)
+        self.set_gripper(grasp_world.width * 0.85, force=20)
         for _ in range(80):
+            p.stepSimulation()
+            if cap:
+                cap()
+        self.set_gripper(max(grasp_world.width * 0.4, 0.0), force=120)
+        for _ in range(200):                          # let the grip settle firmly
             p.stepSimulation()
             if cap:
                 cap()
@@ -92,13 +185,63 @@ class PandaGrasper:
             if p.getDynamicsInfo(b, -1)[0] > 0:
                 target_body = b
                 z0 = p.getBasePositionAndOrientation(b)[0][2]
-        self.move_to(center - z * 0.01 + np.array([0, 0, 0.15]), orn, 240, cap)  # lift 15 cm
+        lift_pose = center - z * 0.01 + np.array([0, 0, LIFT_M])
+        self.move_to(lift_pose, orn, 240, cap)        # lift
         lifted = 0.0
         if target_body is not None:
             z1 = p.getBasePositionAndOrientation(target_body)[0][2]
             lifted = z1 - z0
-        success = lifted > 0.05                       # object rose ≥ 5 cm
-        return {"success": bool(success), "lift_cm": round(100 * lifted, 1)}
+        rose = lifted > RISE_MIN_M                    # object rose enough
+
+        # HOLD phase: keep the lift pose for HOLD_STEPS and require the object
+        # to stay with the gripper — a grasp that merely flicks the object
+        # upward passes the rise check but fails here.
+        hold = False
+        if rose and target_body is not None:
+            hold = self._hold_test(target_body, HOLD_STEPS, cap=cap)
+
+        # ACRONYM-style shake test: a real grasp must survive perturbation, not
+        # merely rise. Jerk the gripper along ±x/±y/±z and require the object to
+        # stay in the hand — this rejects marginal grips that a lift-only check
+        # would pass.
+        held = False
+        if hold:
+            held = self._shake_test(lift_pose, orn, target_body, cap=cap)
+
+        success = rose and hold and held
+        return {"success": bool(success), "lift_cm": round(100 * lifted, 1),
+                "rose": bool(rose), "hold": bool(hold), "held": bool(held)}
+
+    def _hold_test(self, target_body, steps: int, cap=None) -> bool:
+        """Hold still for `steps`; True if the object never leaves the hand."""
+        p = self.p
+        for i in range(steps):
+            p.stepSimulation()
+            if cap and i % 12 == 0:
+                cap()
+            if i % 40 == 0 or i == steps - 1:
+                tcp = np.array(p.getLinkState(self.robot, PANDA_EE,
+                                              computeForwardKinematics=True)[4])
+                obj = np.array(p.getBasePositionAndOrientation(target_body)[0])
+                if np.linalg.norm(obj - tcp) > IN_HAND_M:
+                    return False
+        return True
+
+    def _shake_test(self, base_pose, orn, target_body, amp: float = SHAKE_AMP_M,
+                    cap=None) -> bool:
+        """Perturb the held object along ±x/±y/±z; return True if it stays in the
+        gripper (object–TCP distance never blows past the gripper's reach)."""
+        p = self.p
+        dirs = [(amp, 0, 0), (-amp, 0, 0), (0, amp, 0), (0, -amp, 0),
+                (0, 0, amp), (0, 0, -amp)]
+        for d in dirs:
+            self.move_to(base_pose + np.array(d), orn, steps=60, cap=cap)  # fast jerk
+            tcp = np.array(p.getLinkState(self.robot, PANDA_EE,
+                                          computeForwardKinematics=True)[4])
+            obj = np.array(p.getBasePositionAndOrientation(target_body)[0])
+            if np.linalg.norm(obj - tcp) > IN_HAND_M: # object slipped out of the hand
+                return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +265,31 @@ def grasps_to_world(grasps: List[Grasp], T_obj2world: np.ndarray) -> List[Grasp]
 
 
 def reachable_order(grasps: List[Grasp], base_xy) -> List[Grasp]:
-    """Heuristic: prefer top-down-ish grasps near the robot (better IK odds)."""
+    """Heuristic: strongly prefer top-down grasps near the robot. Top-down
+    approaches are both easier for the arm to reach and far less likely to sweep
+    the object off the table than tilted/side approaches."""
     def key(g):
         downness = -_unit(g.approach)[2]          # approach pointing downward = good
         near = -np.linalg.norm(g.center[:2] - np.asarray(base_xy))
-        return 0.7 * g.quality + 0.2 * downness + 0.1 * near
+        return 0.5 * g.quality + 0.4 * downness + 0.1 * near
     return sorted(grasps, key=key, reverse=True)
+
+
+def feasible_grasps(grasper: "PandaGrasper", grasps_world: List[Grasp],
+                    pre: float = 0.12, touch: float = 0.01,
+                    tol_mm: float = 30.0) -> List[Grasp]:
+    """Keep only grasps whose pre-grasp AND approach poses are reachable within
+    the Panda's joint limits (checked with `grasper.reach_error`, no motion),
+    preserving input order. Most sampled grasps are unreachable from a fixed base
+    — executing an unreachable one just knocks the object, so filter first."""
+    out = []
+    for g in grasps_world:
+        z = _unit(g.approach)
+        orn = _hand_quat(g)
+        if (grasper.reach_error(g.center - z * pre, orn) < tol_mm and
+                grasper.reach_error(g.center - z * touch, orn) < tol_mm):
+            out.append(g)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -158,23 +320,33 @@ def main():
     # proxy in this mechanics test — then place them by the object's world pose.
     mesh = trimesh.load(tgt.mesh_path, force="mesh")
     grasps = sample_antipodal_grasps(mesh, GripperConfig(), n_samples=800, top_k=40)
-    grasps_w = transform_grasps(grasps, tgt.T_world)
-    base = sim._p.getBasePositionAndOrientation(sim.robot)[0][:2]
-    grasps_w = reachable_order(grasps_w, base)
+    grasps_w = reachable_order(transform_grasps(grasps, tgt.T_world),
+                               sim._p.getBasePositionAndOrientation(sim.robot)[0][:2])
+    grasper = PandaGrasper(sim)
+    grasper.home()
+    grasps_w = feasible_grasps(grasper, grasps_w)             # keep only reachable
     print(f"[grasp-exec] target {args.target}:{YCBV_NAMES.get(args.target,'?')} — "
-          f"{len(grasps_w)} candidates, trying top {args.n_tries}")
+          f"{len(grasps_w)} reachable candidates, trying top {args.n_tries}")
 
     frames = []
     cap = (lambda: frames.append(sim.render_rgbd()["rgb"])) if args.gif else None
-    grasper = PandaGrasper(sim)
     result = {"success": False}
-    for i, g in enumerate(grasps_w[:args.n_tries]):
-        print(f"  try {i}: q={g.quality:.3f} width={g.width*1000:.0f}mm")
+    attempts = 0
+    for i, g in enumerate(grasps_w):                          # blocked ones are cheap
+        if attempts >= args.n_tries:
+            break
+        sim.reset_objects(); grasper.reset(); sim.settle(30)  # clean slate per try
+        if cap:
+            frames.clear()                               # keep only this attempt's frames
         result = grasper.execute(g, cap=cap)
-        print(f"    -> {result}")
+        if result.get("blocked"):                            # clutter — doesn't count
+            print(f"  cand {i}: approach blocked ({result['approach_err_mm']}mm), skip")
+            continue
+        attempts += 1
+        print(f"  try {attempts} (cand {i}): q={g.quality:.3f} width={g.width*1000:.0f}mm "
+              f"approach_z={_unit(g.approach)[2]:+.2f} -> {result}")
         if result["success"]:
             break
-        sim.build  # (a full reset per try is omitted for brevity)
 
     print(f"[grasp-exec] RESULT: {result}")
     if args.gif and frames:

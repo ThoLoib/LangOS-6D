@@ -47,6 +47,16 @@ Erwartete Objektzahlen prüft `python3 repro_preprocess.py --dataset <ds> --step
 | FoundationPose | eigenes Repo `~/thesis/FoundationPose` + Gewichte; läuft als Compose-Dienst `foundationpose` (Port 5050) | — |
 | Blender **3.4.1** (Rendern, Host) | blender.org-Archiv — **exakt 3.4.1**: 3.3.x scheitert still (rc=0, kein PIL) | Host, `--blender`-Flag |
 
+## Stage 5 (Greifstudie)
+
+Braucht die BOP-Testsplits von YCB-V, T-LESS (Primesense) und LM-O **mit `depth/` und
+`mask_visib/`** (wie Stage 3), die CADs der drei Proxy-Quellen (GSO, HouseCat6D, ITODD unter
+`object_database/` bzw. `eval/datasets/itodd/models`) und die BOP-CADs der Ziele (`models_cad`
+bei T-LESS, `models` bei LM-O, das texturierte YCB-Mesh bei YCB-V; `models_eval` wo vorhanden).
+Die Instanzlisten liegen im Repo (`grasping/proxy_grasp_instances.json`); zum Neubauen braucht es
+die 3b-Records: `rclone copy gdrive:Masterthesis/OSCAR/object_retrieval/results_bop_stage3_v2/3b_cross/ object_retrieval/results_bop_stage3_v2/3b_cross/`.
+Kein Blender, keine Galerie-Embeddings — die Proxys sind fixiert.
+
 ## Dienste
 
 ```

@@ -41,11 +41,16 @@ class Perception:
     cfg: object                # EvalConfig
 
     @classmethod
-    def load(cls, use_uni3d: bool = False) -> "Perception":
-        """Assemble G_proxy (GSO ∪ HouseCat6D ∪ ITODD) — targets EXCLUDED."""
-        from stage3_gallery import assemble_gallery, UNI3D_OVERRIDES
+    def load(cls, use_uni3d: bool = False, proxy_ds=None) -> "Perception":
+        """Assemble G_proxy (default GSO ∪ HouseCat6D ∪ ITODD) — targets EXCLUDED.
+
+        ``proxy_ds`` overrides the proxy dataset set (e.g. ("gso",) to use only
+        the datasets actually present on this machine)."""
+        from stage3_gallery import assemble_gallery, UNI3D_OVERRIDES, PROXY_DATASETS
+        kw = {} if proxy_ds is None else {"proxy_ds": tuple(proxy_ds)}
         gal = assemble_gallery(target_datasets=(),                 # proxy-only
-                               extra_overrides=(UNI3D_OVERRIDES if use_uni3d else None))
+                               extra_overrides=(UNI3D_OVERRIDES if use_uni3d else None),
+                               **kw)
         comp = gal.components()
         print(f"[perceive] proxy gallery |G_proxy| = {len(gal.gallery_ids)}")
         return cls(gallery=gal, components=comp, cfg=gal.eval_cfg)
@@ -72,16 +77,61 @@ class Perception:
                         clip_full_top_k=len(clip_retr._desc_labels))
         ranking = fusion_ranking(out["fused_full"])
         proxy_id = ranking[0][0]
-        cad_path = self.gallery.cad_path(proxy_id) if hasattr(self.gallery, "cad_path") \
-            else self.gallery.pose_mesh[proxy_id]
+        # UnionGallery keeps the native-scale pose mesh as id_to_pose_mesh:
+        #   namespaced_id -> (path, units_m)   (units_m: True == metres, e.g. GSO)
+        cad_path, self._proxy_units_m = self.gallery.id_to_pose_mesh[proxy_id]
         return proxy_id, cad_path, ranking
 
     # ---- 3. pose the proxy with FoundationPose ----------------------------
+    def _units(self) -> float:
+        """Native-mesh -> metres factor for the retrieved proxy."""
+        return 1.0 if getattr(self, "_proxy_units_m", True) else 0.001
+
+    def observed_scale(self, depth, mask, K, cad_path) -> float:
+        """Factor that resizes the proxy (in METRES) to the target's OBSERVED
+        metric size. A retrieved proxy is an arbitrary-sized CAD — a 16 cm plant
+        pot standing in for a 9 cm mug must be shrunk or its grasps miss. Uses the
+        back-projected masked-depth cloud diagonal vs the proxy's diagonal."""
+        import trimesh
+        obs_diag = observed_diag(depth, mask, K)
+        if obs_diag is None:
+            return 1.0
+        proxy = trimesh.load(cad_path, force="mesh")
+        proxy_diag = float(np.linalg.norm(np.asarray(proxy.extents) * self._units()))
+        return obs_diag / proxy_diag if proxy_diag > 1e-6 else 1.0
+
     def estimate_pose(self, rgb, depth, mask, cad_path, K,
-                      refine_iter: int = 5) -> Tuple[np.ndarray, float]:
+                      refine_iter: int = 5, size_scale: float = 1.0
+                      ) -> Tuple[np.ndarray, float]:
         from pipeline.foundationpose_bridge import call_foundationpose
-        return call_foundationpose(FP_URL, rgb, depth, mask.astype(np.uint8),
-                                   np.asarray(K), cad_path, refine_iter=refine_iter)
+        # FP server route is /estimate_pose (mirror step8); FP_URL is the base.
+        url = FP_URL.rstrip("/") + "/estimate_pose"
+        # scale takes the native mesh to metres AND resizes it to the observed
+        # target size (metre meshes -> units 1.0, mm meshes -> 0.001).
+        scale = self._units() * float(size_scale)
+        return call_foundationpose(url, rgb, depth, mask.astype(np.uint8),
+                                   np.asarray(K), cad_path, scale=scale,
+                                   refine_iter=refine_iter)
+
+
+def observed_diag(depth, mask, K, min_px: int = 50) -> Optional[float]:
+    """Metric diagonal (m) of the target's back-projected masked-depth cloud.
+
+    The measured size of the object as the camera sees it — used to size an
+    arbitrary retrieved CAD to the real thing. Returns None if the mask carries
+    too few valid depth pixels to be trusted."""
+    K = np.asarray(K, float)
+    ys, xs = np.where(mask)
+    z = depth[ys, xs]
+    ok = (z > 0.05) & (z < 2.9)
+    xs, ys, z = xs[ok], ys[ok], z[ok]
+    if z.size < min_px:
+        return None
+    X = (xs - K[0, 2]) * z / K[0, 0]
+    Y = (ys - K[1, 2]) * z / K[1, 1]
+    P = np.stack([X, Y, z], axis=1)
+    lo, hi = np.percentile(P, [2, 98], axis=0)         # trim depth outliers
+    return float(np.linalg.norm(hi - lo))
 
 
 def _mask_bbox(mask: np.ndarray) -> List[int]:
@@ -100,8 +150,12 @@ def main():
     ap.add_argument("--target", type=int, required=True, help="YCB obj_id to grasp")
     ap.add_argument("--uni3d", action="store_true", help="Uni3D shape arm")
     ap.add_argument("--no-pose", action="store_true", help="retrieval only (skip FoundationPose)")
+    ap.add_argument("--proxy", default=None,
+                    help="comma-separated proxy datasets (default: all; e.g. 'gso')")
     ap.add_argument("--topk", type=int, default=10, help="print this many ranked proxies")
     args = ap.parse_args()
+    proxy_ds = ([p.strip() for p in args.proxy.split(",") if p.strip()]
+                if args.proxy else None)
 
     from grasping.sim_scene import TabletopSim, load_ycbv_scene, YCBV_NAMES
     objs, cam = load_ycbv_scene(args.scene, args.frame)
@@ -113,7 +167,7 @@ def main():
     print(f"[perceive] target = {args.target}:{YCBV_NAMES.get(args.target,'?')}  "
           f"mask px = {int(mask.sum())}")
 
-    per = Perception.load(use_uni3d=args.uni3d)
+    per = Perception.load(use_uni3d=args.uni3d, proxy_ds=proxy_ds)
     proxy_id, cad_path, ranking = per.retrieve_proxy(obs["rgb"], mask)
     print(f"[perceive] TOP-1 PROXY = {proxy_id}\n           cad = {cad_path}")
     for i, (oid, s) in enumerate(ranking[:args.topk]):

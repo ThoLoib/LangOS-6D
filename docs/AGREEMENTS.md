@@ -187,3 +187,19 @@ ein still fehlender Shape-Kanal ergäbe eine zu niedrige Onboarding-Summe, ohne 
   RESULTS.md decken, bleiben inkl. results_per_query lokal UND auf Drive.
   Die grossen vorverarbeiteten Galerien bleiben auf Drive (Repro-Abkuerzung).
 - Reproduktionslaeufe schreiben in results_repro_* — Originalordner sind tabu.
+
+## 2026-09-10 — Stage 5: Proxy-Greifstudie
+- **Gemessen wird `gt` gegen `proxy`** — Thomas: „einfach ein Sim-Lauf mit den GTs und den
+  zugehörigen Proxies" und die Erfolgsrate. `gt_pose` (Mechanik-Obergrenze) und `random`
+  (Zufalls-CAD) bleiben als Zusatzkontrollen über `--conditions`.
+- **Objekte und Instanzen sind vorab fixiert** (Top-20 vom 2026-09-10, Proxy je Objekt fest,
+  nur Instanzen, in denen der Proxy 3b-Top-1 war; 6 je Objekt, reihum über die Szenen).
+  Protokoll samt Vorhersagen: `docs/STAGE5_PROTOCOL.md` — vor dem ersten Trial geschrieben.
+- **Derselbe Messpfad wie Stage 3:** FoundationPose auf dem echten RGB-D mit GT-Maske
+  (`eval_bop_pose.estimate_pose`), D_sym aus `stage3_metrics`. Der Sim führt nur aus.
+- **Berichtet wird ohne Intervalle** (2026-09-03): Erfolgsrate je Bedingung, Datensatz,
+  Objekt; gepaart als Δ plus Bilanz nur-A : nur-B : beide : keine.
+- **Einstieg wie auf eval_final:** Python-CLI, das sich selbst wrappt
+  (`grasping/experiment_proxy_grasp.py`, `repro_experiment.py --stage 5`); kein Bash-Wrapper.
+  Ausgaben in `_s5_out/proxy_grasp/` (CSV je Trial, Manifest, REPORT.md).
+

@@ -208,6 +208,31 @@ Objekt, rankt das Retrieval den falschen Crop korrekt. Genau deshalb läuft die
 Evaluation (Stage 3) mit GT-Masken; `pipeline_output/rankings_*.csv` zeigt je
 Kanal, was das Retrieval gesehen hat.
 
+## 7 · Stage 5 — Proxy-Greifstudie (docs/STAGE5_PROTOCOL.md)
+
+Greift ein Roboter mit dem von OSCAR+ gefundenen Proxy-CAD so gut wie mit dem eigenen
+CAD? Simulation (PyBullet, Franka Panda) auf den eingefrorenen Stage-3b-Instanzen
+(`grasping/proxy_grasp_instances.json`), FoundationPose auf dem echten RGB-D wie in 3b,
+Bewertung mit demselben D_sym. Läuft vom Host, wrappt sich selbst in den Container und
+startet den FoundationPose-Dienst bei Bedarf:
+
+```
+python3 grasping/experiment_proxy_grasp.py --check          # Daten, Dienst, Tischebenen-Selbstprüfung
+python3 grasping/experiment_proxy_grasp.py --plan           # 10 Objekte × 6 Instanzen (Rang 1–10)
+python3 grasping/experiment_proxy_grasp.py                  # gt vs proxy, 120 Trials, fortsetzbar
+python3 grasping/experiment_proxy_grasp.py --report         # _s5_out/proxy_grasp/REPORT.md
+python3 repro_experiment.py --stage 5 [dieselben Flags]     # identischer Einstieg
+```
+
+Varianten: `--ranks 1-20` (Rang 11–20 dazu), `--exhibits` (mustard, tless 16 — gezeigt, nicht
+gezählt), `--conditions gt_pose,gt,proxy,random` (Mechanik-Obergrenze und Zufalls-CAD als
+Kontrollen), `--pose-source stage3` (archivierte 3b-/gt-Posen statt FoundationPose, ohne GPU).
+Ergebnis: Erfolgsrate je Bedingung, Datensatz und Objekt, gepaart als Δ plus Gewinnbilanz —
+ohne Intervalle (Vereinbarung 2026-09-03). Nicht bitreproduzierbar (FoundationPose,
+Physik); die Instanzwahl, Seeds und Physikparameter sind fixiert (`PROTOCOL` im Skript,
+`manifest.json` je Lauf). Instanzlisten neu bauen (nur nötig, wenn sich der 3b-Lauf ändert):
+`python3 grasping/build_grasp_instances.py --records-dir object_retrieval/results_bop_stage3_v2/3b_cross`.
+
 ## Übersichten regenerieren
 
 ```

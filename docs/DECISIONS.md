@@ -1,5 +1,55 @@
 # Decisions
 
+## 2026-09-10 Stage 5 measures grasp success under a predeclared four-condition protocol on the Stage-3 3b instances
+
+Decision
+- The proxy-grasp study runs the **same grasp planner and executor** under four paired conditions
+  per instance — `gt_pose` (own CAD, true pose), `gt` (own CAD, FoundationPose), `proxy` (the
+  fixed 3b top-1 proxy, native size, FoundationPose) and `random` (a hash-drawn gallery CAD) —
+  and reports success@k (k = 5 executed attempts, full reset before each), success@1 and the
+  per-attempt rate, per dataset, per object and paired (Δ + win split). Protocol and predictions
+  are frozen in `docs/STAGE5_PROTOCOL.md` before the first run.
+- **Instances come from Stage 3, not from new retrieval:** for each object only the 3b instances
+  in which the fixed proxy actually was the top-1 are eligible (`proxy_grasp_instances.json`,
+  built from `3b_cross/*/records.json`); 6 per object, round-robin over scenes, evenly spaced
+  frames, `visib_fract ≥ 0.5`. The study therefore holds retrieval fixed and measures what its
+  output is worth downstream — and it can consume the archived Stage-3 poses directly
+  (`--pose-source stage3`).
+- **FoundationPose sees the real sensor RGB-D and the GT visible mask** through
+  `eval_bop_pose.estimate_pose`, and pose quality is scored with `stage3_metrics.d_sym` — the
+  Stage-3 path, not a re-implementation. The sim only executes.
+- **The sim world is the table plane fitted to the real depth image** (RANSAC, objects masked
+  out) for all three datasets, with the BOP extrinsics used as a self-check where they exist
+  (YCB-V 1.9°, T-LESS 0.5–0.7°) and the lowest object vertex checked against the plane;
+  both values are recorded per trial. LM-O has no world frame, so this is the only uniform option.
+- The `random` baseline is `crc32("random-proxy/<ds>/<obj>") mod 1257` over the sorted G_proxy
+  list — one CAD per object, no category rule, no RNG state, no test outcome.
+- **Default pair `gt,proxy`** (Thomas, 2026-09-10: "einfach ein Sim-Lauf mit den GTs und den
+  zugehörigen Proxies"); `gt_pose` and `random` are opt-in controls via `--conditions`.
+- Entry point per the eval_final convention: a flat Python CLI that wraps itself into the
+  container (`grasping/experiment_proxy_grasp.py`, `repro_experiment.py --stage 5`); no bash wrapper.
+
+Rationale
+- The thesis (`evaluation_2.tex`, "Required Experimental Design") asks for exactly these four
+  conditions, a full reset per attempt, a hold phase, a predeclared object set and reporting per
+  condition and object. The pilot of 2026-09-06 (6 objects, 1 frame each, sim-rendered input) had
+  none of that and its "5/7 objects" aggregate was corrupted by a torn CSV row.
+- Conditioning on "proxy was top-1" is what makes the proxy a fixed treatment rather than a
+  lottery: for tless 22 the fixed proxy covers 63 % of instances, for ycbv 3 only 2 %.
+- Fitting the table from depth is what a robot with a depth camera does and needs no per-dataset
+  world convention; the recorded angle/gap checks turn a silent assumption into a number.
+
+Alternatives considered
+- Render the scene and let FoundationPose see the synthetic image (the pilot's design) — kept as
+  `--fp-input sim` but not the default: it is easier than Stage 3 (render == mesh) and breaks the
+  comparability with the 3b D_sym values.
+- A category-rule random proxy — rejected: no consistent category label exists across
+  GSO/HouseCat6D/ITODD; a uniform draw is the only rule that needs no post-hoc judgement.
+- An "oracle pose for the proxy" condition — rejected, as the thesis itself notes: a proxy has
+  its own frame and scale, so its oracle pose is undefined without an alignment method.
+- Confidence intervals on the success rates — not reported, per the 2026-09-03 decision; sample
+  sizes are named instead (60 instances for rank 1–10; 120 with rank 11–20).
+
 ## 2026-09-04 Geometric re-ranking is reported as conditional on the base ranking, not as a fixed gain
 
 Decision

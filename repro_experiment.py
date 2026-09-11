@@ -25,6 +25,8 @@ Beispiele:
     python3 repro_experiment.py --stage 3 --mode 3a --query cross --geo fitness
     python3 repro_experiment.py --stage 4 --side query --views 16,42
     python3 repro_experiment.py --stage 4 --side onboarding --stages render
+    python3 repro_experiment.py --stage 5                                # Greifstudie gt vs proxy
+    python3 repro_experiment.py --stage 5 --report                       # (Flags: grasping/experiment_proxy_grasp.py)
 Smoke (verkleinert, nur Funktionspruefung — Metriken NICHT vergleichbar):
     python3 repro_experiment.py --stage 1 --arm E1c_full_fusion --limit 25
     python3 repro_experiment.py --stage 3 --mode 3a --query cross --limit 20
@@ -118,9 +120,18 @@ def write_config(outdir, args, env_extra):
 
 
 def main():
+    # Stage 5 (Proxy-Greifstudie) hat einen eigenen Flag-Satz und wrappt sich
+    # selbst in den Container — alles nach `--stage 5` geht unveraendert durch.
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--stage" and i + 1 < len(argv) and argv[i + 1] == "5" or a == "--stage=5":
+            rest = argv[:i] + argv[i + (1 if a == "--stage=5" else 2):]
+            script = os.path.join(ROOT, "grasping", "experiment_proxy_grasp.py")
+            log("Stage 5 -> " + script + (" " + " ".join(rest) if rest else ""))
+            os.execvp(sys.executable, [sys.executable, script] + rest)
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stage", required=True, choices=["1", "2", "3", "4"])
+    ap.add_argument("--stage", required=True, choices=["1", "2", "3", "4", "5"])
     # Stage 1
     ap.add_argument("--arm", help="Stage 1: Arm-Name wie in RESULTS.md 1.8 "
                                   "(z.B. E1c_full_fusion, E2_chamfer_ransac)")

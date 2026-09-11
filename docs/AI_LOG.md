@@ -1,5 +1,81 @@
 # AI Log
 
+## 2026-09-10 Stage-5 proxy-grasp study built: frozen instances from 3b, Stage-3 pose path, depth-fitted table
+
+Goal
+- Turn the Stage-5 scaffold into the experiment the thesis reserves (`tab:eval_grasp_results`):
+  a predeclared, paired, resumable grasp-success study on Thomas' Top-20 object ranking, based on
+  the `eval_final` pipeline state (31b60f0f = `tessa-pc` 9d03f109 + the repro clean-up; none of
+  the modules the study calls — `eval_bop_pose`, `stage3_metrics`, `foundationpose_bridge` — differ
+  between the two). Entry per the eval_final convention: a Python CLI that wraps itself into the
+  container (`grasping/experiment_proxy_grasp.py`, also `repro_experiment.py --stage 5`); the
+  interim bash runner was dropped.
+- Thomas' scope decision (same day): the rate is `gt` against `proxy`; `gt_pose` and `random`
+  stay available as opt-in controls (`--conditions`).
+
+What was built (`grasping/`, see README)
+- `proxy_grasp_cases.py` — the Top-20 with fixed proxies, tiers, exhibits and exclusions;
+  `build_grasp_instances.py` → `proxy_grasp_instances.json` (1440 instances, 25 cases) from the
+  3b records on gdrive (`results_bop_stage3_v2/3b_cross`), joined with `scene_gt_info` visibility
+  and the paired exact-CAD records (Stage-3 poses stored for `--pose-source stage3`). The table's
+  numbers reproduce exactly (ycbv 14 → cup-red_heart 78/150 = 52 %, tless 22 → itodd 26 121/192).
+- `experiment_proxy_grasp.py` — plan / run / check / report; CSV appended + fsynced per trial,
+  manifest with git rev + versions + the full PROTOCOL dict; report = Δ + win split per dataset,
+  per object, failure taxonomy, validity columns. it wraps itself into the container (FP up,
+  thread caps, host user, auto-restart on a dead FoundationPose; `repro_experiment.py --stage 5`).
+- `sim_scene.py` — LM-O added; `load_bop_frame` / `scene_from_frame`; world = table plane fitted
+  to the real depth (objects masked, ±0.5 m window around the object depths — without the window
+  RANSAC picks a wall in YCB-V 48); bodies keyed by `gt_idx` (T-LESS scenes hold duplicates).
+- `grasp_execute.py` — hold phase (240 steps) before the shake test; full robot reset (arm,
+  fingers, motor targets) between attempts.
+
+Checks before the run
+- `--check`: all 60 planned instances present; FoundationPose reachable; plane vs BOP up-vector
+  1.9° (YCB-V 48/1074, inliers 0.56) and 0.5–0.7° (T-LESS); LM-O has no extrinsics — the object
+  bottoms sit within ±6 mm of the plane across frames 64/611/871 except the cat/eggbox meshes
+  (−12…−25 mm consistently, an annotation/mesh property), so the normal is right.
+- YCB-V `models_eval` is absent on the laptop; targets are posed/scored with the textured YCB
+  mesh there (reported by `--check` and in the report).
+- Predictions recorded in `docs/STAGE5_PROTOCOL.md` before the rank-1–10 run.
+
+Smoke test found two mechanics defects before the run (fixed, recorded in the protocol)
+- The unconstrained depth-plane fit chose a WALL in YCB-V 48/1133 (89° to the BOP up-vector,
+  objects 52 cm "above" the table) although 48/1074 had fitted at 1.9°. Fix: RANSAC candidates
+  must carry every annotated object 0–40 cm above them, and `--world auto` uses the BOP
+  extrinsics where they exist (table = lowest object vertex); the fitted plane stays as the
+  per-trial self-check.
+- Robot placement "0.55 m along world −x" made reachability depend on the world convention: the
+  tless 22 proxy grasp set had 8 reachable candidates in the pilot's BOP world and 0 of 18 in the
+  plane world. Fix: the Panda stands on the camera's side (viewing direction projected onto the
+  table) — a property of the frame.
+- Mechanics otherwise validated: lmo 9 (plane world) and tless 22 succeed at the first attempt
+  with the own CAD under both the true and the FoundationPose pose; the random CADs fail with
+  D_sym 67–137 mm as predicted.
+
+Final smoke test after the fixes (one instance each, all four conditions, `--world auto`)
+- ycbv 14 mug: gt_pose ✔ (3rd attempt), gt ✔ (1st), proxy cup-red_heart ✔ (5th; D_sym 5.7 mm),
+  random shoe ✘ (D_sym 23 mm). tless 22: gt_pose ✔, gt ✔, proxy itodd 26 ✘ unreachable (18
+  candidates, 0 reachable from the camera side), random ✘. lmo 9 duck: gt_pose ✔, gt ✔, proxy
+  CHICKEN_RACER ✔ (1st), random ✘. Plane-vs-BOP angle 2.0° on the frame that had fitted a wall.
+- Runtime with cached grasp candidates 1–90 s per trial; sampling a heavy CAD once costs up to
+  ~6 min (cup-red_heart 370 s). Rank 1–10 (240 trials) ≈ 3–5 h on the laptop, CPU-bound.
+- The rank-1–10 run was NOT started on 2026-09-10: the laptop was to go to sleep afterwards.
+  `python3 grasping/experiment_proxy_grasp.py` starts it; it resumes from its CSV after any interruption.
+
+Run history
+- 2026-09-10 16:27 rank-1–10 run started on the laptop (`gt,proxy`, 120 trials). At ~16:36,
+  during trial 10, the machine restarted without a proper shutdown (Kernel-Power 41, no bugcheck
+  1001, no minidump — a hard freeze, not a BSOD); Windows Update then used the restart for two
+  servicing reboots (KB5126052 installed, KB5124008 failed 0x80070020). Nine trials survived in
+  the CSV thanks to the per-row fsync.
+- 2026-09-11 11:06 resumed from the CSV with `OMP_NUM_THREADS=2` (fourth crash of this laptop
+  under the Stage-5 load; the 4090 PC remains the safer place for the full run).
+
+Superseded
+- `experiment_gt_vs_proxy.py` (pilot, 2026-09-06) removed; its 12 rows stay in
+  `_s5_out/gt_vs_proxy.csv`. The pilot's design (sim-rendered FP input, one frame per object,
+  no random baseline, no hold phase) is reproducible with `--fp-input sim --per-object 1`.
+
 ## 2026-09-04 The colour fix reversed the full-mesh finding — but only for retrieval, not for pose
 
 Goal

@@ -50,6 +50,10 @@ def main():
     g.add_argument("--prompt", help='free text, e.g. "the mustard bottle"')
     g.add_argument("--target", type=int, help="YCB obj_id directly")
     ap.add_argument("--uni3d", action="store_true", help="Uni3D shape arm")
+    ap.add_argument("--proxy", default=None,
+                    help="comma-separated proxy datasets (default: all; e.g. 'gso')")
+    ap.add_argument("--scale-fit", action="store_true",
+                    help="size the retrieved proxy to the observed object (ablation)")
     ap.add_argument("--no-pose", action="store_true",
                     help="skip FoundationPose; grasp using the GT object pose (mechanics test)")
     ap.add_argument("--n-tries", type=int, default=5)
@@ -61,7 +65,7 @@ def main():
     from grasping.sim_scene import TabletopSim, load_ycbv_scene, YCBV_NAMES
     from grasping.antipodal_grasp_sampler import (sample_antipodal_grasps,
                                                   GripperConfig, transform_grasps)
-    from grasping.grasp_execute import PandaGrasper, reachable_order
+    from grasping.grasp_execute import PandaGrasper, reachable_order, feasible_grasps, _unit
 
     # ---- 5.1 scene ----------------------------------------------------------
     objs, cam = load_ycbv_scene(args.scene, args.frame)
@@ -76,36 +80,61 @@ def main():
     print(f"[demo] segmented target: {int(mask.sum())} px")
 
     tgt_obj = next(o for o in objs if o.obj_id == target)
+    grasper = PandaGrasper(sim)
+    grasper.home()
+    base = sim._p.getBasePositionAndOrientation(sim.robot)[0][:2]
+
+    def build_feasible(cadp, T_world, gscale):
+        """Sample grasps on a (scaled) mesh at T_world, keep the reachable ones."""
+        m = trimesh.load(cadp, force="mesh")
+        if abs(gscale - 1.0) > 1e-6:
+            m.apply_scale(gscale)                       # match proxy to observed size
+        gs = sample_antipodal_grasps(m, GripperConfig(), n_samples=800, top_k=40)
+        gw = reachable_order(transform_grasps(gs, T_world), base)
+        return feasible_grasps(grasper, gw)
+
     if args.no_pose:
         # mechanics path: proxy = target's own mesh, pose = GT (isolates grasping)
         cad_path, T_obj2world = tgt_obj.mesh_path, tgt_obj.T_world
-        print("[demo] --no-pose: using GT pose + own mesh (grasp mechanics only)")
+        grasps_w = build_feasible(cad_path, T_obj2world, 1.0)
+        print(f"[demo] --no-pose GT mug: {len(grasps_w)} reachable grasps")
     else:
-        # ---- 5.2 perceive: proxy retrieval + FoundationPose -----------------
+        # ---- 5.2 perceive: OSCAR+ retrieval -> top-1 proxy -> FoundationPose --
         from grasping.perceive import Perception
-        per = Perception.load(use_uni3d=args.uni3d)
+        proxy_ds = ([p.strip() for p in args.proxy.split(",") if p.strip()]
+                    if args.proxy else None)
+        per = Perception.load(use_uni3d=args.uni3d, proxy_ds=proxy_ds)
         proxy_id, cad_path, _ = per.retrieve_proxy(obs["rgb"], mask)
-        print(f"[demo] retrieved PROXY {proxy_id}\n       cad = {cad_path}")
-        pose, conf = per.estimate_pose(obs["rgb"], obs["depth"], mask, cad_path, cam.K)
-        T_obj2world = pose            # proxy pose in the CAMERA frame == world here
-        print(f"[demo] FoundationPose conf {conf:.3f}")
-
-    # ---- E1 grasps on the (proxy) mesh, placed by the estimated pose --------
-    mesh = trimesh.load(cad_path, force="mesh")
-    grasps = sample_antipodal_grasps(mesh, GripperConfig(), n_samples=800, top_k=40)
-    grasps_w = transform_grasps(grasps, T_obj2world)
-    base = sim._p.getBasePositionAndOrientation(sim.robot)[0][:2]
-    grasps_w = reachable_order(grasps_w, base)
-    print(f"[demo] {len(grasps_w)} grasp candidates on the proxy")
+        # --scale-fit sizes the proxy to the observed object (helps FP on odd-scale
+        # proxies); default OFF -> use the retrieved proxy exactly as-is.
+        size_scale = (per.observed_scale(obs["depth"], mask, cam.K, cad_path)
+                      if args.scale_fit else 1.0)
+        pose, conf = per.estimate_pose(obs["rgb"], obs["depth"], mask, cad_path,
+                                       cam.K, size_scale=size_scale)
+        T_obj2world = cam.T_world @ pose
+        print(f"[demo] PROXY {proxy_id}  FP conf {conf:.1f}  "
+              f"scale_fit={args.scale_fit} size_scale={size_scale:.2f}")
+        grasps_w = build_feasible(cad_path, T_obj2world, per._units() * size_scale)
+        print(f"[demo] {len(grasps_w)} reachable grasps on the proxy")
 
     # ---- 5.3 execute --------------------------------------------------------
     frames = []
     cap = (lambda: frames.append(sim.render_rgbd()["rgb"])) if args.gif else None
-    grasper = PandaGrasper(sim)
     result = {"success": False}
-    for i, gr in enumerate(grasps_w[:args.n_tries]):
+    attempts = 0
+    for i, gr in enumerate(grasps_w):                    # clutter-blocked ones are cheap
+        if attempts >= args.n_tries:
+            break
+        sim.reset_objects(); grasper.reset(); sim.settle(30)  # clean slate per try
+        if cap:
+            frames.clear()                               # keep only this attempt's frames
         result = grasper.execute(gr, cap=cap)
-        print(f"[demo]   try {i}: q={gr.quality:.3f} -> {result}")
+        if result.get("blocked"):                        # approach hit clutter — skip
+            print(f"[demo]   cand {i}: approach blocked ({result['approach_err_mm']}mm), skip")
+            continue
+        attempts += 1
+        print(f"[demo]   try {attempts} (cand {i}): q={gr.quality:.3f} "
+              f"approach_z={_unit(gr.approach)[2]:+.2f} -> {result}")
         if result["success"]:
             break
 

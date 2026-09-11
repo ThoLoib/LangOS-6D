@@ -44,6 +44,16 @@ Ergebnisordner mit `results_per_query`-Daten bleiben erhalten (Keep-Liste in
 - GPU-Jobs strikt sequenziell (24-GB-Karte).
 - Reproduktionsläufe schreiben nach `results_repro_*`; Originalordner sind tabu.
 
+## Stage 5 — Proxy-Greifstudie (2026-09-10, Laptop-Branch `lenny-stage5-prep` auf eval_final)
+
+Gebaut und per Smoke-Test geprüft: `grasping/experiment_proxy_grasp.py` (Einstieg auch
+`repro_experiment.py --stage 5`), Objektset `grasping/proxy_grasp_cases.py`, eingefrorene
+3b-Instanzen `grasping/proxy_grasp_instances.json`, Protokoll + Vorhersagen
+`docs/STAGE5_PROTOCOL.md`, Zuordnung REPRODUCE.md §7. Voreinstellung `gt` gegen `proxy`,
+Rang 1–10, 120 Trials, fortsetzbar; erster Lauf am 2026-09-10 auf dem Laptop gestartet
+(`_s5_out/proxy_grasp/`). Danach: `docs/STAGE5_RESULTS.md` schreiben, Vorhersagen prüfen,
+Thesis-Tabelle `tab:eval_grasp_results` füllen. Alles noch uncommitted auf dem Laptop.
+
 ## Offene Punkte
 
 - Voller Identitätslauf je Stage als Belegkette (Stage 1 BASE läuft/lief zuerst;

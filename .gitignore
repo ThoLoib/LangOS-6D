@@ -80,3 +80,12 @@ third_party/pylibs/
 
 # Verdraengte/duplizierte Ergebnisordner
 /.stage1_superseded/
+
+# Stage-5 grasping caches + outputs (regenerable; see grasping/README.md)
+/_bop_obj_cache/
+/_vhacd_cache/
+/_grasp_cache/
+/_s5_out/
+
+# root-owned pre-eval_final output dir moved aside on the laptop (2026-09-10)
+/pipeline_output.local_bak/
