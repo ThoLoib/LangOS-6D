@@ -60,7 +60,7 @@ FT die Listenqualität. ANMRR wird als rangbasiertes Gegenstück mitberichtet.
 | ULIP-2 allein (cross, partial) | 68.11 | 0.453 | 0.607 | — | 0.598 | 0.451 | 0.467 |
 | DINOv2 allein | 83.03 | 0.629 | 0.753 | 0.200 | 0.751 | 0.647 | 0.297 |
 | CLIP+DINO+ULIP (volle Fusion, full-mesh) | 86.57 | 0.682 | 0.822 | 0.215 | 0.813 | 0.705 | 0.238 |
-| **CLIP+DINO+ULIP (volle Fusion, partial)** | **88.44** | **0.692** | **0.830** | **0.216** | **0.821** | **0.714** | **0.227** |
+| **CLIP+DINO+ULIP (volle Fusion, partial)** | **88.44** | **0.692** | **0.833** | **0.214** | **0.823** | **0.718** | **0.227** |
 | OSCAR-Kaskade (Hard-Max) | 84.88 | 0.575 | 0.755 | 0.160 | 0.733 | 0.592 | 0.337 |
 | OSCAR-Kaskade (Softmax) | 85.04 | 0.575 | 0.755 | 0.160 | 0.734 | 0.592 | 0.337 |
 | CLIP-gepruned + DINO+ULIP | 86.52 | 0.575 | 0.755 | 0.160 | 0.735 | 0.593 | 0.337 |
@@ -148,9 +148,9 @@ Abschnitts.
 |---|---|---|---|
 | NN | **88.44** | 86.57 | **+1.87** |
 | FT | **0.6918** | 0.6818 | +0.0100 |
-| ST | **0.830** | 0.822 | +0.008 |
-| nDCG@2R | **0.821** | 0.813 | +0.008 |
-| mAP | **0.714** | 0.705 | +0.009 |
+| ST | **0.833** | 0.822 | +0.011 |
+| nDCG@2R | **0.823** | 0.813 | +0.010 |
+| mAP | **0.718** | 0.705 | +0.013 |
 | ANMRR ↓ | **0.227** | 0.238 | besser |
 
 > **Der schwächere Kanal trägt mehr bei.** Full-mesh ist für sich um 9.99 NN besser und

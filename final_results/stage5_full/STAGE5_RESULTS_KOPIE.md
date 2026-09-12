@@ -33,8 +33,11 @@ BOP-Frame des Objekts.
 
 1. **Aufstellung:** kanonische Standpose — die stabilste Ruhelage (trimesh
    `compute_stable_poses`), deren horizontale Ausdehnung in den Greifer passt
-   (≤ 78 mm). Je Instanz wird das Objekt deterministisch um Instanz-Index × 36° um die
-   Hochachse gedreht → bis zu 10 verschiedene Aufstellungen pro Objekt.
+   (≤ 78 mm). Zwei Objekte (bowl, mug) besitzen keine solche Standpose; dort wird
+   die stabilste Ruhelage verwendet und in `trials.csv` als Ausnahme markiert
+   (`graspable_pose = 0`). Je Instanz wird das Objekt deterministisch um
+   Instanz-Index × 36° um die Hochachse gedreht → bis zu 10 verschiedene
+   Aufstellungen pro Objekt.
 2. **Wahrnehmung:** FoundationPose erhaelt das Sim-Rendering (RGB-D + Segmentmaske) und
    das **CAD unter Test** (eigenes Modell bzw. Proxy) und schaetzt die 6-DoF-Pose.
 3. **Griffplanung:** ein antipodaler Sampler berechnet Griffkandidaten **auf dem CAD
@@ -228,8 +231,9 @@ Methode, ist der begrenzende Faktor.
 
 1. **Der Katalog ist der Hebel.** Gleiche Pipeline, gleiche Aufstellungen: fremde
    Datenbank kostet 26.7 Pp., domaenennahe nur 11.2 Pp. T-LESS zeigt es am staerksten
-   (51 % → 69 %): Geschwister-Substitute erreichen 61 % Erfolg, katalogfremde
-   3c-Substitute nur 45 %.
+   (51 % → 69 %). Ueber alle Datensaetze erreichen Geschwister-Substitute 61 %
+   (236/390), katalogfremd bleibende 3c-Substitute 45 % (58/130); innerhalb von
+   T-LESS sind es 70 % gegen 65 %.
 2. **Die gt-Decke liegt bei 68 %.** Auch mit dem eigenen Modell scheitert ein Drittel
    der Trials (flache und schmale Sonderfaelle; LM-O nur 50 %). Die Proxy-Differenzen
    sind relativ zu dieser Decke zu lesen, nicht zu 100 %.

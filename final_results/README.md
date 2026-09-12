@@ -33,9 +33,10 @@ Ordner enthält die **Summary-Ebene**, nicht die Rohdaten je Query.
 | 4.4 Invalidierung | `stage4/inv_test.json`, `stage4/clip_test.json` | `experiments/experiment4_onboarding.py` |
 | 4.5 Repräsentationskosten | `stage4/onboarding_fullmesh.json`, `stage4/partial_16_42.json`, `stage4/views_16_42.json` | `--shape-source fullmesh`-Läufe |
 
-| Stage 5 (Proxy-Greifstudie) | `stage5/trials.csv` (180 Trials, eine Zeile je Trial), `stage5/REPORT.md` (generierte Tabellen), `stage5/manifest.json` (Args, Protokoll, Git-Revision) | `_s5_out/proxy_grasp/` (Drive: `_s5_out/proxy_grasp_tessa/`); Ergebnisdokument `docs/STAGE5_RESULTS.md`; Protokoll `docs/STAGE5_PROTOCOL.md`; Laptop-Replikat (µ=2.4) `_s5_out/proxy_grasp_laptop_2026-09-11/` |
+| Stage 5 (Proxy-Greifstudie) | `stage5/trials.csv` (180 Trials, eine Zeile je Trial), `stage5/REPORT.md` (generierte Tabellen), `stage5/manifest.json` (Args, Protokoll, Git-Revision) | `_s5_out/proxy_grasp/` (Drive: `_s5_out/proxy_grasp_tessa/`); (Alt-Stand; im aktuellen `docs/STAGE5_RESULTS.md` nicht mehr gefuehrt) Protokoll `docs/STAGE5_PROTOCOL.md`; Laptop-Replikat (µ=2.4) `_s5_out/proxy_grasp_laptop_2026-09-11/` |
 
-| Solo v2 (Einzelobjekt, stehend + Yaw) | `stage5_solo/trials.csv` (591 Trials), `stage5_solo/plan.json`, `stage5_solo/AUSWERTUNG.md` | `_s5_out/solo_v2/` (Drive: `solo_v2_tessa`); Treiber `grasping/solo_trial.py` |
+| **Stage 5 final — solo_full (52 Objekte, gt / 3b-Proxy / 3c-Substitut)** | `stage5_full/trials.csv` (1560 Trials), `stage5_full/plan.json`, `stage5_full/TABELLEN.md`, `stage5_full/STAGE5_RESULTS_KOPIE.md` (= `docs/STAGE5_RESULTS.md`), `stage5_full/viz/` (Videos + Overlays, Drive) | `_s5_out/solo_full/` (Drive: `solo_full_tessa`); Plan+Lauf `grasping/stage_5_full.py`, Einzelserien `grasping/stage_5.py` (frueher solo_trial.py), Videos `grasping/stage_5_viz.py` |
+| Solo v2 (Einzelobjekt, stehend + Yaw; Alt-Stand) | `stage5_solo/trials.csv` (618 Trials, inkl. Eggbox-Nachserie), `stage5_solo/plan.json`, `stage5_solo/AUSWERTUNG.md` | `_s5_out/solo_v2/` (Drive: `solo_v2_tessa`); Treiber `grasping/solo_trial.py` |
 
 ## Stolperfallen, festgehalten
 

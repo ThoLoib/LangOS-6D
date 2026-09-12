@@ -241,9 +241,9 @@ Uni3D nicht besitzt (Uni3D ist pc-only).
 | Arm | nDCG | mAP | hit@1 |
 |---|---|---|---|
 | **Partial-Views (BASE)** | **0.5353** | 0.1386 | **0.328** |
-| Full-Mesh | 0.4858 | 0.1376 | 0.279 |
+| Full-Mesh | 0.4956 | 0.1339 | 0.282 |
 
-**Der stärkste Einzeleffekt in Block A: +0.0495 nDCG (p<0.0001), +0.049 hit@1.** Eine
+**Der stärkste Einzeleffekt in Block A: +0.0398 nDCG (p<0.0001), +0.045 hit@1.** Eine
 partielle Referenz ist geometrisch vergleichbar mit der partiellen Query — das Full-Mesh
 sieht die Rückseite, die der Sensor nie sieht.
 
@@ -420,7 +420,7 @@ sieht im Mittelwert gleich aus wie einer, der auf breiter Front entsteht.
 | Vergleich (nDCG) | Δ | gewonnene Queries | Einordnung |
 |---|---|---|---|
 | Geometrie: keine vs. GeDi+RANSAC | −0.0537 | 599 : **1264** | Geometrie gewinnt breit |
-| Partial vs. Full-Mesh (isoliert) | +0.0495 | **1015** : 974 | knappe Bilanz, großer Abstand |
+| Partial vs. Full-Mesh (isoliert) | +0.0398 | **1021** : 974 | knappe Bilanz, großer Abstand |
 | DINOv2 vs. SigLIP (isoliert) | +0.0341 | **1213** : 811 | DINOv2 gewinnt breit |
 | Weighted-Sum vs. RRF | +0.0124 | **1320** : 718 | Weighted-Sum gewinnt breit |
 | XYZ+RGB vs. XYZ-only (isoliert) | −0.0068 | 847 : **1152** | Farbe schadet leicht, aber stetig |

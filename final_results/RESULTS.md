@@ -510,7 +510,7 @@ besser war. Die Bilanz sagt mehr als der Abstand der Mittelwerte:
 | DINOv2 vs. SigLIP (isoliert) | +0.0341 | **1213** : 811 | DINOv2 gewinnt breit |
 | Weighted-Sum vs. RRF | +0.0124 | **1320** : 718 | Weighted-Sum gewinnt breit |
 | Full-Mesh vs. Partial (fusioniert) | +0.0067 | **1127** : 904 | klein, aber durchgängig |
-| Partial vs. Full-Mesh (isoliert) | +0.0397 | **1015** : 974 | knappe Bilanz, großer Abstand |
+| Partial vs. Full-Mesh (isoliert) | +0.0398 | **1021** : 974 | knappe Bilanz, großer Abstand |
 | XYZ+RGB vs. XYZ-only (isoliert) | −0.0068 | 847 : **1152** | Farbe schadet leicht, aber stetig |
 | ULIP-2 vs. Uni3D (isoliert) | +0.0016 | ausgeglichen | Gleichstand |
 
@@ -703,7 +703,7 @@ sich, was die Kaskade kann und was nicht.
 | ULIP-2 allein (cross, partial) | 68.11 | 0.453 | 0.607 | — | 0.598 | 0.451 | 0.467 |
 | DINOv2 allein | 83.03 | 0.629 | 0.753 | 0.200 | 0.751 | 0.647 | 0.297 |
 | CLIP+DINO+ULIP (volle Fusion, full-mesh) | 86.57 | 0.682 | 0.822 | 0.215 | 0.813 | 0.705 | 0.238 |
-| **CLIP+DINO+ULIP (volle Fusion, partial)** | **88.44** | **0.692** | **0.830** | **0.216** | **0.821** | **0.714** | **0.227** |
+| **CLIP+DINO+ULIP (volle Fusion, partial)** | **88.44** | **0.692** | **0.833** | **0.214** | **0.823** | **0.718** | **0.227** |
 | OSCAR-Kaskade (Hard-Max) | 84.88 | 0.575 | 0.755 | 0.160 | 0.733 | 0.592 | 0.337 |
 | OSCAR-Kaskade (Softmax) | 85.04 | 0.575 | 0.755 | 0.160 | 0.734 | 0.592 | 0.337 |
 | CLIP-gepruned + DINO+ULIP | 86.52 | 0.575 | 0.755 | 0.160 | 0.735 | 0.593 | 0.337 |
@@ -807,9 +807,9 @@ Gallery-Repräsentation des Shape-Kanals):
 |---|---|---|---|
 | NN | **88.44** | 86.57 | **+1.87** |
 | FT | **0.6918** | 0.6818 | +0.0100 |
-| ST | **0.830** | 0.822 | +0.008 |
-| nDCG@2R | **0.821** | 0.813 | +0.008 |
-| mAP | **0.714** | 0.705 | +0.009 |
+| ST | **0.833** | 0.822 | +0.011 |
+| nDCG@2R | **0.823** | 0.813 | +0.010 |
+| mAP | **0.718** | 0.705 | +0.013 |
 | ANMRR ↓ | **0.227** | 0.238 | besser |
 
 **Der schwächere Kanal trägt mehr bei.** Full-mesh ist isoliert um 9.99 NN besser und

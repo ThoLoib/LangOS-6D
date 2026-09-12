@@ -1234,3 +1234,31 @@ festem Seed — sonst misst man die Sortierreihenfolge mit.
 - **Image-Aenderung**: imageio-ffmpeg==0.5.1 (statisches ffmpeg 4.2.2, --no-deps;
   0.4.9 scheiterte an fehlendem pkg_resources) per docker commit in
   tholoi/oscar-plus:latest; Sicherung davor: tholoi/oscar-plus:pre-viz-backup.
+
+## 2026-09-12 (abends) — Stage 1: veraltete gepaarte Signifikanz nachgezogen
+
+- Agent-Feedback bestaetigt: paired_significance-CSVs (27.08.) waren gegen den
+  ALTEN, fehlerhaften Full-Mesh-Arm (0.4858) gerechnet; der Arm-Ordner traegt
+  seit 03.09. den korrigierten Lauf (nDCG 0.4956, mAP 0.1339, hit@1 0.2822).
+- Beide CSVs neu gerechnet (nDCG + NN_sub). Isolierter Paar-Wert jetzt:
+  Δ +0.0398 nDCG, CI [0.0275, 0.0523], Wilcoxon p<1e-4, Bilanz 1021:974
+  (106 ties) -> REAL; hit@1-Seite Δ +0.0452, 272:177 -> REAL. Neu enthalten:
+  fused-Paar E1c vs E2b_fullmesh (Δ −0.0067, 904:1127, konsistent klein).
+- Historische Config-Zeile (16v/k8 -> 42v/k5; Quellordner geloescht) in den
+  final_results-Kopien manuell erhalten.
+- Nachgezogen: docs/STAGE1_RESULTS.md (A4-Tabelle 0.4858->0.4956er-Zeile,
+  Text +0.0495->+0.0398), final_results/RESULTS.md (Bilanz 1015->1021).
+
+## 2026-09-12 (spaet) — Konsistenz-Fixes nach Agent-Review der Thesis
+
+Fuenf gemeldete Inkonsistenzen geprueft, vier bestaetigt und behoben (die
+fuenfte war der noch nicht gepushte Stage-1-Fix):
+- Stage 2: Partial-Fusions-Zeile in RESULTS.md + STAGE2_RESULTS.md an die JSON
+  angeglichen (ST 0.833, F1 0.214, nDCG@2R 0.823, mAP 0.718 — Variante
+  clip_dino_ulip_full); Vergleichstabelle partial/fullmesh entsprechend
+  (+0.011/+0.010/+0.013).
+- Stage 5: Geschwister-vs-Pool-Zahlen korrekt zugeordnet (61 %/45 % = gesamt,
+  T-LESS allein 70 %/65 %); Standpose-Ausnahme praezisiert (bowl UND mug,
+  graspable_pose=0 in trials.csv).
+- final_results/README.md: Zuordnungszeile fuer stage5_full ergaenzt,
+  Alt-Staende (Clutter, Solo v2 618 Trials) als solche markiert.

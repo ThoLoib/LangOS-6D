@@ -134,8 +134,9 @@ Methode, ist der begrenzende Faktor.
 
 1. **Der Katalog ist der Hebel.** Gleiche Pipeline, gleiche Aufstellungen: fremde
    Datenbank kostet 26.7 Pp., domaenennahe nur 11.2 Pp. T-LESS zeigt es am staerksten
-   (51 % → 69 %): Geschwister-Substitute erreichen 61 % Erfolg, katalogfremde
-   3c-Substitute nur 45 %.
+   (51 % → 69 %). Ueber alle Datensaetze erreichen Geschwister-Substitute 61 %
+   (236/390), katalogfremd bleibende 3c-Substitute 45 % (58/130); innerhalb von
+   T-LESS sind es 70 % gegen 65 %.
 2. **Die gt-Decke liegt bei 68 %.** Auch mit dem eigenen Modell scheitert ein Drittel
    der Trials (flache und schmale Sonderfaelle; LM-O nur 50 %). Die Proxy-Differenzen
    sind relativ zu dieser Decke zu lesen, nicht zu 100 %.
@@ -157,6 +158,8 @@ Methode, ist der begrenzende Faktor.
 
 - Ergebnisse: `final_results/stage5_full/trials.csv` (1560 Trials),
   `plan.json` (Objekte, Instanzen, Proxys), Kopien in `_s5_out/solo_full/`.
-- Skripte: `grasping/build_full_plan.py` (Plan) → `grasping/solo_trial.py` (Laeufe):
+- Skripte: `grasping/stage_5_full.py` (kompletter Lauf: baut Plan + startet Serie),
+  `grasping/stage_5.py` (Einzelserien per `--object`/`--proxy`),
+  `grasping/stage_5_viz.py` (Video eines Greifversuchs):
   `--all --canonical --conditions gt,proxy,proxy3c`.
 - Stage-3-Quellen: `object_retrieval/results_bop_stage3_v2/{3b_cross,3c_cross}/…/records.json`.
