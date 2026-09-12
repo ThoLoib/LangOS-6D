@@ -1186,3 +1186,51 @@ festem Seed — sonst misst man die Sortierreihenfolge mit.
   v1-Kennzahlen leben nur noch als Vergleichszeile in solo_v2/AUSWERTUNG.md.
 - plan.json nach solo_v2/ gezogen; solo_trial/build_solo_plan-Defaults auf
   solo_v2 umgestellt.
+
+## 2026-09-11 — STAGE5_RESULTS.md neu geschnitten (Nutzeranweisung)
+- Das Ergebnisdokument zeigt jetzt NUR das Solo-v2-Experiment: Simulations-
+  und Evaluationsbeschreibung + kuratierte 10-von-20-Objekttabelle
+  (Auswahl nach Ergebnisqualitaet/Diskussionswert, im Dokument offengelegt;
+  Gesamtzahlen aller 20 als Fussnote, Volldaten final_results/stage5_solo/).
+- Die Clutter-Studien-Auswertung (alte Fassung) liegt in der Git-Historie
+  (6c7aea43); ihre Rohdaten bleiben unter _s5_out/proxy_grasp + Drive.
+
+## 2026-09-12 — Solo-Vollstudie (solo_full): 3b vs. 3c, Bugfix, Ergebnis-Umstellung
+
+- **Nachtlauf solo_full**: 52 greifbare BOP-Objekte (Gate 20–78 mm minDim, Mug-Ausnahme),
+  je ≤10 kanonische Aufstellungen × {gt, proxy(3b), proxy3c}; Proxy = HAEUFIGSTER Rang-1
+  (keine Kuration). 1560 Trials, keine fp_errors.
+- **Bug gefunden & behoben (vor Ergebnisverwendung)**: proxy3c-Aufloesung fuer
+  BOP-Geschwister nutzte `bop_mesh_path` (liefert Meter) mit `units_m=False` → CADs
+  1000× zu klein, alle Geschwister-Trials kuenstlich 0/10. Fix: Aufloesung ueber
+  `ctx.target_cad` (wie gt). Alle 520 proxy3c-Trials verworfen und neu gerechnet;
+  gt/proxy unberuehrt. Verifiziert (tless4: 0/10 → echte Werte; einzig verbleibende
+  Voll-Null ycbv4 ist legitim: 102-mm-Substitut passt nicht in den Greifer).
+- **Ergebnis**: gt 68 % · 3b 41 % (−26.7 Pp.) · 3c 57 % (−11.2 Pp.); 3c schlaegt 3b um
+  +15.6 Pp. — Katalognaehe, nicht Pipeline, ist der Hebel.
+- **docs/STAGE5_RESULTS.md komplett neu geschrieben**: nur noch solo_full (Frage/Warum,
+  Simulationsbeschreibung, Objektauswahl, zwei Volltabellen 3b & 3c, Diskussion);
+  aeltere Experimente werden nicht mehr genannt. Generiert aus trials.csv.
+- **Code-Aufraeumung**: solo_trial.py Defaults auf solo_full (--plan, CSV), --case-
+  Default-Hack entfernt (`--all --case X` filtert jetzt sauber, Einzeltrial verlangt
+  --case explizit), proxy3c in Hilfe/Docstring dokumentiert; build_full_plan.py
+  Docstring/Szenario-Text korrigiert (Greifbarkeits-Gate ja, Proxy-Kuration nein) —
+  archivierte plan.json traegt noch den alten Szenario-Text (Instanzen identisch).
+  Temporaere Sondierungsskripte .tune_probe*.py und _s5_out/solo_tune/ geloescht.
+
+## 2026-09-12 (spaeter) — Umbenennung der Stage-5-Skripte + Video-Visualisierung
+
+- **Skripte umbenannt** (Wunsch: kein "solo" in Dateinamen): solo_trial.py →
+  **grasping/stage_5.py** (freier Modus/Einzelserien), build_full_plan.py →
+  **grasping/stage_5_full.py** (baut Plan falls noetig + startet den kompletten
+  Lauf via Subprozess), visualize_solo.py → **grasping/stage_5_viz.py**.
+  Referenzen/Doku angepasst; Ergebnis-Ordnernamen (_s5_out/solo_full etc.)
+  unveraendert (Provenienz). Print-Praefix [solo] → [stage5].
+- **stage_5_viz.py**: erzeugt jetzt ein VIDEO (grasp.mp4, 18 fps): ~2.5 s
+  Pose+Griff-Einblendung (CAD unter Test als gruene Silhouette in der FP-Pose,
+  Griffe gelb), dann die Greifausfuehrung bis zum ersten Erfolg, ~9 s
+  Endzustand; dazu overlay.png (hochaufgeloest, ausgefuehrter Griff gruen/rot
+  markiert). Ausgabe: _s5_out/stage_5_viz/<objekt>_<bedingung>/.
+- **Image-Aenderung**: imageio-ffmpeg==0.5.1 (statisches ffmpeg 4.2.2, --no-deps;
+  0.4.9 scheiterte an fehlendem pkg_resources) per docker commit in
+  tholoi/oscar-plus:latest; Sicherung davor: tholoi/oscar-plus:pre-viz-backup.
