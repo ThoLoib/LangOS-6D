@@ -12,15 +12,23 @@ gerechnet, nicht gegen die BOP-Annotation.
 ====================================================================
 OBJEKT UND PROXY TAUSCHEN — der freie Modus, ohne Plan, ohne Code-Aenderung:
 
-    docker compose run --rm oscar python3 -m grasping.solo_trial \
+    # gt-Serie: eigenes CAD, 10 Laeufe (je +36 Grad gedreht), Erfolgsrate am Ende
+    docker compose run --rm oscar python3 -m grasping.stage_5 --object tless:12
+
+    # Proxy-Serie: auf dem Proxy geplant, das echte Objekt gegriffen
+    docker compose run --rm oscar python3 -m grasping.stage_5 \
         --object tless:12 --proxy itodd/obj_000013
+
+  Bedingung automatisch: --proxy leer oder gleich dem Objekt selbst -> gt-Lauf
+  (eigenes CAD); --proxy gesetzt -> Proxy-Lauf. Am Ende steht die Erfolgsrate
+  (X/N). Seriengroesse: --runs (Default 10), Drehung je Lauf: --yaw-step (36).
 
   --object <ds>:<id>   das Zielobjekt: ycbv | tless | lmo + BOP-obj_id.
                        Szene/Frame (Kamera + Ausgangspose) sucht das Skript
                        selbst (sichtbarster Frame); Overrides: --scene, --im.
-  --proxy <q>/<name>   das CAD, auf dem geplant wird: Quelle gso | housecat6d
-                       | itodd + Objektname. Liste aller 1257 Kandidaten:
-                       --list-proxies [filter].
+  --proxy <id>         das CAD, auf dem geplant wird: Pool-CAD (gso/... ,
+                       housecat6d/... , itodd/...; Liste: --list-proxies
+                       [filter]) ODER ein BOP-Objekt (z.B. tless/obj_000006).
 
   Weitere Parameter, die man je nach Objekt anpassen koennte:
   --conditions gt_pose,gt,proxy   welche Arme laufen (gt_pose = wahre Pose,
@@ -34,12 +42,15 @@ OBJEKT UND PROXY TAUSCHEN — der freie Modus, ohne Plan, ohne Code-Aenderung:
   Greifer: 5-80 mm Oeffnung (PROTOCOL in experiment_proxy_grasp).
 
 Serienbetrieb (die vorbereitete Liste): --all bzw. --case/--inst, gespeist aus
---plan (Default _s5_out/solo_v2/plan.json, gebaut von build_solo_plan.py).
+--plan (Default _s5_out/solo_full/plan.json, gebaut von stage_5_full.py:
+alle greifbaren BOP-Objekte, je mit 3b-Proxy und 3c-Substitut). Vierte
+Bedingung im Serienbetrieb: proxy3c (FoundationPose + 3c-Substitut; kann ein
+BOP-Geschwisterobjekt sein, das wie ein Ziel-CAD aufgeloest wird).
 ====================================================================
 
-    docker compose run --rm oscar python3 -m grasping.solo_trial --case ycbv14
-    docker compose run --rm oscar python3 -m grasping.solo_trial --case tless30 --inst 2 --verbose
-    docker compose run --rm oscar python3 -m grasping.solo_trial --all        # ganze Serie, Resume
+    docker compose run --rm oscar python3 -m grasping.stage_5 --case ycbv14
+    docker compose run --rm oscar python3 -m grasping.stage_5 --case tless30 --inst 2 --verbose
+    docker compose run --rm oscar python3 -m grasping.stage_5 --all        # ganze Serie, Resume
 """
 from __future__ import annotations
 
@@ -74,6 +85,9 @@ def main():
     ap.add_argument("--im", type=int, default=-1, help="freier Modus: Frame erzwingen")
     ap.add_argument("--list-proxies", nargs="?", const="", default=None, metavar="FILTER",
                     help="alle Proxy-Kandidaten (optional gefiltert) ausgeben und beenden")
+    ap.add_argument("--runs", type=int, default=10,
+                    help="freier Modus: Anzahl Laeufe der Serie (Default 10; "
+                         "je Lauf um --yaw-step gedreht)")
     ap.add_argument("--mass", type=float, default=0.0,
                     help="Masse des Zielobjekts in kg (ueberschreibt die "
                          "Standardmasse; 0 = Standard)")
@@ -82,18 +96,23 @@ def main():
                          "stabilste Standpose, deren horizontale Ausdehnung in "
                          "den Greifer (78 mm) passt; dazu je Instanz eine "
                          "deterministische Drehung um die Hochachse "
-                         "(Instanz-Index x --yaw-step). Ergebnis-CSV: solo_v2/")
+                         "(Instanz-Index x --yaw-step). Ergebnis-CSV: solo_full/")
     ap.add_argument("--yaw-step", type=float, default=36.0,
                     help="Grad je Instanz-Index im --canonical-Modus (Default 36)")
-    ap.add_argument("--case", default="ycbv14", help="Fall wie in plan.json (z.B. ycbv14, tless30)")
-    ap.add_argument("--inst", type=int, default=0, help="Instanz-Index im Plan (0..5)")
+    ap.add_argument("--case", default="",
+                    help="Fall wie in plan.json (z.B. ycbv14, tless30); mit --all: "
+                         "nur diesen Fall laufen lassen")
+    ap.add_argument("--inst", type=int, default=0, help="Instanz-Index im Plan (0..9)")
     ap.add_argument("--all", action="store_true",
                     help="alle Faelle x Instanzen des Plans (mit Resume aus der CSV)")
-    ap.add_argument("--plan", default=os.path.join(_ROOT, "_s5_out", "solo_v2", "plan.json"),
-                    help="Plan-Datei (Default: der Solo-Plan aus build_solo_plan.py)")
-    ap.add_argument("--conditions", default="gt_pose,gt,proxy")
+    ap.add_argument("--plan", default=os.path.join(_ROOT, "_s5_out", "solo_full", "plan.json"),
+                    help="Plan-Datei (Default: der Vollplan aus stage_5_full.py)")
+    ap.add_argument("--conditions", default="gt_pose,gt,proxy",
+                    help="Arme: gt_pose (wahre Pose), gt (FP + eigenes CAD), proxy "
+                         "(FP + 3b-Proxy des Plans), proxy3c (FP + 3c-Substitut des Plans)")
     ap.add_argument("--csv", default="",
-                    help="Default: _s5_out/solo_v2/trials.csv bei --all --canonical, sonst solo_smoke")
+                    help="Default: _s5_out/solo_full/trials.csv bei --all --canonical, "
+                         "sonst solo_smoke")
     ap.add_argument("--n-tries", type=int, default=PROTOCOL["executor"]["n_tries"])
     ap.add_argument("--no-exec", dest="exec", action="store_false")
     ap.add_argument("--verbose", action="store_true")
@@ -113,18 +132,35 @@ def main():
         args.csv = os.path.join(
             _ROOT, "_s5_out",
             "solo_custom" if args.object else
-            "solo_v2" if (args.canonical and args.all) else
+            "solo_full" if (args.canonical and args.all) else
             "solo_run" if args.all else "solo_smoke",
             "trials.csv")
     conds = [c.strip() for c in args.conditions.split(",") if c.strip()]
     if args.object:
-        if not args.proxy and any(c == "proxy" for c in conds):
-            sys.exit("--object braucht --proxy (oder --conditions ohne 'proxy'). "
-                     "Kandidaten: --list-proxies")
-        todo = [_custom_tr(args)]
+        base = _custom_tr(args)
+        self_id = f"{base['dataset']}/obj_{base['obj_id']:06d}"
+        if args.conditions == "gt_pose,gt,proxy":     # Default -> automatisch:
+            # Proxy leer oder das Objekt selbst -> gt-Lauf (eigenes CAD);
+            # Proxy gesetzt -> Proxy-Lauf (auf dem Proxy geplant).
+            conds = ["gt"] if args.proxy in ("", self_id) else ["proxy"]
+            print(f"[stage5] Bedingung: {conds[0]} "
+                  f"({'auf dem Proxy geplant' if conds == ['proxy'] else 'eigenes CAD'})")
+        if args.runs > 1 and not args.canonical:
+            args.canonical = True                     # Serie steht immer kanonisch
+            print(f"[stage5] Serie: {args.runs} Laeufe, kanonische Standpose, "
+                  f"je Lauf +{args.yaw_step:g}° Drehung")
+        todo = [dict(base, inst=i) for i in range(max(1, args.runs))]
     elif args.all:
         todo = json.load(open(args.plan))["plan"]
+        if args.case:                                 # --all --case X = nur dieser Fall
+            todo = [t for t in todo if t["case"] == args.case]
+        if args.proxy:                                # Proxy-Override fuer Sonderlaeufe
+            todo = [dict(t, proxy=args.proxy) for t in todo]
+            print(f"[stage5] Proxy-Override: {args.proxy}")
     else:
+        if not args.case:
+            sys.exit("Einzeltrial braucht --case (z.B. --case ycbv14), "
+                     "oder --all fuer die Serie, oder --object fuer den freien Modus")
         plan = json.load(open(args.plan))["plan"]
         trs = [t for t in plan if t["case"] == args.case]
         if not trs:
@@ -132,13 +168,15 @@ def main():
         todo = [trs[args.inst]]
 
     done = set()
-    if os.path.exists(args.csv):
+    if args.object:
+        pass          # freier Modus: kein Resume — jede Eingabe = frische Serie
+    elif os.path.exists(args.csv):
         import csv as _csv
         for d in _csv.DictReader(open(args.csv)):
             done.add((d["case"], str(d["scene"]), str(d["im"]), str(d["gt_idx"]),
                       d["condition"]))
         if done:
-            print(f"[solo] Resume: {len(done)} Trials bereits in {args.csv}")
+            print(f"[stage5] Resume: {len(done)} Trials bereits in {args.csv}")
 
     ctx = Ctx(args)
     os.environ.setdefault("GRASP_QUIET", "1")
@@ -146,34 +184,46 @@ def main():
         from grasping import sim_scene
         for t in todo:
             sim_scene.OBJECT_MASS_KG[(t["dataset"], t["obj_id"])] = args.mass
-        print(f"[solo] Zielmasse per CLI: {args.mass} kg")
+        print(f"[stage5] Zielmasse per CLI: {args.mass} kg")
     n_total = sum(1 for t in todo for c in conds
                   if (t["case"], str(t["scene"]), str(t["im"]), str(t["gt_idx"]), c)
                   not in done)
     n_run = 0
+    import csv as _csv2
+    n_pre = (sum(1 for _ in _csv2.DictReader(open(args.csv)))
+             if args.object and os.path.exists(args.csv) else 0)
     for tr in todo:
         pend = [c for c in conds
                 if (tr["case"], str(tr["scene"]), str(tr["im"]), str(tr["gt_idx"]), c)
                 not in done]
         if not pend:
             continue
-        print(f"[solo] {tr['case']} ({tr['name']}) inst s{tr['scene']}/im{tr['im']} — "
+        print(f"[stage5] {tr['case']} ({tr['name']}) inst s{tr['scene']}/im{tr['im']} — "
               f"Proxy {tr['proxy']}")
         fr, objs, cam, winfo = ctx.scene(tr["dataset"], tr["scene"], tr["im"])
         tgt = objs[tr["gt_idx"]]
         assert tgt.obj_id == tr["obj_id"]
         if args.canonical:
-            idx = [t for t in todo if t["case"] == tr["case"]].index(tr)
+            idx = tr["inst"] if "inst" in tr else \
+                [t for t in todo if t["case"] == tr["case"]].index(tr)
             yaw = idx * args.yaw_step
             tgt, graspable = canonical_object(ctx, tgt, yaw)
             tr = dict(tr, yaw_deg=yaw, _graspable=int(graspable), _table_z=0.0)
             if not graspable:
-                print(f"[solo]   HINWEIS {tr['case']}: keine greifbare Standpose "
+                print(f"[stage5]   HINWEIS {tr['case']}: keine greifbare Standpose "
                       f"(<=78 mm) — stabilste Pose verwendet, als Ausnahme markiert")
         solo = [tgt]                                # <- der ganze Szenariowechsel
         n_run += run_conditions(ctx, args, tr, fr, objs, cam, winfo, tgt, solo, pend,
                                 n_run, n_total)
-    print(f"[solo] fertig: {n_run} neue Trials, CSV: {args.csv}")
+    print(f"[stage5] fertig: {n_run} neue Trials, CSV: {args.csv}")
+    if args.object:
+        new = list(_csv2.DictReader(open(args.csv)))[n_pre:]
+        wins = sum(1 for r in new if r["succ"] == "1")
+        what = args.proxy if conds == ["proxy"] else "eigenes CAD"
+        print(f"\n[stage5] ============================================")
+        print(f"[stage5] ERGEBNIS {todo[0]['name']} | {what}: "
+              f"Erfolgsrate {wins}/{len(new)}")
+        print(f"[stage5] ============================================")
 
 
 _CANON_CACHE: dict = {}
@@ -228,15 +278,30 @@ def canonical_object(ctx, tgt, yaw_deg: float):
 
 def _custom_tr(args) -> dict:
     """Freier Modus: aus --object (+ optional --scene/--im) einen Trial-Eintrag
-    bauen. Szene/Frame = der sichtbarste Frame des Objekts im Testsplit."""
+    bauen. Frame-Wahl: steht das Objekt im Vollplan, wird der Frame seiner
+    Experiment-Instanz 1 verwendet (gleiche Kamera-Geometrie wie die Tabellen —
+    der bloss "sichtbarste" Frame liefert z. T. deutlich schlechtere FP-Fits);
+    sonst der sichtbarste Frame. Eigener Frame jederzeit per --scene/--im."""
     import glob as _glob
     from grasping.build_grasp_instances import _test_root
-    from grasping.sim_scene import best_frame, load_bop_frame, object_name
+    from grasping.sim_scene import load_bop_frame, object_name
     try:
         ds, oid = args.object.replace("/", ":").split(":")
         oid = int(oid)
     except ValueError:
         sys.exit(f"--object '{args.object}' nicht lesbar — Format <ds>:<id>, z.B. tless:12")
+    plan_gt_idx = None
+    if not args.scene and args.im < 0:
+        plan_p = os.path.join(_ROOT, "_s5_out", "solo_full", "plan.json")
+        if os.path.isfile(plan_p):
+            for t in json.load(open(plan_p))["plan"]:
+                if t["dataset"] == ds and t["obj_id"] == oid:
+                    args.scene = f"{int(t['scene']):06d}"
+                    args.im = int(t["im"])
+                    plan_gt_idx = t["gt_idx"]
+                    print(f"[stage5] Frame aus dem Experiment-Plan: Szene "
+                          f"{args.scene}/im {args.im} (wie Tabellen-Instanz 1)")
+                    break
     scene = args.scene
     if not scene:
         for sdir in sorted(_glob.glob(os.path.join(_test_root(ds), "*"))):
@@ -248,18 +313,56 @@ def _custom_tr(args) -> dict:
                     break
         if not scene:
             sys.exit(f"kein Testsplit-Frame mit {ds} obj {oid} gefunden.")
-    im = args.im if args.im >= 0 else best_frame(ds, scene, oid)
+    if args.im >= 0:
+        im = args.im
+    else:
+        # sichtbarster Frame des Objekts, robust je Frame bestimmt
+        sdir = os.path.join(_test_root(ds), scene)
+        gt_all = json.load(open(os.path.join(sdir, "scene_gt.json")))
+        info_all = json.load(open(os.path.join(sdir, "scene_gt_info.json")))
+        best = None
+        for k, entries in gt_all.items():
+            for gi, e in enumerate(entries):
+                if e["obj_id"] == oid and k in info_all and gi < len(info_all[k]):
+                    v = info_all[k][gi].get("visib_fract", 0.0)
+                    if best is None or v > best[0]:
+                        best = (v, int(k))
+        if best is None:
+            sys.exit(f"{ds} obj {oid}: kein annotierter Frame in Szene {scene}.")
+        im = best[1]
     fr = load_bop_frame(ds, scene, im)
-    gt_idx = fr.instances_of(oid)[0]
+    gt_idx = plan_gt_idx if plan_gt_idx is not None else fr.instances_of(oid)[0]
     import json as _json
     mi = _json.load(open(os.path.join(_ROOT, "eval", "datasets", ds,
                                       "models_eval", "models_info.json")))
-    print(f"[solo] freier Modus: {ds} obj {oid} ({object_name(ds, oid)}) — "
+    print(f"[stage5] freier Modus: {ds} obj {oid} ({object_name(ds, oid)}) — "
           f"Szene {scene}/im {im} (sichtbarster Frame), Proxy {args.proxy or '—'}")
     return dict(case=f"custom_{ds}{oid}", rank=0, tier=0, dataset=ds, obj_id=oid,
                 name=object_name(ds, oid), proxy=args.proxy, pool="", n_top1="",
                 scene=int(scene), im=int(im), gt_idx=gt_idx,
                 visib=fr.visib(gt_idx), diameter=mi.get(str(oid), {}).get("diameter"))
+
+
+def resolve_cad(ctx, tr, cond):
+    """CAD unter Test aufloesen: (cad_id, pfad, units_m).
+
+    proxy   = 3b-Proxy (tr["proxy"]) — Pool-CAD oder BOP-Geschwister.
+    proxy3c = 3c-Substitut (tr["proxy3c"]) — kann BOP-Geschwister sein.
+    BOP-Geschwister werden EXAKT wie das eigene CAD aufgeloest (gleiche Datei,
+    gleiche Einheiten) — bop_mesh_path liefert je Datensatz unterschiedliche
+    Einheiten, target_cad kapselt das korrekt. Fehlt die ID: KeyError."""
+    if cond in ("proxy", "proxy3c"):
+        pid = tr["proxy"] if cond == "proxy" else (tr.get("proxy3c") or "")
+        if not pid:
+            raise KeyError(f"{cond}: keine CAD-Id im Plan")
+        src = pid.split("/", 1)[0]
+        if src in ("ycbv", "tless", "lmo"):
+            cad_path, units_m = ctx.target_cad(src, int(pid.split("obj_")[1]))
+        else:
+            from grasping.proxy_grasp_cases import proxy_mesh
+            cad_path, units_m = proxy_mesh(pid)
+        return pid, cad_path, units_m
+    return _cad_under_test(ctx, tr, cond)
 
 
 def run_conditions(ctx, args, tr, fr, objs, cam, winfo, tgt, solo, conds,
@@ -280,7 +383,12 @@ def run_conditions(ctx, args, tr, fr, objs, cam, winfo, tgt, solo, conds,
         if "yaw_deg" in tr:                     # --canonical: eigene Spalten
             row["yaw_deg"] = tr["yaw_deg"]
             row["graspable_pose"] = tr["_graspable"]
-        cad_id, cad_path, units_m = _cad_under_test(ctx, tr, cond)
+        try:
+            cad_id, cad_path, units_m = resolve_cad(ctx, tr, cond)
+        except KeyError:
+            row.update(cad="", fail_reason="cad_missing")
+            _append_csv(args.csv, row)
+            continue
         row.update(cad=cad_id, cad_units_m=int(units_m))
         sim = TabletopSim().connect()
         try:
@@ -342,7 +450,7 @@ def run_conditions(ctx, args, tr, fr, objs, cam, winfo, tgt, solo, conds,
             row["runtime_s"] = round(time.time() - t0, 1)
             _append_csv(args.csv, row)
             ran += 1
-            print(f"[solo] [{n_done + ran:>3}/{n_total}] {cond:8s} "
+            print(f"[stage5] [{n_done + ran:>3}/{n_total}] {cond:8s} "
                   f"cad={row['cad'][:36]:38s} "
                   f"D_sym={row['dsym_mm'] or '—':>6} place={row['place_mm'] or '—':>6} "
                   f"cand={row['n_cand']:>2} reach={row['n_reach']:>2} "

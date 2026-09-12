@@ -31,7 +31,7 @@ from grasping.build_grasp_instances import _visib  # noqa: E402  (BOP scene_gt_i
 # Prefix muss genau einen Rang-1-Proxy dieses Objekts im 3b-Lauf treffen).
 # Zusammensetzung dieser Liste: grasping/OBJEKTAUSWAHL_SOLO.md.
 # Ein EINZELNES Objekt/Proxy freier Wahl braucht keinen Plan:
-#   solo_trial.py --object <ds>:<id> --proxy <quelle>/<name>   (siehe dort)
+#   stage_5.py --object <ds>:<id> --proxy <quelle>/<name>   (siehe dort)
 SOLO_CASES = [
     ("tless30", "tless", 30, "obj_30",      1, "gso/BIA_Porcelain_Ramekin"),
     ("ycbv2",   "ycbv",   2, "cracker box", 1, "gso/Nestle_Carnation_Cinnamon"),
@@ -53,6 +53,7 @@ SOLO_CASES = [
     ("tless9",  "tless",  9, "obj_9",       2, "itodd/obj_000018"),
     ("tless2",  "tless",  2, "obj_2",       2, "gso/Germanium_GE132"),
     ("tless7",  "tless",  7, "obj_7",       2, "itodd/obj_000013"),
+    ("lmo10",   "lmo",   10, "eggbox",      2, "gso/MINI_ROLLER"),
 ]
 PER_OBJECT = 10          # 2026-09-11 von 6 auf 10 erhoeht; Faelle mit kleinerem
                          # Rang-1-Pool werden beim Pool-Maximum gekappt (geloggt)
@@ -91,7 +92,7 @@ def main():
     # Bereits gezogene Instanzen eines frueheren Plans bleiben ERHALTEN
     # (Aufstockung statt Neuziehung — fertige Trials behalten ihre Gueltigkeit).
     old = {}
-    old_path = os.path.join(_ROOT, "_s5_out", "solo_run", "plan.json")
+    old_path = os.path.join(_ROOT, "_s5_out", "solo_v2", "plan.json")
     if os.path.exists(old_path):
         for t in json.load(open(old_path))["plan"]:
             old.setdefault(t["case"], []).append(t)
