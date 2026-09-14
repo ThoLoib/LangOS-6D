@@ -235,7 +235,9 @@ Patch-0-Token).
 
 **Unentschieden** (nDCG praktisch gleich). Auf **hit@1 ist ULIP-2
 besser** (+0.018, p=0.038). → **ULIP-2 behalten** — es hat zusätzlich den Cross-Modus, den
-Uni3D nicht besitzt (Uni3D ist pc-only).
+Uni3D nicht besitzt (Uni3D ist pc-only). Bemerkenswert ist der Gleichstand angesichts der
+Modellgroessen: Uni3D-g nutzt ~1 Mrd. Parameter (EVA-giant), ULIP-2s Point-BERT ~22 Mio. —
+bei vergleichbarem Pretraining-Umfang (~1 Mio. bzw. ~0.8 Mio. Formen, Paper-Angaben).
 
 ### A4 · Shape-Referenz: Partial-Views vs. Full-Mesh ◆
 | Arm | nDCG | mAP | hit@1 |

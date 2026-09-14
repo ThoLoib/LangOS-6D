@@ -209,3 +209,20 @@ Full-Mesh zurück — genau das ist `..._ulipfix/partial` passiert, dessen Confi
 **Validierung:** der isolierte ULIP-Arm trifft den Lauf `..._dinomean/partial` vom 2026-08-07
 (der noch echte `*_partial.npz` las) auf allen fünf Metriken **exakt** — größte Abweichung
 0.0e+00. Der Cache bildet die Rohdateien bitgenau ab.
+
+## Modell-Checkpoints der Shape-Encoder (Stand 2026-09-14)
+
+Nachgetragen auf Agent-Anfrage (Thesis-PC): welcher Checkpoint tatsaechlich
+geladen wird — der Default in `pipeline/config.py` ist LEER; wirksam ist fuer
+alle Eval-Laeufe der Default in `object_retrieval/eval_common.py:96`.
+
+| Encoder | wirksamer Pfad (Container) | Datei (Host) | Groesse | sha256 (Kurz) | Architektur |
+|---|---|---|---|---|---|
+| ULIP-2 | `/ulip/checkpoints/ulip2_pointbert_10k.pt` | `../ULIP_thesis/checkpoints/` | 402 MB | `a4b5ed9799d5841a` | Point-BERT "colored" (6D xyz+rgb, 10k Punkte, ~22 Mio. Param. lt. Paper) |
+| Uni3D | `/uni3d/modelzoo/uni3d-g/model.pt` | `../Uni3D/modelzoo/uni3d-g/` | 2.03 GB | `aa1f163bb8c34d7e` | uni3d-g auf EVA-giant patch14/560, Feat-Dim 1408 (~1 Mrd. Param. lt. Paper) |
+
+Trainingskorpora sind aus den Dateien NICHT verifizierbar (ulip2-Checkpoint
+enthaelt nur state_dict/optimizer/scaler, keine args) — Attribution nur ueber
+die Papers: ULIP-2 ~0.8 Mio. Objaverse-Triplets; Uni3D ~1 Mio. Formen
+(Objaverse, ShapeNet, 3D-FUTURE, ABO). Fuer die Thesis entsprechend als
+Paper-Angabe zitieren, nicht als eigene Messung.

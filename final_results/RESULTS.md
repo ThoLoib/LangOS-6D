@@ -231,7 +231,7 @@ Rückstand von 0.034 also SigLIPs echter.
 
 Isoliert trennen die beiden 0.0016 nDCG bei ausgeglichener Bilanz; auf hit@1 liegt ULIP-2 vorn
 (+0.018). Den Ausschlag gibt die Reichweite, nicht die Metrik: **ULIP-2 behalten** — es besitzt
-zusätzlich den cross-Modus (Uni3D ist pc-only), und genau der trägt Stage 2 und Stage 3.
+zusätzlich den cross-Modus (Uni3D ist pc-only), und genau der trägt Stage 2 und Stage 3. Bemerkenswert ist der Gleichstand angesichts der Modellgroessen: Uni3D-g nutzt ~1 Mrd. Parameter (EVA-giant), ULIP-2s Point-BERT ~22 Mio. — bei vergleichbarem Pretraining-Umfang (~1 Mio. bzw. ~0.8 Mio. Formen, Paper-Angaben). Das kleinere Modell haelt mit.
 
 **A4 · Shape-Referenz: Partial-Views vs. Full-Mesh (isoliert)**
 
