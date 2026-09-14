@@ -715,12 +715,12 @@ def _render_query_offscreen(mesh, n, size: int):
 
 
 def _render_query_splat(points, colors, n, u, v, size: int):
-    """Headless fallback: orthographic z-buffered point splatting.
+    """Headless fallback: orthographic depth-ordered point splatting.
 
     Purely numpy — no GL required.  The splat radius adapts to point
     density (sparse scans get larger dots) so the object reads as a solid
-    surface rather than a dotted texture; nearer points overwrite farther
-    ones (painter's algorithm).  Coarser than the mesh render but
+    surface rather than a dotted texture; Punkte werden fern->nah gezeichnet,
+    naehere ueberschreiben fernere (painter's algorithm — KEIN Tiefenpuffer).  Coarser than the mesh render but
     adequate for category-level encoder crops; verify with --viz-check.
     """
     x = points @ u
@@ -759,7 +759,7 @@ def _render_query_surface(mesh, n, u, v, size: int,
     vertices alone leaves a dotted, holey cloud that does not read as a rigid
     segmented object (bad crop for the DINOv2/CLIP/SigLIP appearance
     channels).  Here we area-weight-sample points *on the triangle faces*
-    (barycentric), so the whole surface is covered, then reuse the z-buffered
+    (barycentric), so the whole surface is covered, then reuse the depth-ordered
     point splatter.  The result is a filled, shaded object crop.
 
     Deterministic (fixed ``seed``) so each query renders identically on every

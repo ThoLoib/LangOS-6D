@@ -1276,3 +1276,18 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
 - rrf_c_sweep.csv -> Ergebnisordner + final_results/stage1/; B1-Passagen in
   STAGE1_RESULTS.md und RESULTS.md um den Sweep ergaenzt (statt der bisherigen
   TREC-Kalibrierungs-Einschraenkung).
+
+## 2026-09-14 — Stage-1-Query-Renderer: Provenienz geklaert (Agent-Anfrage)
+
+- Frage: nutzte der finale 42v/k5-Lauf die alten Vertex-Splat-Bilder (23.07.,
+  Stand Thesis-PC) oder den Oberflaechen-Renderer (ab 27.07.)?
+- Befund auf tessa-pc (Rechner des finalen Laufs): alle 2101 Query-PNGs in
+  eval/datasets/shrec18/stage1/queries/ tragen mtime 2026-07-27 (= Commit-Tag
+  des Surface-Renderers d3ce5725; tools/regen_query_pngs.py wurde fuer das
+  In-Place-Neurendern gebaut). BEWEIS: 5/5 Zufallsstichproben sind BITIDENTISCH
+  mit einer frischen _render_query_surface-Ausgabe (deterministisch, seed 0).
+  -> Der berichtete Lauf verwendete den Oberflaechen-Renderer; die 23.07.-
+  Bilder auf dem Thesis-PC sind eine veraltete Kopie.
+- Terminologie: "depth-buffered" ist falsch — der Splat sortiert fern->nah
+  und ueberschreibt (painter's algorithm), kein Tiefenpuffer. Korrekt:
+  "depth-ordered point splat". Code-Docstrings entsprechend berichtigt.
