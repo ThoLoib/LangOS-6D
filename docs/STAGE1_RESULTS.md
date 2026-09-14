@@ -292,8 +292,12 @@ sättigt.
 | Reciprocal Rank Fusion | 0.5744 | 0.1379 | 0.318 |
 
 **Weighted Sum gewinnt signifikant** (+0.0124, p<0.0001; Bilanz 1320:718). RRF ist der
-Standard (Cormack k=60), aber seine Konstante ist auf TREC-Listenlängen kalibriert; als
-negatives Ergebnis berichtet, nicht nachtuniert.
+Standard (Cormack k=60). Ein Sensitivitäts-Sweep über c ∈ {1, 10, 30, 60, 100, 300} auf den
+gecachten Score-Vektoren (`rrf_c_sweep.csv`; Fusion und Scoring byte-identisch zum Grid)
+zeigt, dass das Ergebnis nicht an der Konstante hängt: RRF bleibt bei **jedem** c hinter der
+gewichteten Summe — bestes RRF bei c=100 (nDCG 0.5768, Δ +0.0100, Bilanz 1294:741),
+ungünstigster Fall c=1 (Δ +0.0239, 1379:677). Nicht nachtuniert; c=60 bleibt der
+Berichtswert.
 
 ### B2 · Gewichts-Sensitivität (Heatmap) ◇
 *Hinweis: als einzige Ablation noch bei **16v/k8** gerechnet — als Sensitivitätsaussage

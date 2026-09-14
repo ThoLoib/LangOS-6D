@@ -2852,6 +2852,90 @@ def _simplex_grid(step: float) -> List[Tuple[float, float, float]]:
     return pts
 
 
+def run_rrf_c_sweep(paths: dict, index: List[dict], object_ids: List[str],
+                    cad_labels: Dict[str, tuple], freqs: Dict[str, int],
+                    stores: Dict[str, dict], cs: List[int],
+                    limit: Optional[int]) -> List[dict]:
+    """RRF-SENSITIVITAET ueber den Cormack-Faktor c (E6-Robustheitscheck).
+
+    Rechnet den E6_rrf-Arm auf den gecachten BASE-Score-Vektoren fuer mehrere
+    c neu — byte-identische Pipeline (derive_ranking + score_official), nur
+    k_param der Reciprocal Rank Fusion variiert — und vergleicht je c
+    per-query gepaart gegen die gewichtete Summe (E1c_full_fusion aus dem
+    Ergebnisordner). Bericht als Sensitivitaet, KEINE Auswahlprozedur:
+    c=60 [cormackReciprocalRankFusion2009] bleibt der eingefrorene
+    Berichtswert; der Sweep zeigt nur, ob "gewichtete Summe > RRF" an c
+    haengt. Schreibt rrf_c_sweep.csv in den Ergebnisordner."""
+    import pipeline.step6_fusion as _s6
+    cad_dir = os.path.join(paths["data_root"], "cad")
+    qlist = index[:limit] if limit else index
+    ref_p = os.path.join(paths["results_root"], "E1c_full_fusion",
+                         "results_per_query.json")
+    with open(ref_p) as fh:
+        ref = {r["id"]: r["nDCG"] for r in json.load(fh)}
+    print(f"[rrf-sweep] Referenz gewichtete Summe: {len(ref)} Queries aus "
+          f"{ref_p}")
+    orig = _s6.ScoreFusion._reciprocal_rank_fusion
+    rows = []
+    try:
+        for c in cs:
+            def _rrf(self, clip_result, dino_result, shape_result,
+                     top_k, _c=c):
+                return orig(self, clip_result, dino_result, shape_result,
+                            top_k, k_param=_c)
+            _s6.ScoreFusion._reciprocal_rank_fusion = _rrf
+            spec = AblationSpec(name=f"E6_rrf_c{c}", group="E6SWEEP",
+                                question="RRF c sensitivity",
+                                channels=dict(_BASE_CH),
+                                fusion_method="rank_fusion")
+            fusion_mod = make_fusion_module(spec)
+            sums = defaultdict(float)
+            nq = wins = losses = ties = 0
+            dsum = 0.0
+            for q in qlist:
+                q_label = tuple(q["category"])
+                if freqs.get(q_label[0], 0) == 0:
+                    continue
+                ranking = derive_ranking(spec, q["id"], stores, object_ids,
+                                         fusion_mod, cad_dir, None)
+                m = score_official([object_ids[i] for i in ranking], q_label,
+                                   cad_labels, freqs)
+                if m is None:
+                    continue
+                for k, v in m.items():
+                    sums[k] += v
+                nq += 1
+                r = ref.get(q["id"])
+                if r is not None:
+                    d = r - m["nDCG"]        # > 0: gewichtete Summe vorn
+                    dsum += d
+                    if d > 1e-9:
+                        wins += 1
+                    elif d < -1e-9:
+                        losses += 1
+                    else:
+                        ties += 1
+            row = {"c": c, "n": nq,
+                   "nDCG_rrf": round(sums["nDCG"] / nq, 4) if nq else None,
+                   "mAP_rrf": round(sums["AP"] / nq, 4) if nq else None,
+                   "delta_weighted_minus_rrf": round(dsum / nq, 4) if nq else None,
+                   "wins_weighted": wins, "wins_rrf": losses, "ties": ties}
+            rows.append(row)
+            print(f"[rrf-sweep] c={c:>4}  nDCG={row['nDCG_rrf']:.4f}  "
+                  f"Δ(weighted−rrf)={row['delta_weighted_minus_rrf']:+.4f}  "
+                  f"Bilanz {wins}:{losses} ({ties} ties)")
+    finally:
+        _s6.ScoreFusion._reciprocal_rank_fusion = orig
+    import csv as _csv
+    out = os.path.join(paths["results_root"], "rrf_c_sweep.csv")
+    with open(out, "w", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"[rrf-sweep] geschrieben -> {out}")
+    return rows
+
+
 def run_weight_sweep(paths: dict, index: List[dict], object_ids: List[str],
                      cad_labels: Dict[str, tuple], freqs: Dict[str, int],
                      stores: Dict[str, dict], step: float,
@@ -3430,6 +3514,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                          "full-database S_GeDi, then exit (see thesis O1)")
     ap.add_argument("--viz-check", type=int, default=0, metavar="N",
                     help="save a contact sheet of N query crops")
+    ap.add_argument("--rrf-c-sweep", nargs="?", const="1,10,30,60,100,300",
+                    default="", metavar="C_LISTE",
+                    help="E6-Robustheitscheck: RRF fuer mehrere Cormack-c auf "
+                         "den gecachten Scores rechnen und je c gepaart gegen "
+                         "die gewichtete Summe stellen (Default-Liste "
+                         "1,10,30,60,100,300). Schreibt rrf_c_sweep.csv.")
     ap.add_argument("--weight-sweep", action="store_true",
                     help="fusion-weight SENSITIVITY sweep over the simplex on "
                          "the cached BASE score vectors (Tier-2, no GPU). "
@@ -3543,6 +3633,21 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         run_weight_sweep(paths, index, object_ids, cad_labels, freqs, stores,
                          args.weight_step, args.limit_queries,
                          shape_pass=args.sweep_shape_pass)
+        return
+
+    # ---- RRF-c-Sensitivitaet (E6-Robustheitscheck) und exit --------------
+    if args.rrf_c_sweep:
+        object_ids = validate_inputs(paths, args.allow_partial_gallery)
+        gt = load_official_gt(paths["data_root"], paths["stage1_root"])
+        cad_labels, freqs = gt["cad"], gt["freqs"]
+        index = prepare_queries(paths["data_root"], paths["stage1_root"], gt)
+        stores = {}
+        for pkey in ("base", "ulip_pc_rgb"):
+            stores[pkey] = run_pass(pkey, paths, index, object_ids,
+                                    args.limit_queries, resume=True)
+        run_rrf_c_sweep(paths, index, object_ids, cad_labels, freqs, stores,
+                        [int(x) for x in args.rrf_c_sweep.split(",")],
+                        args.limit_queries)
         return
 
     specs = select_ablations(args.ablations, args.all, args.with_geometry)

@@ -339,8 +339,10 @@ Farb-Ablation. → bleibt eine **offene Frage** (Diskussionspunkt 8).
 | **Weighted Sum (BASE)** | **0.5868** | **0.1666** | **0.341** |
 | Reciprocal Rank Fusion | 0.5744 | 0.1379 | 0.318 |
 
-Weighted Sum gewinnt klar (+0.0124; Bilanz 1320:718). RRFs Konstante (Cormack k=60) ist auf
-TREC-Listenlängen kalibriert — als negatives Ergebnis berichtet, nicht nachtuniert.
+Weighted Sum gewinnt klar (+0.0124; Bilanz 1320:718) — und zwar robust gegen die
+RRF-Konstante: ein Sweep über c ∈ {1, 10, 30, 60, 100, 300} auf den gecachten Scores
+(`stage1/rrf_c_sweep.csv`) lässt RRF bei jedem c hinten (bestes c=100: Δ +0.0100,
+Bilanz 1294:741). Nicht nachtuniert; c=60 (Cormack) bleibt der Berichtswert.
 
 **B2 · Gewichts-Sensitivität** *(als einzige Ablation noch bei 16v/k8 gerechnet — die Aussage
 ist eine Sensitivitätsaussage und von der Shape-Config unabhängig)*

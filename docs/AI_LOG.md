@@ -1262,3 +1262,17 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   graspable_pose=0 in trials.csv).
 - final_results/README.md: Zuordnungszeile fuer stage5_full ergaenzt,
   Alt-Staende (Clutter, Solo v2 618 Trials) als solche markiert.
+
+## 2026-09-14 — RRF-Robustheitscheck (Cormack-c) auf Agent-Anfrage
+
+- Neues Flag `--rrf-c-sweep` in experiment1_shrec18_stage1.py: rechnet E6_rrf
+  auf den gecachten BASE-Score-Vektoren fuer c ∈ {1,10,30,60,100,300} neu
+  (nur k_param variiert; derive_ranking/score_official byte-identisch) und
+  vergleicht je c per Query gepaart gegen E1c_full_fusion.
+- Sanity: c=60 reproduziert den archivierten E6-Arm exakt (nDCG 0.5744).
+- Ergebnis: gewichtete Summe liegt bei JEDEM c vorn — Δ von +0.0239 (c=1)
+  bis +0.0100 (c=100, bestes RRF), Bilanz stets zugunsten weighted
+  (schlechtester Fall 1201:828 bei c=300). Befund nicht an c=60 gebunden.
+- rrf_c_sweep.csv -> Ergebnisordner + final_results/stage1/; B1-Passagen in
+  STAGE1_RESULTS.md und RESULTS.md um den Sweep ergaenzt (statt der bisherigen
+  TREC-Kalibrierungs-Einschraenkung).
