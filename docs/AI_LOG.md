@@ -1312,3 +1312,23 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   dGeDi-RANSAC+ICP-Option des Re-Rankings, nicht die Posenschaetzung.
 - Ollama: Port/Volume vorhanden, aber von keinem berichteten Ergebnis genutzt
   (einziger Verweis: WACV-Altlast object_retrieval/text2text.py).
+
+## 2026-09-15 (Nachtrag) — dGeDi-Checkpoint, Versions-Gueltigkeit, Render-Export
+
+- dGeDi: beide Galerien und die Laufzeit nutzen multi_scale/dGeDi_multi_scale.pth
+  (Compose ohne --mode; Default in server.py:304 + precompute_gallery.py:58;
+  flash-attn per load_model deaktiviert). Manifeste speichern KEINE Config —
+  Belegkette ist Code+Compose. Stage-3-Geo lief laut RUN_PROVENANCE:119 mit
+  --dgedi-repo (6000 kp/10k Iter/+ICP), Stage-1-Geo mit --geom-k 50.
+- Image-Provenienz: Basis-Build 2026-08-10; seither nur additive Commits
+  (pybullet/rtree, imageio-ffmpeg). pre-s5-backup == latest in torch 2.10.0+
+  cu128 / transformers 4.57.6 / open_clip 3.3.0 / open3d 0.19.0 -> Versionen
+  gelten fuer alle berichteten Eval-Laeufe (alle nach 10.08.). Aeltere
+  Artefakte (Renders, Descriptions, gso-DINO-Cache 09.08.) aus Vorgaenger-
+  Build; Versionen dort nicht mehr tag-belegbar (nur Daten-Inputs).
+- Render-Export fuer Abbildungen -> Drive figures/renderings_final/ (shrec-
+  Objekt 3fa2..., MI3DOR airplane_test_0001, ycbv obj_000002). Finale
+  Hintergruende fast weiss (~248-253); graue ~206-Kopien auf dem Thesis-PC
+  sind Alt-Renders (Filmic, vor dem Render-Fix). shrec/MI3DOR haben keine
+  _CamMatrix/_partial.npz auf Platte (nur im ULIP-Partial-Cache gebuendelt);
+  ycbv vollstaendig (42 npz + 42 CamMatrix).
