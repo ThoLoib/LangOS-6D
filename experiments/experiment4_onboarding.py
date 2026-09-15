@@ -493,6 +493,10 @@ def main(argv=None):
                          "ersten 16 von 42 sind also ein gueltiges 16-View-Set "
                          "(Stage-1 O4: 0.5820 bei V16 vs 0.5868 bei V42).")
     ap.add_argument("--num-points", type=int, default=8192)
+    # HINWEIS Provenienz: die FINALEN Galerien wurden IM oscar-Container
+    # gerendert (/blender/blender-3.4.1-linux-x64, onboard_dataset.sh);
+    # diese Stage-4-MESSUNG rendert per Default mit dem HOST-Blender
+    # DERSELBEN Version 3.4.1 — Zahlen dazu in stage4/onboarding*.json.
     ap.add_argument("--blender", default=os.environ.get(
                         "BLENDER_BIN",
                         "/home/tessa/Cap3D/captioning_pipeline/"

@@ -235,7 +235,11 @@ class PipelineConfig:
     # -------------------------------------------------------------------------
     # MegaPose: https://github.com/megapose6d/megapose6d
     # FoundationPose: https://github.com/NVlabs/FoundationPose
-    pose_method: str = "icp"  # "foundationpose" | "megapose" | "icp"
+    # Standard seit 2026-09-15: FoundationPose (HTTP-Service); step8 faellt bei
+    # nicht erreichbarem Service selbst auf ICP zurueck. Alle berichteten
+    # Ergebnisse (Stage 3/4/5) rufen die Bridge ohnehin direkt auf — dieser
+    # Default betrifft nur die interaktive Pipeline (run_pipeline.py).
+    pose_method: str = "foundationpose"  # "foundationpose" | "megapose" | "icp"
     icp_max_iterations: int = 50
     icp_threshold: float = 0.02          # Konvergenz-Schwelle (Meter)
     foundationpose_url: str = "http://foundationpose:5050"  # FoundationPose service URL (docker-compose service name)

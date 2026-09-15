@@ -1291,3 +1291,24 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
 - Terminologie: "depth-buffered" ist falsch — der Splat sortiert fern->nah
   und ueberschreibt (painter's algorithm), kein Tiefenpuffer. Korrekt:
   "depth-ordered point splat". Code-Docstrings entsprechend berichtigt.
+
+## 2026-09-15 — Infrastruktur-Audit fuer den Thesis-Anhang (Agent-Anfrage)
+
+- Belege gesammelt (Details in der Antwort an den Thesis-Agenten): Compose-
+  Dienste + Versionen (oscar: torch 2.10.0+cu128, transformers 4.57.6,
+  open_clip 3.3.0, open3d 0.19.0; dgedi: torch 2.1.0+cu118, spconv 2.3.8,
+  open3d 0.17.0; foundationpose: shingarey/..._cuda121, laufender Server
+  python foundationpose_server.py, FP-Repo-Commit b5cbf51, offizielle
+  Gewichte 2023-10-28/2024-01-11; Blender 3.4.1 Container UND Host; LLaVA
+  llava-hf/llava-1.5-7b-hf).
+- Blender-Provenienz geklaert: Galerien im Container (/blender/... via
+  onboard_dataset.sh-Autodetect), Stage-4-Messung Host-Blender gleicher
+  Version -> DECISIONS-Klarstellung + Kommentar in experiment4_onboarding.py.
+- pose_method-Default "icp" -> "foundationpose" (betrifft nur
+  run_pipeline.py-Demo; step8-ICP-Fallback intakt). Kein berichteter Lauf
+  nutzte je den step8-ICP-Fallback: Stage 3/4/5 rufen call_foundationpose
+  direkt (eval_bop_pose.py:204, experiment4_query_latency.py:251,
+  experiment_proxy_grasp.py:268); "icp"-Treffer in Stage 3 betreffen die
+  dGeDi-RANSAC+ICP-Option des Re-Rankings, nicht die Posenschaetzung.
+- Ollama: Port/Volume vorhanden, aber von keinem berichteten Ergebnis genutzt
+  (einziger Verweis: WACV-Altlast object_retrieval/text2text.py).

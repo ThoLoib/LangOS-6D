@@ -987,3 +987,21 @@ Rationale
 
 Alternatives Considered
 - CPU only execution.
+
+## 2026-09-15 Blender-Ausfuehrungsort: Galerien vs. Stage-4-Messung (Klarstellung)
+
+Decision / Klarstellung
+- Die FINALEN Galerien (shrec18_v2 sowie BOP-Ziele, GSO, HouseCat6D, ITODD; MI3DOR)
+  wurden IM oscar-Container gerendert: Blender 3.4.1 liegt im Image unter
+  `/blender/blender-3.4.1-linux-x64/blender` und wurde vom (inzwischen in
+  54435af7 entfernten) `onboard_dataset.sh` dort auto-detektiert. Der Eintrag
+  2026-07-17 ("Preprocessing im Docker") gilt fuer die Galerien unveraendert.
+- Die Stage-4-ONBOARDING-MESSUNG (experiment4_onboarding.py) rendert per Default
+  mit dem HOST-Blender derselben Version 3.4.1
+  (`/home/tessa/Cap3D/.../blender-3.4.1-linux-x64/blender`). Kein Widerspruch,
+  zwei Kontexte; im Skript jetzt als Kommentar vermerkt.
+- pose_method-Default in pipeline/config.py von "icp" auf "foundationpose"
+  gestellt. Kein berichtetes Ergebnis haengt am Default (Stage 3/4/5 rufen die
+  FP-Bridge direkt); einziger betroffener Aufrufer ist die interaktive
+  Demo-Pipeline (run_pipeline.py), die damit den FP-Service nutzt und ueber
+  step8 bei Nichterreichbarkeit weiterhin auf ICP zurueckfaellt.
