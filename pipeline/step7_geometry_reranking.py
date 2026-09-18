@@ -145,7 +145,9 @@ class GeometryReRanker:
 
     Voraussetzung: laufender dGeDi-Dienst mit passender Galerie
     (``docker compose up -d dgedi``; Galerie via ``DGEDI_CACHE_DIR``).
-    Die Kandidaten-IDs muessen Schluessel des Galerie-Manifests sein.
+    Die Kandidaten-IDs muessen Schluessel des Galerie-Manifests sein, und die
+    Query-Wolke muss in den Einheiten der Galerie vorliegen (BOP-Galerie
+    .dgedi_gallery: METER — wie backproject_masked in query_cloud.py liefert).
     """
 
     # Konfig-Signale des Altbestands -> Stage-3-Rangkriterium

@@ -1343,3 +1343,40 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
 - Nachlieferung fuer die Uebersichtsabbildung: je 42 Views + _bg.png fuer
   ycbv obj_000003..obj_000008 -> Drive figures/renderings_final/ycbv_obj_*/
   (nur PNGs, wie angefragt).
+
+## 2026-09-18 — Geometrischer Check wird Schritt 7: Umbau + Beweise
+
+- Umbau (Commit 5201f7d5): step_b2_geometry_reranking.py ->
+  step7_geometry_reranking.py (dGeDi-Client); geo_rerank woertlich aus
+  eval_bop_pose dorthin gezogen; run_pipeline: Schritt 7 = geometrischer
+  Check, Skalenschaetzung + Scale-Gate entfernt; step7_scale_estimation.py
+  + gedi_descriptors.py + gedi_*-Config geloescht (Begruendung DECISIONS).
+- BEWEIS Stage 1 (E2_chamfer_ransac, 25 Queries, Neu-Ableitung auf dem
+  kopierten Paar-Cache): top10 25/25 identisch, nDCG 25/25 identisch zu
+  results_shrec18_v2_stage1_42v_k5.
+- BEWEIS Regel-Identitaet: alte _geo_rerank (HEAD~1) vs. neue geo_rerank auf
+  20000 Zufallseingaben (alle Signale, fehlende/failed Kandidaten):
+  20000/20000 identische Ausgaben.
+- BEFUND Stage-3-Records: Ein frischer 3a+dgedi-Stichprobenlauf reproduziert
+  die gespeicherten records.json NICHT exakt — Ursache ist der Signalwechsel
+  (Alt-Lauf 18.08. = borda, seit 27.08. distance; Halbpunkt-Scores -2.5 als
+  Borda-Signatur) PLUS die schon immer ungeseedete RANSAC-Registrierung im
+  dGeDi-Server (Open3D global RNG; Gegenprobe: zwei identisch konfigurierte
+  frische Laeufe weichen untereinander genauso ab — Details unten nach dem
+  Kontrolllauf). VORBESTAND, nicht durch den Umbau eingefuehrt; Stage 1 ist
+  davon nicht betroffen (Paar-Cache).
+- NACHTRAG Beweise (Fortsetzung): Determinismus-Gegenprobe — zwei frische
+  3a+dgedi-Laeufe mit IDENTISCHEN Einstellungen (beide nach dem Umbau):
+  target_rank gleich 19/30, top10-Reihenfolge gleich 4/30 — dieselbe
+  Groessenordnung wie frisch-vs-gespeichert (20-22/30 bzw. 3-5/30). Die
+  Record-Ebene war fuer Stage-3-Geo nie exakt reproduzierbar (ungeseedete
+  Open3D-RANSAC im dGeDi-Server); der Umbau aendert daran nichts, die REGEL
+  selbst ist bewiesen identisch (20000/20000).
+- run_pipeline-Smoke (YCB-V Szene 48/Frame 1, "the red cracker box", FP+dgedi
+  laufend): Kette bis Schritt 8 durch, Schritt 7 aktiv (0/1 Registrierungen,
+  Demo-Galerie-IDs sind keine Manifest-Schluessel -> Rangfolge unveraendert,
+  sauber geloggt), FP-Pose conf 94.4.
+- Modul-Smoke mit Manifest-IDs (Mug-Query aus Szene 48, Meter-Wolke via
+  backproject_masked): Registrierungen fitness 0.29-0.45, Umsortierung
+  Mug Rang 3 -> 2. Einheiten-Hinweis (BOP-Galerie: Meter) im Docstring.
+- Scratch-Verzeichnisse results_refactor_* nach Auswertung geloescht.
