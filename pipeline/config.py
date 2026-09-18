@@ -188,10 +188,10 @@ class PipelineConfig:
     geometry_reranking_top_k: int = 5        # Shortlist size from fusion for B2 re-ranking
 
     # GeDi descriptor settings
-    gedi_url: str = "http://gedi:5060"          # GeDi service URL (docker-compose service name)
-    gedi_repo_path: str = "/gedi"             # Path to cloned fabiopoiesi/gedi repo (inside GeDi container)
-    gedi_checkpoint: str = "/gedi/data/chkpts/3dmatch/chkpt.tar"  # GeDi pretrained checkpoint
-    gedi_num_keypoints: int = 5000           # Number of keypoints to sample per cloud
+    # gedi_url/gedi_repo_path/gedi_checkpoint/gedi_num_keypoints entfernt
+    # (2026-09-18): der alte In-Process-GeDi-Pfad (Dienst gedi:5060) existiert
+    # nicht mehr; der geometrische Check laeuft als Schritt 7 ueber den
+    # dGeDi-Dienst (object_retrieval/dgedi_bridge, Port 5061).
     # Directory for the on-disk descriptor cache. None = disabled (compute on
     # every call, the historical behaviour). Descriptors are a per-CLOUD cost
     # (~3.4 s) while the RANSAC fit that consumes them is ~0.43 s per PAIR, so

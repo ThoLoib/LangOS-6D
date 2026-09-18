@@ -1005,3 +1005,30 @@ Decision / Klarstellung
   FP-Bridge direkt); einziger betroffener Aufrufer ist die interaktive
   Demo-Pipeline (run_pipeline.py), die damit den FP-Service nutzt und ueber
   step8 bei Nichterreichbarkeit weiterhin auf ICP zurueckfaellt.
+
+## 2026-09-18 Geometrischer Check wird Pipeline-Schritt 7 (ersetzt Skalenschaetzung)
+
+Decision
+- `step_b2_geometry_reranking.py` -> `pipeline/step7_geometry_reranking.py`.
+  Das Modul ist jetzt ein Client des dGeDi-Dienstes (`object_retrieval/
+  dgedi_bridge`, /rerank) — derselbe Backend-Pfad, den ALLE berichteten
+  Geometrie-Ergebnisse nutzen (Stage 1 via _pair_scores_dgedi, Stage 3/4 via
+  dgedi_rerank direkt). Die Umsortierungsregel der Shortlist (`geo_rerank`,
+  Signale distance/borda/fitness) zog woertlich aus eval_bop_pose hierher;
+  der Stage-3-Treiber importiert sie von dort (Rangfolgen unveraendert,
+  Beleg im AI_LOG).
+- ENTFERNT (statt Altbestand): `step7_scale_estimation.py` (kein berichteter
+  Lauf; Namenskollision mit dem neuen Schritt 7; Posen laufen in nativen
+  Mesh-Einheiten wie in den Stage-3/4/5-Treibern), `gedi_descriptors.py`
+  (zielte auf den Dienst gedi:5060, den docker-compose.yml nicht mehr
+  definiert), Scale-Gate-Zweig in run_pipeline (nutzte den ScaleEstimator),
+  `gedi_url/gedi_repo_path/gedi_checkpoint/gedi_num_keypoints` in config.py.
+  Begruendung fuer Loeschung statt Markierung: toter Code gegen einen nicht
+  existierenden Dienst taeuscht einen Ausfuehrungspfad vor; die Historie
+  bleibt per Git erhalten (git show bd2de45d:pipeline/...).
+- BEHALTEN: `GeometryReRanker._load_cad_pointcloud` unveraendert (Stage 1
+  baut darauf die CAD-Wolken; Deskriptor-Caches fingerprinten darauf),
+  Config-Felder `gedi_cache_dir`/`geometry_*`/`scale_gate_*` (der
+  eingefrorene Stage-1-Treiber konstruiert PipelineConfig damit bzw.
+  referenziert sie in Docstrings). Der In-Process-Aufruf `rerank(...,
+  all_aligned=...)` bricht jetzt mit klarer Fehlermeldung ab.

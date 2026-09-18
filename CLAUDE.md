@@ -10,8 +10,9 @@ Claude's role is not to act as a generic assistant. Its job is to inspect the re
 
 The project extends OSCAR for a master's thesis at TU Wien. The broad goal is to improve object retrieval and pose estimation in cluttered scenes by combining language, image, and 3D shape signals.
 
-The system is organized as a structured 8-step pipeline (see `pipeline/step*.py`), plus an
-out-of-band geometry re-ranking sub-step B2. It supports end-to-end debugging and visualization
+The system is organized as a structured 8-step pipeline (see `pipeline/step*.py`);
+step 7 is the geometric check (dGeDi re-ranking of the fused shortlist — formerly
+the out-of-band sub-step B2; it replaced the removed scale estimation, 2026-09-18). It supports end-to-end debugging and visualization
 and has been used for experiments on YCBV_GSO, MI3DOR and SHREC'18.
 
 ## Primary Repositories and Runtime Context

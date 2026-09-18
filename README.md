@@ -95,7 +95,7 @@ All pipeline code lives in `pipeline/`. Each step is a self-contained module wit
 | `step4_dino_reranking.py` | DINOv2 visual re-ranking with multi-view aggregation (softmax top-k) and disk cache |
 | `step5_shape_matching.py` | ULIP-2 shape matching (pc/cross/both modes, partial views, multi-view aggregation, optional ICP rotation eval) |
 | `step6_fusion.py` | NaN-safe min-max score normalization and weighted CLIP/DINO/ULIP fusion |
-| `step7_scale_estimation.py` | RANSAC + ICP coarse alignment for scale factor estimation, fast bbox fallback |
+| `step7_geometry_reranking.py` | Geometrischer Check: dGeDi-Registrierung (HTTP-Dienst, `object_retrieval/dgedi_bridge`) + Umsortierung der Fusions-Shortlist (vormals Sub-step B2; ersetzt die entfernte Skalenschaetzung) |
 | `step8_pose_estimation.py` | 6D pose via FoundationPose (HTTP) or ICP fallback |
 | `foundationpose_bridge.py` | HTTP client for the FoundationPose container (path translation, encoding, error handling) |
 | `utils.py` | Shared helpers: camera intrinsics loading, image I/O, BOP format parsing |

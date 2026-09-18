@@ -217,7 +217,7 @@ the shortlist (`oscar_maxview`), reproducing OSCAR's actual mechanism [Pulli et 
 
 ---
 
-## 3. Geometry re-ranking — Sub-step B2 (optional) · `step_b2_geometry_reranking.py`
+## 3. Geometrischer Check — Schritt 7 (optional) · `step7_geometry_reranking.py` *(vormals Sub-step B2; seit 2026-09-18 dGeDi-Client, in-process GeDi entfernt)*
 
 After Step 6, the **top-K = 50** fused candidates are re-ordered by an **alignment-aware
 local-geometry** score. GeDi descriptors (precomputed, §1.5) give putative correspondences;
@@ -257,7 +257,7 @@ pipeline** (see `EVALUATION_STORY_AND_PLAN.md` §5).
 Used only in the pose experiments (Stage-3). The retrieved CAD + the RGB-D crop drive a 6-DoF
 pose estimate.
 
-### Step 7 — Coarse alignment + scale · `step7_scale_estimation.py`
+### Step 7 (alt) — Coarse alignment + scale · `step7_scale_estimation.py` *(ENTFERNT 2026-09-18 — kein berichteter Lauf nutzte sie; Schritt 7 ist jetzt der geometrische Check)*
 Estimates the metric scale of the retrieved CAD against the query cloud (proxies from
 different datasets are normalised to a common metric scale; for the pose experiments proxies
 are placed at their **true metric size**, a deterministic m→mm conversion, *no* learned scale).

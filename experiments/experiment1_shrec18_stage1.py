@@ -2100,7 +2100,7 @@ DGEDI_USE_ICP = os.environ.get("DGEDI_USE_ICP", "1") != "0"
 
 
 class _GeometryEngine:
-    """Lazy wrapper around pipeline.step_b2_geometry_reranking with
+    """Lazy wrapper around pipeline.step7_geometry_reranking (vormals step_b2) with
     per-(query, cad) score caching (append-only jsonl, resumable)."""
 
     def __init__(self, paths: dict):
@@ -2135,7 +2135,7 @@ class _GeometryEngine:
     def _get_reranker(self):
         if self._reranker is None:
             from pipeline.config import PipelineConfig
-            from pipeline.step_b2_geometry_reranking import GeometryReRanker
+            from pipeline.step7_geometry_reranking import GeometryReRanker
 
             cad_dir = os.path.join(self.paths["data_root"], "cad")
             cloud_cache = self._cad_clouds

@@ -235,48 +235,11 @@ class _ModelCache:
 GEO_SIGNAL = os.environ.get("STAGE3_GEO_SIGNAL", "distance")   # distance | borda | fitness
 
 
-def _geo_rerank(fused_ranking, geo, top_k, signal: str = None):
-    """Re-rank the fused top-K by the dGeDi geometry signal.
-
-    ``signal`` (default ``STAGE3_GEO_SIGNAL`` = **distance**):
-      * ``distance`` — rank by the trimmed surface distance after alignment.
-        This is the Stage-1 C1 winner (0.6405 vs 0.6362 Borda vs 0.6251 fitness)
-        and therefore the **cross-stage-consistent** criterion.
-      * ``borda``    — mean-rank of fitness and distance (the pre-2026-08-27
-        behaviour; kept so the earlier runs remain reproducible).
-      * ``fitness``  — RANSAC inlier fraction only.
-    Failed/uncached candidates sort to the back of the shortlist; the tail past
-    top_k is untouched."""
-    signal = signal or GEO_SIGNAL
-    head = fused_ranking[:top_k]
-    tail = fused_ranking[top_k:]
-    ids = [oid for oid, _ in head]
-    NEG = float("-inf")
-
-    def _sig(o, key, sign):
-        g = geo.get(o)
-        if not g or not g.get("ok"):
-            return NEG
-        return sign * float(g[key])
-
-    fit = [_sig(o, "ransac_fitness", 1.0) for o in ids]
-    dst = [_sig(o, "d_ransac", -1.0) for o in ids]
-
-    def _ranks(vals):
-        return np.argsort(np.argsort(-np.asarray(vals), kind="stable"),
-                          kind="stable").astype(float)
-
-    if signal == "distance":
-        key = _ranks(dst)
-    elif signal == "fitness":
-        key = _ranks(fit)
-    elif signal == "borda":
-        key = (_ranks(fit) + _ranks(dst)) / 2.0
-    else:
-        raise ValueError(f"unknown STAGE3_GEO_SIGNAL {signal!r}")
-    order = list(np.argsort(key, kind="stable"))
-    head_re = [(ids[i], -float(key[i])) for i in order]
-    return head_re + tail
+# Umsortierungsregel seit 2026-09-18 in der Pipeline (Schritt 7) beheimatet —
+# von dort importiert, damit Treiber und interaktive Pipeline dieselbe
+# Implementierung teilen. Rangfolgen unveraendert (Beleg: Vergleich gegen
+# gespeicherte records.json, siehe AI_LOG 2026-09-18).
+from pipeline.step7_geometry_reranking import geo_rerank as _geo_rerank  # noqa: E402
 
 
 # ============================================================================

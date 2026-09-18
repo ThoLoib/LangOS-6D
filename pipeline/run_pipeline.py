@@ -10,7 +10,7 @@
 #   Schritt 4: Bildbasiertes Re-Ranking  (DINOv2)
 #   Schritt 5: Shape Matching            (ULIP-2)
 #   Schritt 6: Score-Fusion              (Weighted Sum / RRF / Intersection)
-#   Schritt 7: Skalenbestimmung          (BBox-Vergleich)
+#   Schritt 7: Geometrischer Check       (dGeDi-Re-Ranking der Shortlist)
 #   Schritt 8: Pose Estimation           (FoundationPose / ICP)
 #
 # Usage:
@@ -45,7 +45,6 @@ from .step3_clip_retrieval import CLIPRetriever
 from .step4_dino_reranking import DINOReRanker
 from .step5_shape_matching import ShapeMatcher
 from .step6_fusion import ScoreFusion
-from .step7_scale_estimation import ScaleEstimator
 from .step8_pose_estimation import PoseEstimator
 from .utils import load_depth_image, ensure_dir
 from . import debug_viz as _dbv
@@ -179,7 +178,6 @@ class OSCARPlusPipeline:
         self.dino_reranker = DINOReRanker(config)
         self.shape_matcher = ShapeMatcher(config)
         self.fusion = ScoreFusion(config)
-        self.scale_estimator = ScaleEstimator(config)
         self.pose_estimator = PoseEstimator(config)
 
         self._initialized = False
@@ -243,7 +241,7 @@ class OSCARPlusPipeline:
                 "dino_reranking": DINOReRankingResult,
                 "shape_matching": ShapeMatchingResult,
                 "fusion": FusionResult,
-                "scale_estimation": ScaleEstimationResult,
+                "geometry_reranking": GeometryReRankingResult,
                 "pose_estimation": PoseEstimationResult,
                 "timing": {...},
                 "summary": {...},
@@ -487,24 +485,23 @@ class OSCARPlusPipeline:
                 )
 
         # =================================================================
-        # Sub-step B2: Geometry Re-ranking (GeDi + Chamfer)
+        # Schritt 7: Geometrischer Check (dGeDi-Re-Ranking, vormals B2)
         # =================================================================
-        b2_ransac_transform = None  # reused in Step 7 to skip redundant RANSAC
         if (
             getattr(self.config, "geometry_reranking_enabled", False)
             and "fusion" in results
             and results["fusion"].best_match
             and "point_cloud" in results
-            and 6 not in skip_steps  # B2 depends on fusion
+            and 7 not in skip_steps
         ):
             t0 = time.time()
             logger.info("─" * 40)
-            logger.info("Sub-step B2: Geometry Re-ranking (GeDi + Chamfer)")
+            logger.info("Schritt 7: Geometrischer Check (dGeDi-Re-Ranking)")
             logger.info("  Signal: %s | Top-K: %d",
                         self.config.geometry_reranking_signal,
                         self.config.geometry_reranking_top_k)
 
-            from .step_b2_geometry_reranking import GeometryReRanker
+            from .step7_geometry_reranking import GeometryReRanker
             reranker = GeometryReRanker(self.config)
             pc = results["point_cloud"]
 
@@ -513,11 +510,11 @@ class OSCARPlusPipeline:
                 observed_pcd=pc.point_cloud,
             )
             results["geometry_reranking"] = b2_result
-            timings["step_b2_geometry"] = time.time() - t0
+            timings["step7_geometry"] = time.time() - t0
 
             # Detailed per-candidate log
             logger.info("  ┌─────────────────────────────────────────────────────────────────┐")
-            logger.info("  │  B2 Geometry Re-ranking Results                                 │")
+            logger.info("  │  Schritt 7 · dGeDi Geometry Re-ranking                          │")
             logger.info("  ├─────┬──────────────────────────┬────────┬────────────┬──────────┤")
             logger.info("  │ Rank│ Object ID                │ GeDi   │ Chamfer    │ Geo Score│")
             logger.info("  ├─────┼──────────────────────────┼────────┼────────────┼──────────┤")
@@ -534,21 +531,16 @@ class OSCARPlusPipeline:
             if b2_result.best_candidate:
                 best = b2_result.best_candidate
                 logger.info(
-                    "  ✓ B2 winner: %s (GeDi inliers=%d, fitness=%.4f)",
-                    best.object_id, int(best.gedi_score), best.ransac_fitness,
+                    "  ✓ Schritt-7-Sieger: %s (fitness=%.4f)",
+                    best.object_id, best.ransac_fitness,
                 )
-                if best.ransac_transformation is not None:
-                    logger.info("  ✓ RANSAC transform forwarded to Step 7 as ICP init")
-                b2_ransac_transform = b2_result.best_transformation
 
         # Für Schritte 7+8 und Debug-Viz werden diese Variablen geteilt
         resolved_mesh = None   # aufgelöster Mesh-Pfad (kein PNG-Fallback)
-        scale_result = None
         pose_result = None
-        effective_best_model = None  # may differ from fusion best_match after scale gate/B2
-        scale_gate_failed = False    # set to True when policy=fail and no candidate passes
+        effective_best_model = None  # may differ from fusion best_match after Schritt 7
 
-        # Apply B2 re-ranking result: override effective_best_model
+        # Ergebnis von Schritt 7 anwenden: override effective_best_model
         if "geometry_reranking" in results and results["geometry_reranking"].best_candidate:
             b2_best = results["geometry_reranking"].best_candidate
             # Wrap as FusedCandidate-like object for downstream compatibility
@@ -563,104 +555,13 @@ class OSCARPlusPipeline:
                 best_view_path=b2_best.best_view_path,
             )
 
-        # =================================================================
-        # Scale gate (between fusion and scale estimation)
-        # =================================================================
-        if (
-            self.config.scale_gate_enabled
-            and "fusion" in results
-            and results["fusion"].best_match
-            and "point_cloud" in results
-            and 7 not in skip_steps
-        ):
-            t0 = time.time()
-            logger.info("─" * 40)
-            logger.info("Scale Gate: candidate selection by scale plausibility")
 
-            selected, sg_mesh, sg_rank, sg_log = (
-                self._select_candidate_with_scale_gate(
-                    results["fusion"], results["point_cloud"],
-                )
-            )
-            fallback_used = selected is not None and sg_rank is None
-            results["scale_gate"] = {
-                "enabled": True,
-                "policy": self.config.scale_gate_reject_policy,
-                "selected_object_id": selected.object_id if selected else None,
-                "selected_rank": sg_rank,
-                "fallback_used": fallback_used,
-                "candidates_checked": len(sg_log),
-                "rejections": sg_log,
-            }
-            if selected is not None:
-                effective_best_model = selected
-                resolved_mesh = sg_mesh
-                # scale_result stays None so Step 7 still runs full RANSAC+ICP
-                # (which is needed for coarse alignment in Step 8)
-            else:
-                scale_gate_failed = True
-            timings["scale_gate"] = time.time() - t0
-
-        # =================================================================
-        # Schritt 7: Skalenbestimmung
-        # =================================================================
-        if scale_gate_failed:
-            logger.warning(
-                "Scale gate policy=fail: no candidate passed — skipping Steps 7 and 8."
-            )
-
-        if (
-            7 not in skip_steps
-            and not scale_gate_failed
-            and "fusion" in results
-            and results["fusion"].best_match
-            and "point_cloud" in results
-            and scale_result is None  # not already computed by scale gate
-        ):
-            t0 = time.time()
-            logger.info("─" * 40)
-            logger.info("Schritt 7: Skalenbestimmung")
-
-            best_model = effective_best_model or results["fusion"].best_match
-            pc = results["point_cloud"]
-
-            if resolved_mesh is None:
-                resolved_mesh = self._resolve_mesh_path_for_candidate(best_model)
-                if resolved_mesh:
-                    logger.info("  Mesh-Pfad aufgelöst: %s", resolved_mesh)
-                else:
-                    logger.warning("  Kein gültiger Mesh-Pfad für %s gefunden.",
-                                   best_model.object_id)
-
-            if resolved_mesh and pc:
-                scale_result = self.scale_estimator.estimate(
-                    pc, resolved_mesh,
-                    init_transform=b2_ransac_transform,
-                )
-                results["scale_estimation"] = scale_result
-                timings["step7_scale"] = time.time() - t0
-
-                logger.info(
-                    f"  ✓ Scale factor: {scale_result.scale_factor:.4f} "
-                    f"(confidence={scale_result.confidence:.2f}, "
-                    f"method={scale_result.method})"
-                )
-                if scale_result.visible_axes is not None:
-                    logger.info(
-                        f"  Per-axis ratios: {np.round(scale_result.scale_per_axis, 3).tolist()} "
-                        f"→ used axes {scale_result.visible_axes.tolist()}"
-                    )
-                if b2_ransac_transform is not None:
-                    logger.info("  ICP init: from B2 RANSAC transform (GeDi)")
-                else:
-                    logger.info("  ICP init: from FPFH RANSAC (no B2 transform)")
 
         # =================================================================
         # Schritt 8: Pose Estimation
         # =================================================================
         if (
             8 not in skip_steps
-            and not scale_gate_failed
             and "fusion" in results
             and results["fusion"].best_match
         ):
@@ -669,8 +570,10 @@ class OSCARPlusPipeline:
             logger.info("Schritt 8: Pose Estimation")
 
             best_model = effective_best_model or results["fusion"].best_match
-            scale = results.get("scale_estimation")
-            scale_factor = scale.scale_factor if scale else 1.0
+            # Skalenschaetzung entfernt (2026-09-18): Meshes werden in ihren
+            # nativen Einheiten verwendet; die Einheiten-Zuordnung liegt beim
+            # Aufrufer (wie in den Stage-3/4/5-Treibern).
+            scale_factor = 1.0
             loc = results.get("localization")
 
             # Mesh-Pfad auflösen falls Schritt 7 übersprungen wurde
@@ -690,7 +593,7 @@ class OSCARPlusPipeline:
                     observed_pc=results.get("point_cloud"),
                     fx=cam.get("fx"), fy=cam.get("fy"),
                     cx=cam.get("cx"), cy=cam.get("cy"),
-                    initial_pose=scale.coarse_alignment if scale is not None else None,
+                    initial_pose=None,
                 )
                 results["pose_estimation"] = pose_result
                 timings["step8_pose"] = time.time() - t0
@@ -709,10 +612,9 @@ class OSCARPlusPipeline:
         if self.debug_viz and "fusion" in results and results["fusion"].best_match:
             best_model = effective_best_model or results["fusion"].best_match
             loc = results.get("localization")
-            scale = results.get("scale_estimation")
-            scale_factor = scale.scale_factor if scale else 1.0
-            obs_size = scale.observed_size if scale else None
-            cad_size = scale.cad_size if scale else None
+            scale_factor = 1.0        # Skalenschaetzung entfernt (2026-09-18)
+            obs_size = None
+            cad_size = None
 
             pose_info = {}
             if pose_result is not None:
@@ -794,80 +696,6 @@ class OSCARPlusPipeline:
             )
         return resolved or None
 
-    def _select_candidate_with_scale_gate(self, fusion_result, observed_pc):
-        """Try fused candidates in rank order; accept the first with plausible scale.
-
-        Uses estimate_fast (sorted-bbox, no ICP) for a fast, deterministic
-        gate decision. Step 7 still runs full RANSAC+ICP for coarse alignment.
-
-        Returns:
-            (selected_candidate, resolved_mesh, selected_rank, rejection_log)
-            selected_rank is 1-based; None signals the fallback-best path.
-        """
-        rejection_log = []
-        max_cands = self.config.scale_gate_max_candidates
-        candidates = fusion_result.candidates[:max_cands]
-
-        for rank, cand in enumerate(candidates, start=1):
-            mesh_path = self._resolve_mesh_path_for_candidate(cand)
-            if not mesh_path:
-                rejection_log.append({
-                    "rank": rank,
-                    "object_id": cand.object_id,
-                    "fused_score": round(float(cand.fused_score), 6),
-                    "mesh_path": None,
-                    "reason": "missing_mesh",
-                })
-                logger.info(
-                    "  Scale gate [%d/%d]: %s — rejected (missing mesh)",
-                    rank, len(candidates), cand.object_id,
-                )
-                continue
-
-            scale_factor, confidence = self.scale_estimator.estimate_fast(
-                observed_pc, mesh_path
-            )
-            ok_scale = self.config.scale_gate_min <= scale_factor <= self.config.scale_gate_max
-            ok_conf  = confidence >= self.config.scale_gate_min_confidence
-
-            if ok_scale and ok_conf:
-                logger.info(
-                    "  Scale gate [%d/%d]: %s — ACCEPTED (scale=%.4f, conf=%.2f)",
-                    rank, len(candidates), cand.object_id, scale_factor, confidence,
-                )
-                return cand, mesh_path, rank, rejection_log
-
-            reason = "scale_out_of_range" if not ok_scale else "low_confidence"
-            rejection_log.append({
-                "rank": rank,
-                "object_id": cand.object_id,
-                "fused_score": round(float(cand.fused_score), 6),
-                "mesh_path": mesh_path,
-                "scale_factor": round(scale_factor, 6),
-                "confidence": round(confidence, 4),
-                "reason": reason,
-            })
-            logger.info(
-                "  Scale gate [%d/%d]: %s — rejected (%s, scale=%.4f, conf=%.2f)",
-                rank, len(candidates), cand.object_id, reason, scale_factor, confidence,
-            )
-
-        # No candidate accepted
-        logger.warning(
-            "  Scale gate: 0/%d candidates passed (policy=%s)",
-            len(candidates), self.config.scale_gate_reject_policy,
-        )
-
-        if self.config.scale_gate_reject_policy == "fallback_best":
-            fallback = fusion_result.candidates[0]
-            mesh_path = self._resolve_mesh_path_for_candidate(fallback)
-            logger.warning(
-                "  Scale gate: falling back to rank-1 fusion candidate (%s)",
-                fallback.object_id,
-            )
-            return fallback, mesh_path, None, rejection_log  # rank=None signals fallback
-
-        return None, None, None, rejection_log
 
     def _extract_prompt_elements(self, prompt: str) -> "PromptElements":
         """Extrahiert Objekt + visuelle Attribute (Farbe, Form, Material) aus dem Prompt.
@@ -1045,15 +873,6 @@ class OSCARPlusPipeline:
             summary["fusion_score"] = best.fused_score
             summary["fusion_method"] = results["fusion"].method
 
-        if "scale_gate" in results:
-            sg = results["scale_gate"]
-            summary["scale_gate_selected"] = sg["selected_object_id"]
-            summary["scale_gate_rejections"] = len(sg["rejections"])
-
-        if "scale_estimation" in results:
-            scale = results["scale_estimation"]
-            summary["scale_factor"] = scale.scale_factor
-
         if "pose_estimation" in results:
             pose = results["pose_estimation"]
             summary["pose_confidence"] = pose.confidence
@@ -1143,22 +962,7 @@ class OSCARPlusPipeline:
                      "cad_model_path": getattr(c, "cad_model_path", "")}
                     for i, c in enumerate(cands)])
 
-        # --- Scale gate rejections ---
-        if "scale_gate" in results:
-            rejections = results["scale_gate"].get("rejections", [])
-            if rejections:
-                _write("rankings_scale_gate.csv",
-                       ["rank", "object_id", "fused_score", "scale_factor",
-                        "confidence", "reason", "mesh_path"],
-                       [{
-                           "rank": r.get("rank", ""),
-                           "object_id": r.get("object_id", ""),
-                           "fused_score": r.get("fused_score", ""),
-                           "scale_factor": r.get("scale_factor", ""),
-                           "confidence": r.get("confidence", ""),
-                           "reason": r.get("reason", ""),
-                           "mesh_path": r.get("mesh_path", ""),
-                       } for r in rejections])
+
 
     def _save_results(self, results: dict) -> None:
         """Speichert die Pipeline-Zusammenfassung als JSON."""
@@ -1235,22 +1039,13 @@ Beispiel:
         "--ulip-partial-views", action="store_true", dest="ulip_partial_views",
         help="Use precomputed partial point clouds per view instead of full mesh sampling"
     )
-    # Scale gate
-    parser.add_argument("--scale-gate", action="store_true", dest="scale_gate_enabled",
-                        help="Enable scale-gated candidate selection after fusion")
-    parser.add_argument("--scale-gate-min", type=float, default=0.8, dest="scale_gate_min")
-    parser.add_argument("--scale-gate-max", type=float, default=1.2, dest="scale_gate_max")
-    parser.add_argument("--scale-gate-min-confidence", type=float, default=0.0, dest="scale_gate_min_confidence")
-    parser.add_argument("--scale-gate-max-candidates", type=int, default=5, dest="scale_gate_max_candidates")
-    parser.add_argument("--scale-gate-reject-policy", choices=["fallback_best", "fail"],
-                        default="fallback_best", dest="scale_gate_reject_policy")
-    # Geometry re-ranking (Sub-step B2)
+    # Geometrischer Check (Schritt 7, dGeDi)
     parser.add_argument("--geometry-reranking", action="store_true", dest="geometry_reranking_enabled",
-                        help="Enable Sub-step B2 geometry re-ranking (GeDi + Chamfer)")
+                        help="Schritt 7 aktivieren: dGeDi-Re-Ranking der Fusions-Shortlist")
     parser.add_argument("--geometry-reranking-signal",
                         choices=["fitness", "chamfer_unaligned",
                                  "chamfer_ransac", "chamfer_icp",
-                                 # legacy aliases (see step_b2 _SIGNAL_ALIASES)
+                                 # legacy aliases (historisch; Abbildung in step7_geometry_reranking)
                                  "gedi", "chamfer", "both"],
                         default="chamfer_ransac", dest="geometry_reranking_signal",
                         help="Geometry signal for B2 re-ranking. "
@@ -1259,10 +1054,6 @@ Beispiel:
     parser.add_argument("--geometry-reranking-top-k", type=int, default=5,
                         dest="geometry_reranking_top_k",
                         help="Number of fused candidates to re-rank in B2")
-    parser.add_argument("--gedi-repo", default="", dest="gedi_repo_path",
-                        help="Path to cloned fabiopoiesi/gedi repo")
-    parser.add_argument("--gedi-checkpoint", default="", dest="gedi_checkpoint",
-                        help="Path to GeDi model checkpoint (.tar)")
 
     # Rotation evaluation
     parser.add_argument("--ulip-rotation-eval", action="store_true", dest="ulip_rotation_eval",
@@ -1344,14 +1135,6 @@ def main():
         geometry_reranking_enabled=args.geometry_reranking_enabled,
         geometry_reranking_signal=args.geometry_reranking_signal,
         geometry_reranking_top_k=args.geometry_reranking_top_k,
-        gedi_repo_path=args.gedi_repo_path,
-        gedi_checkpoint=args.gedi_checkpoint,
-        scale_gate_enabled=args.scale_gate_enabled,
-        scale_gate_min=args.scale_gate_min,
-        scale_gate_max=args.scale_gate_max,
-        scale_gate_min_confidence=args.scale_gate_min_confidence,
-        scale_gate_max_candidates=args.scale_gate_max_candidates,
-        scale_gate_reject_policy=args.scale_gate_reject_policy,
         ollama_model=args.ollama_model,
         ollama_host=args.ollama_host,
         gt_bbox_center_compensation=args.gt_bbox_compensation,

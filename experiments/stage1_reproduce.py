@@ -331,7 +331,7 @@ def main():
         fusion_method=FUSION))
     reranker = None
     if GEOMETRY:
-        from pipeline.step_b2_geometry_reranking import GeometryReRanker
+        from pipeline.step7_geometry_reranking import GeometryReRanker
         gcfg = PipelineConfig(geometry_reranking_top_k=GEOM_K,
                               geometry_reranking_signal=GEOMETRY,
                               gedi_cache_dir=os.path.join(CACHE_DIR, "gedi"))
