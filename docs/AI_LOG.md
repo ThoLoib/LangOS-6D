@@ -1332,3 +1332,14 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   sind Alt-Renders (Filmic, vor dem Render-Fix). shrec/MI3DOR haben keine
   _CamMatrix/_partial.npz auf Platte (nur im ULIP-Partial-Cache gebuendelt);
   ycbv vollstaendig (42 npz + 42 CamMatrix).
+
+## 2026-09-18 — Korrektur + Render-Nachlieferung
+
+- KORREKTUR zum Eintrag 15.09.: Der .ulip_partial_cache_*.pt enthaelt KEINE
+  Punktwolken (nur embeddings/paths/partial-Flag; verifiziert per torch.load,
+  vgl. _save_partial_cache in step5_shape_matching.py) — Teilwolken sind
+  daraus NICHT extrahierbar. SHREC-/MI3DOR-Teilwolken fuer Abbildungen muessen
+  per Onboarding-Verfahren neu berechnet werden (macht der Thesis-Agent).
+- Nachlieferung fuer die Uebersichtsabbildung: je 42 Views + _bg.png fuer
+  ycbv obj_000003..obj_000008 -> Drive figures/renderings_final/ycbv_obj_*/
+  (nur PNGs, wie angefragt).
