@@ -1380,3 +1380,20 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   backproject_masked): Registrierungen fitness 0.29-0.45, Umsortierung
   Mug Rang 3 -> 2. Einheiten-Hinweis (BOP-Galerie: Meter) im Docstring.
 - Scratch-Verzeichnisse results_refactor_* nach Auswertung geloescht.
+
+## 2026-09-19 — Fehlzuordnung 96.9 % korrigiert (Code-Kommentar, Stage 1 O2)
+
+- Anfrage vom Thesis-Agenten: Arbeit nennt 98,3 % (SHREC) und 96,9 % (MI3DOR),
+  ein Code-Kommentar vom 31.07. nennt 96,9 % fuer SHREC. Nachgesehen:
+  * SHREC, O2_clip_threshold, shortlist_stats: fallback_rate 0.98334 (98.3 %),
+    median 20.0 (q1=q3=20, min 1, max 23, tau_text 0.37) — identisch in ALLEN
+    archivierten Laeufen (k20, k50 vom 04.08.; 42v/k5 vom 26.08.).
+  * MI3DOR, Stage 2: clip_shortlist_fallback_count 10174/10500 = 96.895 %
+    (median 20.0, mean 19.688).
+  -> Die ARBEIT ist bei beiden Zahlen korrekt; der Code-Kommentar trug den
+  MI3DOR-Wert unter SHREC-Etikett. Korrigiert an beiden Stellen in
+  experiment1_shrec18_stage1.py (Zeile ~185 und ~3376), mit Herkunftsnotiz.
+  Einschraenkung: aus dem genannten 31.07. existiert kein SHREC-Artefakt mehr
+  (fruehestes 04.08., c2e21202); eine zwischenzeitliche 96.9-%-Messung ist
+  nicht beweisbar ausgeschlossen, aber die exakte Uebereinstimmung mit MI3DOR
+  und die Stabilitaet des SHREC-Werts sprechen klar fuer die Verwechslung.

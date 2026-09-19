@@ -182,12 +182,16 @@ CLIP_PRUNE_K = 20      # OSCAR cascade shortlist size (O2 / E1d)
 # retrieve()'s threshold defaults to None, so the shipped pipeline runs pure
 # top-k.  The paper value is used here deliberately.
 CLIP_TAU_TEXT = 0.37
-# Measured on SHREC'18 (2026-07-31): tau_text = 0.37 admits NOTHING on 96.9%
-# of queries, so the arm falls back to top-k and reproduces the cascade rather
+# Measured on SHREC'18 (O2_clip_threshold, shortlist_stats.fallback_rate):
+# tau_text = 0.37 admits NOTHING on 98.3% of queries, so the arm falls back to
+# top-k and reproduces the cascade rather
 # than exercising the threshold at all.  That is a real result about transfer
 # — the constant was fitted to MI3DOR/YCB-V caption similarities — but it says
 # nothing about whether threshold pruning *works*.  So a second arm calibrates
 # tau to this dataset's own similarity distribution.
+# (Bis 2026-09-19 stand hier 96.9% mit Datum 2026-07-31 — das ist der
+# MI3DOR-Wert aus Stage 2, 10174/10500 = 96.9%, nicht der SHREC-Wert.
+# SHREC liefert 0.98334 in JEDEM archivierten Lauf: k20/k50 wie 42v/k5.)
 #
 # Rule: tau = the percentile of the per-query MAXIMUM similarity that leaves
 # at most this fraction of queries with an empty candidate set.  Calibrating
@@ -3369,8 +3373,9 @@ def aggregate(paths: dict) -> None:
         # threshold admits nothing the arm falls back to top-k, so |S'| reads
         # back as exactly k and the median looks perfectly healthy while the
         # threshold mechanism is in fact never running.  Measured on SHREC'18:
-        # tau=0.37 falls back on 96.9% of queries, and the arm then reproduces
-        # the top-k cascade to within 0.0015 nDCG.
+        # tau=0.37 falls back on 98.3% of queries, and the arm then reproduces
+        # the top-k cascade to within 0.0015 nDCG.  (MI3DOR/Stage 2 sits at
+        # 96.9% — verwechselte Zuordnung bis 2026-09-19.)
         if st["fallback_rate"] > 0.25:
             print(f"[aggregate] WARNING: tau_text={st['tau_text']} admits "
                   f"nothing on {100 * st['fallback_rate']:.1f}% of queries — "
