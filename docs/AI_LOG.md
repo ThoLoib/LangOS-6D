@@ -1397,3 +1397,29 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   (fruehestes 04.08., c2e21202); eine zwischenzeitliche 96.9-%-Messung ist
   nicht beweisbar ausgeschlossen, aber die exakte Uebereinstimmung mit MI3DOR
   und die Stabilitaet des SHREC-Werts sprechen klar fuer die Verwechslung.
+
+## 2026-09-20 — stage_5_sim: komplette Pipeline live im PyBullet-Fenster
+
+- NEU grasping/stage_5_sim.py: Prompt + Solo-Objekt ODER BOP-Szene -> echte
+  Pipeline je Lauf (Schritt 1 GroundingDINO+SAM IMMER echt, keine GT-Maske;
+  Retrieval gegen die VOLLE Datenbank inkl. Ziel-CADs, 1316; Schritt 7 dGeDi
+  optional via --skip geometry; Kanal-Skips clip/dino/shape via Gewichte),
+  dann FoundationPose + antipodales Greifen. 10 Laeufe x 36 Grad x max. 5
+  Griffe (Stage-5-Semantik), Metrik nur Erfolgsrate X/N.
+- GUI: PyBullet-Fenster (Maus-Orbit), Geist des abgerufenen CADs (gruen,
+  halbtransparent) + Griff-Linien als Debug-Overlays (gelb/blau/gruen/rot),
+  Echtzeit-Pacing (sleep 1/240 je Schritt). EIN Fenster ueber alle Laeufe
+  (resetSimulation statt Reconnect). X-Durchreichung in docker-compose.yml
+  verankert (DISPLAY=:1 + /tmp/.X11-unix); GUI-Connect aus dem Container
+  verifiziert (WSLg/X1).
+- Starre Default-Kamera im Solo-Modus (OpenCV-Konvention, 600er-Brennweite,
+  Blick von (0.55,0,0.45) auf den Tischursprung) — kein BOP-Frame noetig.
+  Szenen-Modus: Szene liefert die Kamera; Ziel bestimmt Schritt 1, danach
+  Welt-Rebuild mit dem Ziel als dynamischem Koerper; Ziel dreht je Lauf.
+- Scale-Fit (beobachtete Groesse aus der Tiefe) Default AN, geklemmt auf
+  [0.5, 2.0] (schlechte Masken blaehen die Diagonale auf; Szene-Smoke: 4.23
+  bei falsch segmentierter Chef-Dose); --no-scale-fit vorhanden.
+- Smokes: Solo Mug 1/1 (Schritt 1 conf 0.97, exaktes CAD gefunden, Griff im
+  1. Versuch); Szene 48 end-to-end (Schritt 7 drehte sichtbar Rang 1 auf den
+  Kaffeedosen-Zwilling; Lauf scheiterte ehrlich an schlechter Schritt-1-Maske
+  -> Klemme ergaenzt).

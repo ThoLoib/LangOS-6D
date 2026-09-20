@@ -6,6 +6,7 @@ services:
       - .:/app
       - ../ULIP_thesis:/ulip
       - ../Uni3D:/uni3d
+      - /tmp/.X11-unix:/tmp/.X11-unix          # GUI (PyBullet-Fenster via WSLg/X)
       - hf_cache:/root/.cache/huggingface
       - torch_cache:/root/.cache/torch
       - clip_cache:/root/.cache/clip
@@ -14,6 +15,7 @@ services:
       - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      - DISPLAY=${DISPLAY:-:1}                 # GUI (stage_5_sim)
       # torch ships libgomp.so.1; without it on the path open3d fails to import
       # (needed for step7/step8 + Stage-3 D_sym point sampling).
       - LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/torch/lib
