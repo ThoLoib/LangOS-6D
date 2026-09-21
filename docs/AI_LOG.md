@@ -1423,3 +1423,25 @@ fuenfte war der noch nicht gepushte Stage-1-Fix):
   1. Versuch); Szene 48 end-to-end (Schritt 7 drehte sichtbar Rang 1 auf den
   Kaffeedosen-Zwilling; Lauf scheiterte ehrlich an schlechter Schritt-1-Maske
   -> Klemme ergaenzt).
+
+## 2026-09-21 — Audit: fehlende Subkategorien in der Stage-1-Metrik (NN_sub)
+
+Auf Anfrage des Thesis-Agenten gegen rgbd.csv/cad.csv/official_labels.json und
+E1c_full_fusion nachgerechnet (Details in der Antwort):
+- 426/2101 Queries (20.3 %) ohne brauchbare Subkategorie; Kodierung: die
+  Kategorie wird WIEDERHOLT (nie leer); Galerie 625/3308 analog.
+- Fuer sub-lose Queries matcht lab[1]==qs genau die ebenfalls sub-losen
+  gleichkategorigen CADs -> 32008 Note-2-Paare, Median 77 je Query. hit@1
+  misst dort "gleiche Kategorie und ebenfalls sub-los".
+- BASE-Splits (mit Sub 1675 / ohne 426): NN_sub 0.3522/0.2981 (Beitrag
+  ohne-Sub 17.7 % von 0.3413), nDCG_K 0.3807/0.3002, MRR_sub@5 0.4194/0.3957
+  (Definition K=5 per Nachrechnung exakt auf Summary 0.4146 reproduziert),
+  nDCG 0.6092/0.4989, NN_cat 0.4078/0.3052.
+- Offizielles evaluate.py (Z. 64-72) benotet identisch roh — unsere
+  Implementierung ERBT das offizielle Verhalten; die strengere 2683er-
+  Zaehlung ist nur die Lade-Statistik, kein Scoring-Kriterium.
+- Arm-Vergleiche: Vorzeichen/Rangfolge bleiben auf der sauberen Teilmenge
+  erhalten, aber der Geometrie-Gewinn ist auf sub-losen Queries
+  ueberproportional (E2_chamfer_ransac +0.2324 vs +0.1045 mit Sub;
+  gesamt +0.1304). Empfehlung an die Thesis: Behandlung offenlegen UND
+  hit@1 zusaetzlich auf die 1675 Sub-Queries eingeschraenkt berichten.
