@@ -1445,3 +1445,15 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   ueberproportional (E2_chamfer_ransac +0.2324 vs +0.1045 mit Sub;
   gesamt +0.1304). Empfehlung an die Thesis: Behandlung offenlegen UND
   hit@1 zusaetzlich auf die 1675 Sub-Queries eingeschraenkt berichten.
+
+## 2026-09-23 — Subkategorie-Split als CSV archiviert (final_results/stage1)
+
+- stage1_subcategory_split.csv: hit@1 je Arm (40/40) aufgeteilt nach Queries
+  mit echter Subkategorie (1675) vs. ohne (426); Quelle verbindlich der
+  42v/k5-Lauf. VOR dem Schreiben je Arm geprueft: per-Query-Mittel ==
+  NN_sub_hit1 aus stage1_summary_arms.csv (alle 38 direkten Arme exakt);
+  A2_view_only_V42/A7_shape_only_V42 haben keine eigenen per-Query-Dateien
+  (alias_of E1_view_only/E1_shape_only, Summary-Werte identisch) und wurden
+  aus ihren Alias-Zielen belegt. Kontrollwerte wie erwartet:
+  E1c 0.3522/0.2981, E2_chamfer_ransac 0.4567/0.5305.
+- README-Zuordnungszeile ergaenzt; Drive synchronisiert.
