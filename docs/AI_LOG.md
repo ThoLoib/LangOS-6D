@@ -1457,3 +1457,27 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   aus ihren Alias-Zielen belegt. Kontrollwerte wie erwartet:
   E1c 0.3522/0.2981, E2_chamfer_ransac 0.4567/0.5305.
 - README-Zuordnungszeile ergaenzt; Drive synchronisiert.
+
+## 2026-09-23 — E2b_fullmesh_shape_only: vermeintlicher Widerspruch aufgeklaert
+
+- Agent-Befund (Drive-Kopie): per-Query 0.2789 vs. Summary 0.2822. Aufklaerung:
+  KEIN Serialisierungs-Bug. Drive trug den VOR-Fix-Stand vom 26.08. (in sich
+  konsistent: 0.2789/0.3237/0.3931, nDCG 0.4858); lokal liegt der korrigierte
+  Lauf vom 03.09. nach dem Textur-Farb-Fix (in sich konsistent:
+  0.2822/0.3203/0.4346, nDCG 0.4956). Der Drive-Spiegel des Ordners war seit
+  dem 26.08. nicht nachgezogen -> jetzt resynct.
+- REPRODUKTION: Arm frisch gerechnet (Scratch-Root, ohne Alt-Cache):
+  nDCG 0.4956, AP 0.1339, NN_sub 0.2822, NN_cat 0.3203, hit_sub@5 0.4346 —
+  2101/2101 Queries BITIDENTISCH (top10+nDCG) zum Archiv. Tabelle 6.6 und
+  die 0.0398/0.045-Aussage sind bestaetigt.
+- FALLE entdeckt und entschaerft: der Score-Store _cache/
+  scores_ulip_pc_fullmesh.pt stammte noch vom 26.08. (vor dem Farb-Fix);
+  ein Resume-Lauf damit reproduzierte den DEFEKTEN Arm (0.4858). Datei nach
+  .stage1_superseded/_cache_pre_colorfix/ verschoben (WARUM.txt daneben).
+- Konsistenz-Vollcheck lokal: 41/41 Arme — Top-10-Ableitung von NN_sub/
+  NN_cat/hit_sub@5 trifft metrics_summary (Tol. 6e-4). Kein weiterer Arm
+  betroffen.
+- Stage-2/3-Rangaudit: Stage 3 R@1/5/10 aus target_rank vs. Summary fuer
+  3a_cross + 3a_cross_geo x ycbv/tless/lmo alle OK (3c hat keine Recall-
+  Felder); Stage 2 NN_accuracy aus top5[0].label = Summary auf 4 Stellen
+  (partial 88.4381, fullmesh 86.5714). Keine Abweichungen.
