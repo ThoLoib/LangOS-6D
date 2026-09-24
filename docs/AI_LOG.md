@@ -1481,3 +1481,26 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   3a_cross + 3a_cross_geo x ycbv/tless/lmo alle OK (3c hat keine Recall-
   Felder); Stage 2 NN_accuracy aus top5[0].label = Summary auf 4 Stellen
   (partial 88.4381, fullmesh 86.5714). Keine Abweichungen.
+
+## 2026-09-24 — Herkunft der zwei Gewichts-Sweeps geklaert (Agent-Anfrage)
+
+- STAGE 1: "16-view, top-8" = FORM-Kanal, bestaetigt. Sweep-Stand (pc 25.08.
+  19:46, cross 26.08. 10:37, beide vor Config-Commit fcdc2a87 16:12):
+  SHAPE_AGG_VIEWS=16 (Commit 3600ccaa), ulip_view_topk=8 (CONFIG_TO_RESULT:46
+  "was 8; fixed 2026-08-26"), DINO in BEIDEN Configs 42 Views (_BASE_CH).
+  Shape-Ecke 0.5256 IST archiviert: E1_shape_only des Alt-Grids
+  results_shrec18_v2_stage1/k50 (exakt 0.5256) — nur nicht im 42v/k5-Grid.
+  RUN_PROVENANCE um beide Sweep-Zeilen ergaenzt.
+- STAGE 2: Die Ursachen-Erklaerung des Thesis-Entwurfs stimmt so NICHT.
+  0.6818 ist heute die FULL-MESH-Produktions-FT; der Sweep ist cross/partial
+  — sein korrektes Produktions-Pendant (Rerun 07.09.) ist FT 0.6918
+  (Abweichung −0.0067, anderes Vorzeichen), NN 88.4381 vs Sweep-BASE 86.8381
+  (−1.6 Pp.). Die "~0.682"-Erwartung im Skript stammt aus dem VOR-Rerun-
+  Stand (bis 07.09. war die berichtete volle Fusion 86.57/0.682 — Doku-
+  Historie 9a69e81d). Reimplementierungs-Unterschiede (Kandidaten-Nullen +
+  Normalisierung, NaN) bleiben plausible Treiber der −0.0067, sind aber ohne
+  Neuberechnung nicht attribuierbar: die Kanal-Score-Maps wurden NICHT
+  persistiert (5h-Scoring laut Log), results_topk_15.json speichert nur
+  Top-5 (FT nicht rekonstruierbar). Innerhalb des Sweeps bleibt die
+  Sensitivitaetsaussage (argmax Δ +0.0051) konsistent, nur die absolute
+  Verankerung an der Produktion ist veraltet/falsch gepaart.

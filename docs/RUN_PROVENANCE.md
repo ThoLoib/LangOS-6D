@@ -43,6 +43,8 @@ Fusion-Config je Arm in `metrics_summary.json` → `config`: Gewichte (0.3, 0.4,
 |---|---|---|---|---|---|---|
 | 28 Arme des Grids (E1*, E4*, E6, O2*, O4*, A2_V8/16/32, A7_V8/16/32, E7_uni3d*, O5*, E7_ulip2_cross_shape_only) | 26.08. 13:14–13:39 | `run_stage1_full.sh` | **✓ gesetzt** | dgedi | shrec | `--resume --allow-partial-gallery` |
 | `A2_view_only_V42`, `A7_shape_only_V42` | 26.08. 15:03 | `run_a7.sh` | **✓ gesetzt** | — | — | Cache explizit: `.ulip_partial_cache_c3b88090d599c522.pt` |
+| Weight-Sweep pc (`weightmap_pc.csv`) | 25.08. 19:46 | `experiment1 --weight-sweep` (Commit-Stand 3600ccaa) | ✓ | — | — | **Alt-Config 16v/k8**: SHAPE_AGG_VIEWS=16, ulip_view_topk=8; DINO unveraendert 42 Views (`_BASE_CH`). Original-Root `results_shrec18_v2_stage1_mean_mean_only` (geloescht); Kopie final_results/stage1/. Shape-Ecke 0.5256 = E1_shape_only des Alt-Grids (`results_shrec18_v2_stage1/k50`) |
+| Weight-Sweep cross (`weightmap_cross.csv`) | 26.08. 10:37 | dito, `--sweep-shape-pass ulip_cross_rgb` | ✓ | — | — | dito Alt-Config (vor fcdc2a87 16:12); Root `results_shrec18_v2_stage1_mean_wsweep_cross` |
 | `E2_*` (5 Geometriearme) | 27.08. 01:46–01:53 | `run_stage1_full.sh` Phase D | ✓ | dgedi | shrec | `--with-geometry --geom-k 50` |
 | `O1c`, `O1e` | 27.08. 06:30 | `run_stage1_full.sh` Phase D | ✓ | dgedi | shrec | `--with-geometry --geom-k 50` |
 | `E2b_fullmesh`, `E2b_fullmesh_shape_only` | 03.09. 10:17 | `run_stage1_fullmesh_color.sh` | ✗ | — | — | nach dem Textur-Farb-Fix; **Full-Mesh-Arme, Fallback folgenlos** |
