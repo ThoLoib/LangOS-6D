@@ -30,6 +30,7 @@ Ordner enthält die **Summary-Ebene**, nicht die Rohdaten je Query.
 | 3b Pose | `stage3/gt_combined_gt.json`, `stage3/3b_*.json` | dito |
 | Herkunft x Datensatz in 3c (Median D_sym mm + normiert, je dataset x nb_provenance + ALL) | `stage3/stage3c_origin_by_dataset.csv` (3c_cross + 3c_cross_fullmesh) | aus `d_posed`/`d_sym_norm` der `results_bop_stage3_v2/3c_cross*/*/records.json`; ALL-Zeilen treffen die archivierten provenance-Mediane (10.354 / 20.102) exakt |
 | 3c Zerlegung | `stage3/3c_*.json` | dito |
+| 6.28 Verdeckung, diameter-normalisiert (Median d_sym_norm je Sichtbarkeitsklasse, Grenzen 0.5/0.8/0.95) | `stage3/occlusion_by_visibility_norm.csv` (3b_cross, ALLE + je Datensatz; mm-Spalte identisch zur bestehenden Tabelle, Gegenprobe 27.7/18.8/14.4/18.8 und n 1184/2394/2992/5714 bestanden) | `tools/occlusion_analysis.collect` (d_sym_norm aus den 3b-Records) |
 | 3d Verdeckung | `stage3/occlusion_by_visibility.csv` | `tools/occlusion_analysis.py` (mit Selbstprüfung gegen publizierte R@1) |
 | 4.1 Anfrage | `stage4/query_latency_ycbv.json` (partial), `…_fullmesh.json`, `…_geo.json` | `scripts/stage4_query.sh` → `experiments/experiment4_query_latency.py` |
 | 4.2 Onboarding | `stage4/onboarding.json` (n=59, partial), `stage4/onboarding_render_n59.json` (Render-Vollerhebung), `stage4/onboarding_render.json` (alte n=5-Messung, als Beleg der Korrektur), `stage4/onboarding_dgedi.json` (n=3) | `scripts/stage4_onboarding.sh`, `scripts/run_stage4_render_full.sh` |

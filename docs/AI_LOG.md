@@ -1525,3 +1525,11 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   d_sym_norm je dataset x nb_provenance + ALL, fuer 3c_cross UND
   3c_cross_fullmesh. Alle 8 Kontrollwerte des 3c_cross-Laufs exakt getroffen;
   ALL-Zeilen == archivierte provenance-Mediane (10.354/20.102).
+
+## 2026-09-25 (3) — Stage 3b: normierter Verdeckungs-Median archiviert
+
+- final_results/stage3/occlusion_by_visibility_norm.csv: Median d_sym_norm
+  (+ mm) je Sichtbarkeitsklasse (0.5/0.8/0.95), 3b_cross, ALLE + je Datensatz;
+  via tools/occlusion_analysis.collect. Gegenprobe VOR dem Schreiben erzwungen
+  und bestanden (mm 27.7/18.8/14.4/18.8, n 1184/2394/2992/5714). ALLE-norm:
+  0.2373 / 0.1254 / 0.1182 / 0.1494.
