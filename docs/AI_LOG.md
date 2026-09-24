@@ -1504,3 +1504,17 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   Top-5 (FT nicht rekonstruierbar). Innerhalb des Sweeps bleibt die
   Sensitivitaetsaussage (argmax Δ +0.0051) konsistent, nur die absolute
   Verankerung an der Produktion ist veraltet/falsch gepaart.
+
+## 2026-09-25 — Stage 3a: Einzelkanal-Spalte als CSV abgelegt + 3a_cross-Klaerung
+
+- final_results/stage3/stage3a_arm_recall1.csv: R@1 je Arm (7) x Datensatz je
+  der 4 Fusions-Laeufe, aus arm_ranks der Records. Kontrollen exakt: Shape
+  allein 0.2272/0.1997/0.0211/0.0089, Fusion 0.5151/0.4818/0.4636/0.3878.
+- Kaskaden-Zeile 0.3198 stammt aus dem SEPARATEN E5-Lauf 3a_oscar (verifiziert
+  0.3198 gesamt), nicht aus arm_ranks (oscar_maxview 0.3675, oscar_softmax
+  0.3739 — andere Konstruktion im Fusionslauf); im README vermerkt.
+- 3a_cross vs 3a_cross_v2: KEIN Duplikat, sondern Vorlaeufer (18.08.) und
+  angereicherter Nachfolger (01.09., identische Rankings — summaries und
+  combined_stage3a.json byte-identisch, md5 459aca4d..., Records nur um
+  arm_ranks ergaenzt). Quelle fuer die Arbeit ist 3a_cross_v2; der Altordner
+  bleibt als Beleg der Bit-Reproduktion liegen.

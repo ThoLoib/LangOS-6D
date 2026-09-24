@@ -25,6 +25,7 @@ Ordner enthält die **Summary-Ebene**, nicht die Rohdaten je Query.
 | 2.3 Gewichtskarte | `stage2/weight_sweep_mi3dor.csv` (231 Punkte) | `object_retrieval/results_mi3dor_wsweep/` |
 | 2.5 Legacy V=8 | `stage2/metrics_summary_legacy_v8.json` | `results_mi3dor_oscar_legacy_v8/fullmesh/` |
 | 2.6 Kategorien | `stage2/category_table.csv` | aus `results_topk_15.json` (Fusionsspalte = `clip_dino_ulip_full`, Full-Mesh) |
+| 6.21 Spalten "Shape alone"/Einzelkanaele (R@1 je Arm x Datensatz, aus `arm_ranks` der per-Instanz-Records) | `stage3/stage3a_arm_recall1.csv` (4 Laeufe x 7 Arme x lmo/tless/ycbv/all) | `object_retrieval/results_bop_stage3_v2/{3a_cross_fullmesh_v2,3a_cross_v2,3a_pc_v2,3a_pc_fullmesh_v2}/*/records.json`. ACHTUNG: die Kaskaden-Zeile 0.3198 der Tabelle stammt NICHT aus arm_ranks (oscar_maxview dort 0.3675), sondern aus dem separaten E5-Lauf `3a_oscar` (archiviert als `3a_oscar_combined_stage3a.json`) |
 | 3a Retrieval | `stage3/3a_*.json` (je Lauf `recall@1/5/10`, `mrr`, je Datensatz) | `object_retrieval/results_bop_stage3_v2/<lauf>/combined_stage3a.json` |
 | 3b Pose | `stage3/gt_combined_gt.json`, `stage3/3b_*.json` | dito |
 | 3c Zerlegung | `stage3/3c_*.json` | dito |
