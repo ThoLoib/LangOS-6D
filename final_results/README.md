@@ -28,6 +28,7 @@ Ordner enthält die **Summary-Ebene**, nicht die Rohdaten je Query.
 | 6.21 Spalten "Shape alone"/Einzelkanaele (R@1 je Arm x Datensatz, aus `arm_ranks` der per-Instanz-Records) | `stage3/stage3a_arm_recall1.csv` (4 Laeufe x 7 Arme x lmo/tless/ycbv/all) | `object_retrieval/results_bop_stage3_v2/{3a_cross_fullmesh_v2,3a_cross_v2,3a_pc_v2,3a_pc_fullmesh_v2}/*/records.json`. ACHTUNG: die Kaskaden-Zeile 0.3198 der Tabelle stammt NICHT aus arm_ranks (oscar_maxview dort 0.3675), sondern aus dem separaten E5-Lauf `3a_oscar` (archiviert als `3a_oscar_combined_stage3a.json`) |
 | 3a Retrieval | `stage3/3a_*.json` (je Lauf `recall@1/5/10`, `mrr`, je Datensatz) | `object_retrieval/results_bop_stage3_v2/<lauf>/combined_stage3a.json` |
 | 3b Pose | `stage3/gt_combined_gt.json`, `stage3/3b_*.json` | dito |
+| Herkunft x Datensatz in 3c (Median D_sym mm + normiert, je dataset x nb_provenance + ALL) | `stage3/stage3c_origin_by_dataset.csv` (3c_cross + 3c_cross_fullmesh) | aus `d_posed`/`d_sym_norm` der `results_bop_stage3_v2/3c_cross*/*/records.json`; ALL-Zeilen treffen die archivierten provenance-Mediane (10.354 / 20.102) exakt |
 | 3c Zerlegung | `stage3/3c_*.json` | dito |
 | 3d Verdeckung | `stage3/occlusion_by_visibility.csv` | `tools/occlusion_analysis.py` (mit Selbstprüfung gegen publizierte R@1) |
 | 4.1 Anfrage | `stage4/query_latency_ycbv.json` (partial), `…_fullmesh.json`, `…_geo.json` | `scripts/stage4_query.sh` → `experiments/experiment4_query_latency.py` |

@@ -1518,3 +1518,10 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   combined_stage3a.json byte-identisch, md5 459aca4d..., Records nur um
   arm_ranks ergaenzt). Quelle fuer die Arbeit ist 3a_cross_v2; der Altordner
   bleibt als Beleg der Bit-Reproduktion liegen.
+
+## 2026-09-25 (2) — Stage 3c: Herkunft x Datensatz als CSV archiviert
+
+- final_results/stage3/stage3c_origin_by_dataset.csv: Median d_posed (mm) und
+  d_sym_norm je dataset x nb_provenance + ALL, fuer 3c_cross UND
+  3c_cross_fullmesh. Alle 8 Kontrollwerte des 3c_cross-Laufs exakt getroffen;
+  ALL-Zeilen == archivierte provenance-Mediane (10.354/20.102).
