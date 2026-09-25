@@ -1656,3 +1656,18 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
 - Ablage: final_results/stage4/onboarding_dgedi_warm.json (+Manifest mit
   Commit, GPU RTX 4090, Methode); onboarding_dgedi.json bleibt bestehen,
   README-Zeile 4.2 unterscheidet jetzt KALT/WARM.
+
+## 2026-09-25 (10) — dGeDi-Onboarding WARM auf n=59 erweitert
+
+- Auftrag (Thesis-Agent): gleiche Basis wie die uebrige Onboarding-Tabelle
+  (YCB-V 21, T-LESS 30, LM-O 8). Methode identisch zu c2605f3b, EIN
+  Container-Lauf ueber Manifest aller 59 Ziel-CADs (TARGET_LAYOUT).
+- WARM je Objekt gesamt: median 1.414 s, IQR 0.207, p95 1.654, min 1.326,
+  max 1.705, n=59. Je Datensatz: ycbv 1.586 (IQR 0.077, n=21), tless 1.353
+  (IQR 0.048, n=30), lmo 1.377 (IQR 0.083, n=8) — die texturierten
+  YCB-V-OBJs laden/sampeln etwas langsamer als die BOP-PLYs.
+- Einmaliger Start: Modell 0.69 s, Container+Python+Teardown 7.12 s
+  (Wall 93.74 s). Waechter BESTANDEN: 59/59 Shapes identisch zur
+  .dgedi_gallery (points (6000,3), feats (6000,64)), 0 Fehler.
+- Ablage: final_results/stage4/onboarding_dgedi_warm_n59.json (+Manifest);
+  n=21-Datei bleibt als Vorstufe; README 4.2 aktualisiert.
