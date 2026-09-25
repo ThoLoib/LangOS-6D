@@ -1619,3 +1619,20 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   Nachkommastellen, inkl. NN_count) + metrics_official_traces_manifest.json.
   metrics_official.csv bleibt unveraendert; dessen Manifest-"umfang" und
   final_results/README.md korrigiert (Pfad-B-Behauptung ersetzt).
+
+## 2026-09-25 (8) — Stage-1-Gewichts-Sweep v2 (produktionsidentisch) abgeschlossen
+
+- Volllauf experiments/stage1_weight_sweep_v2.py: je Modus (pc, cross) 66
+  Simplex-Punkte (Schritt 0.1) ueber die Score-Stores _cache/scores_*.pt,
+  Produktions-Config 42v/k5, GEOM_K=5, Spalten nDCG/hit1/NN_cat/MRR.
+- Waechter EXAKT getroffen: pc BASE = E1c_full_fusion nDCG 0.5868 /
+  hit@1 0.3413; cross BASE = E7_ulip2_cross 0.5588 / 0.3289 (n=2101).
+- Bestpunkte pc: hit@1-Optimum w=(0.0,0.4,0.6) hit@1 0.3660 (+0.0247 ueber
+  BASE), nDCG-Optimum w=(0.2,0.4,0.4) nDCG 0.5922 (+0.0054); ohne Shape
+  best hit@1 (0.0,1.0,0.0) 0.3337, best nDCG (0.2,0.8,0.0) 0.5558.
+- Bestpunkte cross: hit@1-Optimum w=(0.0,0.6,0.4) 0.3451 (+0.0162), nDCG-
+  Optimum w=(0.2,0.6,0.2) 0.5606 (+0.0018); ohne-Shape-Punkte identisch zu
+  pc (Shape-Gewicht 0 -> gleiche Kanaele).
+- Ablage: final_results/stage1/weight_sweep_66_{pc,cross}.csv + Manifeste
+  (Waechter, Bestpunkte). Alte weightmap_{pc,cross}.csv (16v/k8) in
+  final_results/README.md als v1/historisch markiert; RUN_PROVENANCE-Zeile.
