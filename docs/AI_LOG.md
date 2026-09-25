@@ -1595,3 +1595,27 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   Fusion ST 0.8219 F 0.1626 DCG 0.7185 ANMRR 0.3024 AUC 0.5891.
 - Nebenbei: np.trapz -> np.trapezoid-Fallback in mi3dor_official_metrics.py
   (numpy>=2 im Container hat trapz entfernt).
+
+## 2026-09-25 (7) — Offizielle MI3DOR-Masse: ALLE 7 Arme x 3 Laeufe aus eval_trace
+
+- Korrektur einer eigenen Fehlannahme (Thesis-Agent wies darauf hin): Pfad B
+  (Capture-Laeufe fuer Kaskaden + full-mesh) war nie noetig. Seit eval_common
+  ea84ffb8 (2026-08-07) steht in jedem Query-Record von results_topk_15.json
+  ein eval_trace mit num_rel_true + je Arm len/rel_positions (1-basierte
+  Positionen ALLER relevanten Modelle ueber die volle 3848er-Rangliste).
+- Neues Skript object_retrieval/mi3dor_official_from_traces.py (5eb9574d):
+  rekonstruiert die binaeren Relevanzvektoren und rechnet official_metrics()
+  fuer clip_only, dino_only_full, ulip_only_full, clip_dino_ulip_full,
+  oscar_maxview, oscar_softmax, clip_pruned_dino_ulip ueber die drei Laeufe
+  partialforce/partial (42v), ulipfix/fullmesh (42v), legacy_v8/fullmesh (8v).
+- Integritaet je Datei: 10500 Records, alle 7 Arme, len 3848, Positionen
+  streng steigend, C in 31..250, T_max 250 — 3/3 OK (sha256 im Manifest).
+- Waechter: W1 NN/FT je Arm exakt (1e-9) gegen metrics_summary desselben
+  Laufs — 21/21 OK. W2 die vier partial-Zeilen von metrics_official.csv auf
+  4 Stellen inkl. AUC — 4/4. W3 die zwei fullmesh-Zeilen (Kanal-Cache-Nachbau
+  c94226f6) auf 4 Stellen — 2/2: der Nachbau ist damit UNABHAENGIG durch die
+  Produktions-Traces bestaetigt.
+- Ablage: final_results/stage2/metrics_official_traces.csv (21 Zeilen, 6
+  Nachkommastellen, inkl. NN_count) + metrics_official_traces_manifest.json.
+  metrics_official.csv bleibt unveraendert; dessen Manifest-"umfang" und
+  final_results/README.md korrigiert (Pfad-B-Behauptung ersetzt).

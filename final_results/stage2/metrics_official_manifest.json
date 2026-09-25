@@ -3,7 +3,7 @@
  "quelle": "github.com/tianbao-li/MI3DOR Retrieval/cross_performance.m, Commit 4325c24c91553283ec98d948513063f659771767 (2023-10-24), abgerufen 2026-09-25",
  "port": "object_retrieval/mi3dor_official_metrics.py (Selftest: handgerechnetes Beispiel)",
  "datenquelle": "results_mi3dor_wsweep_v2/channel_scores.npz (produktionsidentisch, 300/300 Stichproben)",
- "umfang": "Pfad A: 4 gewichtete Arme, NUR partial; Kaskaden + full-mesh -> Pfad B (Capture-Laeufe)",
+ "umfang": "Pfad A: 4 gewichtete Arme, partial (+ 2 full-mesh-Arme aus Kanal-Caches, c94226f6). KORREKTUR 2026-09-25: Pfad B (Capture-Laeufe) ist NICHT noetig — results_topk_15.json enthaelt seit eval_common ea84ffb8 je Query das Feld eval_trace mit rel_positions ALLER relevanten Modelle ueber die volle Rangliste. Alle 7 Arme x 3 Laeufe (partial 42v, fullmesh 42v, fullmesh 8v) daraus nachgerechnet -> metrics_official_traces.csv (+ Manifest); diese Datei hier bleibt unveraendert bestehen.",
  "waechter": {
   "clip_only": {
    "NN_prod": 67.95238095238095,
