@@ -3,3 +3,5 @@ oscarplus_v2_tau037_dinomean_partialforce,partial,clip_only,0.6795,0.5747,0.7543
 oscarplus_v2_tau037_dinomean_partialforce,partial,dino_only_full,0.8303,0.6292,0.7528,0.1528,0.6682,0.3539,0.5301
 oscarplus_v2_tau037_dinomean_partialforce,partial,ulip_only_full,0.6811,0.4529,0.6059,0.1233,0.4952,0.5285,0.3535
 oscarplus_v2_tau037_dinomean_partialforce,partial,clip_dino_ulip_full,0.8844,0.6918,0.8325,0.1624,0.7279,0.2928,0.6062
+oscarplus_v2_tau037_dinomean_ulipfix,fullmesh,ulip_only_full,0.781,0.51,0.6481,0.1436,0.5611,0.4687,0.4046
+oscarplus_v2_tau037_dinomean_ulipfix,fullmesh,clip_dino_ulip_full,0.8657,0.6818,0.8219,0.1626,0.7185,0.3024,0.5891

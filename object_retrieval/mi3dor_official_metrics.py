@@ -75,7 +75,8 @@ def official_metrics(rresult: Sequence[np.ndarray], C: Sequence[int],
     depths = np.arange(1, G + 1, dtype=np.float64)
     p_i = s_i / (N * depths)
     r_i = s_i / total_rel
-    auc = float(np.trapz(p_i, r_i))
+    _trapz = getattr(np, "trapezoid", None) or np.trapz  # numpy>=2 vs. <2
+    auc = float(_trapz(p_i, r_i))
 
     return {"NN": nn / N, "FT": ft / N, "ST": st / N,
             "F": 2.0 / (1.0 / (s_top20 / (N * 20.0))

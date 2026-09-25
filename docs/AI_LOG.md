@@ -1567,3 +1567,31 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   EIGENE Definitionen (ANMRR-Fenster 2C + Treffer-Rang-Logik + anderer
   Nenner; ST@2C; F makro; DCG-Fenster 2C) — unsere bisherigen Zahlen sind
   OSCAR-vergleichbar, die neuen CSV-Werte DLEA/RevGrad-vergleichbar.
+
+## 2026-09-25 (6) — Tabelle 6.19: Fullmesh offizielle Metriken OHNE Capture-Lauf
+
+- Auftrag (Thesis-Agent): ulip_only_full + clip_dino_ulip_full fuer die
+  FULL-MESH-Galerie nachrechnen, ohne 7-h-Capture. Methode: CLIP/DINO aus
+  channel_scores.npz (referenzform-unabhaengig, da Schritte 3/4 nur Bilder
+  sehen); ULIP fullmesh = Kosinus ulip_query_cache_mi3dor.pt (10500 cross-
+  Bild-Embeddings) x object_database/MI3DOR/model/test/
+  .ulip_cache_25d858e0df9afa76.pt (n=3848, volle Galerie; der zweite Cache
+  f3cccfd6… hat nur 1817 und ist unvollstaendig). Beide L2-normiert.
+- Zwei Stolpersteine, beide geloest:
+  (1) Caches sind {'embeddings': …, 'paths': …}-Wrapper — erster Guard-Lauf
+      prüfte die falsche Ebene und meldete faelschlich "deckt Galerie nicht
+      ab". Kein Drive-Abruf noetig, der 3848er-Cache liegt lokal.
+  (2) Fusion wich ab (NN 86.85 statt 86.57), obwohl ulip_only EXAKT traf:
+      _weighted_sum initialisiert alle Eintraege mit ulip=0 und befuellt per
+      max(entry, s) (step6_fusion.py Z.192–195) — NEGATIVE Kosinus werden
+      auf 0 geklemmt, Min-Max bekommt min=0 statt des echten Minimums
+      (-0.14). Im Partial-Fall unsichtbar, weil dort Nullen ohnehin das
+      Minimum stellen. Diagnose ueber die normalisierten Kanalwerte in
+      results_topk_15.json (prod ulip_norm == cos/cos_max). Fix im Replikat:
+      u_eff = max(u, 0), dann Min-Max.
+- Waechter danach EXAKT: ulip_only_full 78.1048/0.5100, clip_dino_ulip_full
+  86.5714/0.6818. Offizielle Werte -> metrics_official.csv ("fullmesh"):
+  ulip ST 0.6481 F 0.1436 DCG 0.5611 ANMRR 0.4687 AUC 0.4046;
+  Fusion ST 0.8219 F 0.1626 DCG 0.7185 ANMRR 0.3024 AUC 0.5891.
+- Nebenbei: np.trapz -> np.trapezoid-Fallback in mi3dor_official_metrics.py
+  (numpy>=2 im Container hat trapz entfernt).

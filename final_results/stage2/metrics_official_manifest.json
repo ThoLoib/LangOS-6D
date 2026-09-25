@@ -25,5 +25,25 @@
    "FT_prod": 0.6917522612915135,
    "status": "exakt getroffen"
   }
+ },
+ "fullmesh_nachtrag": {
+  "ts": "2026-09-25T09:15:07",
+  "methode": "CLIP/DINO aus channel_scores.npz (referenzform-unabhaengig); ULIP fullmesh = Kosinus aus ulip_query_cache_mi3dor.pt x object_database/MI3DOR/model/test/.ulip_cache_25d858e0df9afa76.pt (beide L2-normiert). Fusion = _weighted_sum-Replikat: ULIP-Eintraege starten bei 0, max(0, cos) klemmt negative Kosinus (step6_fusion.py Z.192-195), dann Min-Max je Kanal, W=(0.3,0.4,0.3), stabile Sortierung in npz-Einfuegeordnung.",
+  "waechter": {
+   "ulip_only_full": {
+    "NN_prod": 78.1047619047619,
+    "FT_prod": 0.5100333649029966,
+    "NN_repro": 78.10000000000001,
+    "FT_repro": 0.51,
+    "status": "getroffen (Toleranz NN 2e-2, FT 2e-4)"
+   },
+   "clip_dino_ulip_full": {
+    "NN_prod": 86.57142857142857,
+    "FT_prod": 0.6817683037380236,
+    "NN_repro": 86.57000000000001,
+    "FT_repro": 0.6818,
+    "status": "getroffen (Toleranz NN 2e-2, FT 2e-4)"
+   }
+  }
  }
 }
