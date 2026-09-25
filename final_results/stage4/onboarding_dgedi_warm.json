@@ -1,0 +1,53 @@
+{
+ "experiment": "stage4a_onboarding_dgedi_warm",
+ "beschreibung": "Warme dGeDi-Deskriptorzeit je Objekt: EIN Container-Lauf von precompute_gallery.py ueber alle 21 YCB-V-Ziel-CADs, time.perf_counter je Objekt (Mesh-Laden + Sampling + Features + npz-Save). Ergaenzt onboarding_dgedi.json (n=3, KALT: je Objekt kompletter docker-compose-Aufruf).",
+ "n_objects": 21,
+ "warm_per_object_s": {
+  "n": 21,
+  "median": 1.5550672598183155,
+  "mean": 1.5707413454850514,
+  "std": 0.06639583445685777,
+  "min": 1.4921397459693253,
+  "max": 1.7953401426784694,
+  "q25": 1.5328066539950669,
+  "q75": 1.5886198161169887,
+  "p95": 1.652343009132892,
+  "iqr": 0.05581316212192178
+ },
+ "einmaliger_start_s": {
+  "modell_laden": 0.7221553791314363,
+  "container_python_overhead": 7.115236810408533,
+  "wall_gesamt": 40.82296044472605,
+  "beschreibung": "modell_laden = perf_counter um server.load_model; container_python_overhead = Wandzeit des docker-compose-Aufrufs minus Modell-Laden minus Summe der Objektzeiten (enthaelt Container-Start, Python-Imports, Teardown)."
+ },
+ "per_object_s": {
+  "ycbv/obj_000001": 1.7953401426784694,
+  "ycbv/obj_000002": 1.5520556312985718,
+  "ycbv/obj_000003": 1.5550672598183155,
+  "ycbv/obj_000004": 1.5371804782189429,
+  "ycbv/obj_000005": 1.52680324902758,
+  "ycbv/obj_000006": 1.5328066539950669,
+  "ycbv/obj_000007": 1.5340280318632722,
+  "ycbv/obj_000008": 1.5166635331697762,
+  "ycbv/obj_000009": 1.5919608399271965,
+  "ycbv/obj_000010": 1.4921397459693253,
+  "ycbv/obj_000011": 1.5092266229912639,
+  "ycbv/obj_000012": 1.5197448320686817,
+  "ycbv/obj_000013": 1.5502763660624623,
+  "ycbv/obj_000014": 1.5697959568351507,
+  "ycbv/obj_000015": 1.5728564350865781,
+  "ycbv/obj_000016": 1.5886198161169887,
+  "ycbv/obj_000017": 1.5552813662216067,
+  "ycbv/obj_000018": 1.652343009132892,
+  "ycbv/obj_000019": 1.6403964702039957,
+  "ycbv/obj_000020": 1.5688529540784657,
+  "ycbv/obj_000021": 1.6241288604214787
+ },
+ "waechter": {
+  "kriterium": "Deskriptoren obj 1-3 (geprueft: alle 21) entsprechen .dgedi_gallery: gleiche Shapes points/feats, keine Fehler",
+  "shapes_gleich": "21/21 (points (6000,3), feats (6000,64))",
+  "fehler": 0,
+  "bit_identisch": "0/21 \u2014 erwartet: dGeDi-Featureextraktion ist ungeseedet (vgl. Stage-3-Befund AI_LOG 2026-09-18)",
+  "status": "BESTANDEN"
+ }
+}

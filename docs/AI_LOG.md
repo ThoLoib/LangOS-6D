@@ -1636,3 +1636,23 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
 - Ablage: final_results/stage1/weight_sweep_66_{pc,cross}.csv + Manifeste
   (Waechter, Bestpunkte). Alte weightmap_{pc,cross}.csv (16v/k8) in
   final_results/README.md als v1/historisch markiert; RUN_PROVENANCE-Zeile.
+
+## 2026-09-25 (9) — dGeDi-Onboarding WARM gemessen (n=21, ohne Startkosten)
+
+- Auftrag (Thesis-Agent): onboarding_dgedi.json (n=3, 10.2-12.6 s) misst je
+  Objekt einen KOMPLETTEN docker-compose-Aufruf; die Arbeit weist Kaltstarts
+  getrennt aus. Neuer Messpfad: --timing-json-Flag in precompute_gallery.py
+  (99180da9, reine Messung, Ergebnisse unveraendert), EIN Container-Lauf
+  ueber alle 21 YCB-V-Ziel-CADs (Arbeitsordner .stage4_dgedi_warm/ im Repo,
+  da der dGeDi-Container nur das Repo mountet).
+- Ergebnis: WARM je Objekt median 1.555 s (IQR 0.056, p95 1.652, n=21).
+  Einmaliger Start: Modell-Laden 0.72 s, Container+Python+Teardown 7.12 s
+  (Wall 40.82 s). Die kalten 10-12.6 s bestehen also zu ~70 % aus
+  Prozess-Overhead je Aufruf (7.1+0.7+1.6 ~ 9.4 s, konsistent).
+- Waechter BESTANDEN: alle 21 Deskriptoren (gefordert: obj 1-3) mit gleichen
+  Shapes wie .dgedi_gallery (points (6000,3), feats (6000,64)), 0 Fehler.
+  Bit-identisch 0/21 — erwartet, dGeDi-Featureextraktion ist ungeseedet
+  (gleicher Befund wie Stage-3-Nichtreproduzierbarkeit, AI_LOG 2026-09-18).
+- Ablage: final_results/stage4/onboarding_dgedi_warm.json (+Manifest mit
+  Commit, GPU RTX 4090, Methode); onboarding_dgedi.json bleibt bestehen,
+  README-Zeile 4.2 unterscheidet jetzt KALT/WARM.
