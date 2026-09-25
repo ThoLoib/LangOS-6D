@@ -420,9 +420,13 @@ def main(argv=None):
                               args, sink)
             except Exception as exc:
                 rec = {"error": f"{type(exc).__name__}: {exc}"}
+            # total_s ueber _wall, nicht Timings.total(): letzteres zaehlte die
+            # Klammer retrieval_total DOPPELT (Records des Laufs vom 04.09.:
+            # 16-V-Median 2.70 s statt 2.18 s; die Zusammenfassung
+            # per_query_total_s war davon nie betroffen).
             rec.update(num_views=V, warmup=is_warmup,
                        timings=sink["timings"].as_dict(),
-                       total_s=sink["timings"].total())
+                       total_s=_wall(sink["timings"].as_dict()))
             records.append(rec)
             if not is_warmup and "error" not in rec:
                 per_query.append(rec["timings"])

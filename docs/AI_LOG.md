@@ -1671,3 +1671,30 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   .dgedi_gallery (points (6000,3), feats (6000,64)), 0 Fehler.
 - Ablage: final_results/stage4/onboarding_dgedi_warm_n59.json (+Manifest);
   n=21-Datei bleibt als Vorstufe; README 4.2 aktualisiert.
+
+## 2026-09-25 (11) — Stage-4-Latenz mit Geometrie UND Pose (A) + Befunde
+
+- Lauf: 50 YCB-V-Queries, 16+42 Views, --geometry --geo-k 5, Pose an,
+  Seed 0; dGeDi-Container zuvor per --force-recreate FRISCH gestartet
+  (war 7 Tage oben — erklaert die 5.45-s-Erstmessung unter Dauerlast;
+  frisch: geometry 1.78 s (16v) / 1.85 s (42v) Median). Query-Identitaet
+  gegen query_latency_ycbv.json geprueft: alle 52 (scene,im,obj) je Block
+  identisch. 0 Fehler, 0 Detektionsausfaelle.
+- Vier Per-Query-Summen (Median/IQR/P95, n=50):
+  16v: Retrieval 0.781/0.012/0.801; +Geo 2.561/0.305/3.163;
+       +Pose 2.277/1.225/4.514; +Geo+Pose 4.040/1.874/6.606.
+  42v: Retrieval 1.037/0.013/1.052; +Geo 2.912/0.282/3.374;
+       +Pose 2.522/1.189/4.751; +Geo+Pose 4.424/1.374/6.851.
+- Waechter: 16v Retrieval 0.781 vs 0.784 OK; 42v Pose 1.467 vs 1.487 OK.
+  Abweichungen: 42v Retrieval 1.037 vs 1.110 (-6.6%: dino 533 vs 562 ms,
+  ulip 191 vs 219 ms); 16v Pose 1.487 vs 1.402 (+6.1%; FP streut stark,
+  IQR ~1.2 s, P95 ~3.7 s — Mediane beider Laeufe innerhalb der IQR).
+- BEFUND "1.11 vs 1.12": RESULTS.md Tab. 4.3 bildete "Anfrage, nur
+  Retrieval" als Differenz zweier Mediane (2.6024 - 1.4870 = 1.1154 ->
+  "1.12"); Mediane sind nicht additiv. Korrekt sind 1.110 s (Median der
+  Per-Query-Summen). Nur gemeldet, RESULTS.md nicht angefasst.
+- FIX: Records-Feld total_s zaehlte die Klammer retrieval_total doppelt
+  (Timings.total statt _wall) — 16v-Record-Median 2.70 statt 2.18 s.
+  Zusammenfassung per_query_total_s war korrekt. Ab diesem Lauf _wall.
+- Ablage: final_results/stage4/query_latency_ycbv_geo_pose.json + Manifest
+  (Summen, Waechter, Container-Zustand); alte Dateien unveraendert.
