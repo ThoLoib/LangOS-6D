@@ -1,0 +1,29 @@
+{
+ "ts": "2026-09-25T10:47:35",
+ "quelle": "github.com/tianbao-li/MI3DOR Retrieval/cross_performance.m, Commit 4325c24c91553283ec98d948513063f659771767 (2023-10-24), abgerufen 2026-09-25",
+ "port": "object_retrieval/mi3dor_official_metrics.py (Selftest: handgerechnetes Beispiel)",
+ "datenquelle": "results_mi3dor_wsweep_v2/channel_scores.npz (produktionsidentisch, 300/300 Stichproben)",
+ "umfang": "Pfad A: 4 gewichtete Arme, NUR partial; Kaskaden + full-mesh -> Pfad B (Capture-Laeufe)",
+ "waechter": {
+  "clip_only": {
+   "NN_prod": 67.95238095238095,
+   "FT_prod": 0.5747111128187761,
+   "status": "exakt getroffen"
+  },
+  "dino_only_full": {
+   "NN_prod": 83.02857142857142,
+   "FT_prod": 0.6292451704181977,
+   "status": "exakt getroffen"
+  },
+  "ulip_only_full": {
+   "NN_prod": 68.11428571428571,
+   "FT_prod": 0.4529154691386179,
+   "status": "exakt getroffen"
+  },
+  "clip_dino_ulip_full": {
+   "NN_prod": 88.43809523809524,
+   "FT_prod": 0.6917522612915135,
+   "status": "exakt getroffen"
+  }
+ }
+}

@@ -1548,3 +1548,22 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   channel_scores.npz 373 MB}; CSV+Manifest nach final_results/stage2/;
   npz im Repo-Ordner + Drive (kuenftige Sweeps = Minuten, ohne GPU).
   ULIP-Query-Cache jetzt persistent (ulip_query_cache_mi3dor.pt).
+
+## 2026-09-25 (5) — Offizielle MI3DOR-Metriken (Pfad A) berechnet und archiviert
+
+- Port object_retrieval/mi3dor_official_metrics.py von cross_performance.m
+  (tianbao-li/MI3DOR, Commit 4325c24c, 2023-10-24, abgerufen 25.09.);
+  zeilengetreu inkl. Eigenheiten (ST@2C-1; F mikro@20; DCG-Diskont Rang 1+2
+  je Gewicht 1; ANMRR ueber RANG-POSITIONEN 1..C mit S=min(4C,2*T_max); AUC
+  Mikro-PR). Selftest mit handgerechnetem Beispiel.
+- Waechter: NN+FT je Arm exakt auf Produktionswerte (4/4 OK, partial):
+  clip 67.9524/0.5747, dino 83.0286/0.6292, ulip 68.1143/0.4529,
+  Fusion 88.4381/0.6918.
+- Offizielle Werte Fusion (partial): ST 0.8325, F 0.1624, DCG 0.7279,
+  ANMRR 0.2928, AUC 0.6062 -> final_results/stage2/metrics_official.csv
+  (+ Manifest). Kaskaden-Arme + full-mesh = Pfad B (2 Capture-Laeufe ~14 h),
+  noch nicht beauftragt.
+- Befund fuer die Arbeit: Pullis Scorer (den eval_common reproduziert) nutzt
+  EIGENE Definitionen (ANMRR-Fenster 2C + Treffer-Rang-Logik + anderer
+  Nenner; ST@2C; F makro; DCG-Fenster 2C) — unsere bisherigen Zahlen sind
+  OSCAR-vergleichbar, die neuen CSV-Werte DLEA/RevGrad-vergleichbar.
