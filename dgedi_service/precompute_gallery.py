@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 import numpy as np
 import open3d as o3d
@@ -59,6 +60,9 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--n-points", type=int, default=10000)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--timing-json", default="",
+                    help="optional: write per-object wall times + model-load "
+                         "time here (measurement only, results unchanged)")
     args = ap.parse_args()
 
     with open(args.manifest) as f:
@@ -66,10 +70,13 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     print(f"[precompute] loading dGeDi ({args.mode}) ...", flush=True)
+    t0 = time.perf_counter()
     server._STATE["model"] = server.load_model(args.config, args.mode, args.device)
     server._STATE["device"] = args.device
+    t_model_load = time.perf_counter() - t0
 
     done = skipped = failed = 0
+    per_object = {}
     for i, (nsid, rel) in enumerate(sorted(manifest.items())):
         out_path = os.path.join(args.out, server.id_to_fname(nsid))
         if os.path.isfile(out_path) and not args.overwrite:
@@ -77,6 +84,7 @@ def main():
             continue
         mesh_path = os.path.join(args.repo_root, rel)
         try:
+            t1 = time.perf_counter()
             pts = sample_cloud(mesh_path, args.n_points)
             if pts.shape[0] < 4:
                 raise ValueError(f"cloud too small ({pts.shape[0]} pts)")
@@ -85,6 +93,7 @@ def main():
                 out_path,
                 points=np.asarray(pcd.points, dtype=np.float32),
                 feats=feats.astype(np.float32))
+            per_object[nsid] = time.perf_counter() - t1
             done += 1
         except Exception as exc:
             print(f"[precompute] FAIL {nsid} ({mesh_path}): {exc}", flush=True)
@@ -95,6 +104,11 @@ def main():
 
     print(f"[precompute] DONE: {done} written, {skipped} skipped, "
           f"{failed} failed -> {args.out}", flush=True)
+    if args.timing_json:
+        with open(args.timing_json, "w") as f:
+            json.dump({"model_load_s": t_model_load,
+                       "per_object_s": per_object}, f, indent=1)
+        print(f"[precompute] timings -> {args.timing_json}", flush=True)
 
 
 if __name__ == "__main__":
