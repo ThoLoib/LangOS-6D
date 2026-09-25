@@ -1713,3 +1713,36 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
 - Stage-4-Provenienz geprueft (query_latency_ycbv_geo_pose, onboarding,
   onboarding_dgedi_warm_n59): alle Felder passen zu diesem Rechner.
 - Ablage: final_results/hardware.json; Zeilen in RUN_PROVENANCE + README.
+
+## 2026-09-25 (13) — Onboarding WARM: Blender + LLaVA je Objekt, Start getrennt
+
+- Auftrag (Thesis-Agent): render/describe ohne Prozess- und Ladekosten je
+  Objekt messen. Umsetzung: RENDER_TIMING_JSON-Hook in rendering/rendering.py
+  (additiv; das Skript looopt ohnehin ueber alle Objekte einer Sitzung) +
+  experiments/stage4_warm_render.py (6 Blender-Sitzungen: 3 Datensaetze x
+  {16,42} Views) und experiments/stage4_warm_describe.py (LLaVA einmal
+  geladen, PRODUKTIONSFUNKTION generate_captions, Batch 8 und Batch 1).
+- WARM je Objekt (Median/IQR/P95, n=59):
+  render 16v 10.42/3.41/13.88 s, 42v 25.83/8.62/34.70 s (je Datensatz:
+  ycbv 13.60/34.01, tless 10.06/25.07, lmo 10.56/25.80 — ycbv-OBJs teurer);
+  describe b8 16v 5.89/0.41/6.19 s, 42v 16.15/1.01/17.19 s.
+  Batch 1 vs 8: 1334->368 ms/View (16v) bzw. 1322->385 ms/View (42v),
+  Faktor 3.6x/3.4x. Startkosten: Blender 0.36 s je Sitzung (median),
+  LLaVA-Modell 5.62 s einmalig.
+- Waechter: Render 59x2 vollstaendig (V Views + bg + V CamMatrix, 512x512)
+  BESTANDEN. Describe v42_b8 2478/2478 identisch zur Produktion (100 %,
+  gleiche Batch-Zusammensetzung); v16_b8 932/944 = 98.7 % (12 Abweichungen
+  durch andere Batch-Grenzen im 16er-Subset, float16-Numerik).
+- BEFUND (gemeldet, nichts ueberschrieben): onboarding.json describe
+  10.25/13.08 s kann mit diesem Code KEINE vollstaendige Beschreibung
+  gewesen sein — frisch reproduzierter Kalt-Pfad: 17.7 s (16v) / 28.7 s
+  (42v) mit allen Captions; Arithmetik Start+Modell (~12 s) + warm ==
+  frisch-kalt. Wahrscheinlich schnell scheiternde OOM-Batches (heute beim
+  ersten Versuch identisch passiert: LLaVA 16.8 GiB + Dienste 6.2 GiB >
+  24 GiB); stage_describe prueft nur die Existenz von descriptions.json.
+- Blender dagegen entlastet: warm 10.42/25.83 ~ kalt 10.75/25.93 — der
+  Prozessstart je Objekt (0.36 s) war vernachlaessigbar, die alte
+  Render-Zahl bleibt gueltig.
+- Betrieb: dgedi+foundationpose fuer die Messungen gestoppt (OOM sonst),
+  danach neu gestartet; ein Render-Lauf verworfen (parallele LLaVA-A/B-
+  Tests haetten kontaminiert), archiviert ist der exklusive Lauf.

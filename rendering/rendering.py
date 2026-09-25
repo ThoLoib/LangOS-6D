@@ -22,6 +22,12 @@ object_folder = os.environ.get('OBJECT_FOLDER', '../object_database/ycbv_gso')
 object_images = os.environ.get('OBJECT_IMAGES', '../object_images/ycbv_gso/')
 allowed_exts = ['.glb', '.obj', '.ply']  # PLY added for BOP datasets (T-LESS, LM-O, ITODD)
 overwrite_existing = os.environ.get('OVERWRITE_EXISTING', '0') == '1'
+# Optional: Wandzeit je Objekt (Import + alle View-Renders) als JSON ablegen —
+# reine Messung, Render-Ergebnisse unveraendert. Die Differenz zwischen
+# aeusserer Wandzeit und script_total_s ist der Blender-Binaerstart.
+render_timing_json = os.environ.get('RENDER_TIMING_JSON', '').strip()
+_timing_t0 = time.perf_counter()
+_timing_per_object = {}
 render_only = os.environ.get('RENDER_ONLY', '').strip()
 num_views = int(os.environ.get('NUM_VIEWS', '42'))  # Ablation O4; default 42 (full icosphere)
 # Parallel sharding (opt-in). When SHARD_TOTAL > 1, this process renders only
@@ -661,6 +667,7 @@ setup_camera_lighting(bpy.data.objects['Camera'])
 bpy.ops.object.select_all(action='DESELECT')
 
 for _obj_idx, (model_id, filename) in enumerate(pending_models):
+    _timing_obj_start = time.perf_counter()
     rclone_checkpoint(_obj_idx)
     # Create a folder for each model
     model_dir = os.path.join(object_images, model_id)
@@ -831,5 +838,13 @@ for _obj_idx, (model_id, filename) in enumerate(pending_models):
         RT = get_3x4_RT_matrix_from_blender(camera)
         RT_path = os.path.join(model_dir, f"{model_id}_view{view_idx}_CamMatrix.npy")
         np.save(RT_path, RT)
+
+    _timing_per_object[model_id] = time.perf_counter() - _timing_obj_start
+
+if render_timing_json:
+    with open(render_timing_json, 'w') as _f:
+        json.dump({'per_object_s': _timing_per_object,
+                   'script_total_s': time.perf_counter() - _timing_t0}, _f, indent=1)
+    print(f"[timing] {len(_timing_per_object)} Objekte -> {render_timing_json}")
 
 bpy.ops.wm.quit_blender()
