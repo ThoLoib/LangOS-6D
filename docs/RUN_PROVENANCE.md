@@ -228,3 +228,5 @@ enthaelt nur state_dict/optimizer/scaler, keine args) — Attribution nur ueber
 die Papers: ULIP-2 ~0.8 Mio. Objaverse-Triplets; Uni3D ~1 Mio. Formen
 (Objaverse, ShapeNet, 3D-FUTURE, ABO). Fuer die Thesis entsprechend als
 Paper-Angabe zitieren, nicht als eigene Messung.
+
+| MI3DOR-Gewichts-Sweep v2 (`weight_sweep_66.csv`) | 24.09. 19:33 – 25.09. 02:44 | `mi3dor_weight_sweep_v2.py` | ✓ | — | — | Partial-Galerie, dinomean, 42v; Fusion = `step6._weighted_sum`-Assemblierung (float64), bewiesen per 300/300 Stichproben gegen `fusion_mod.fuse` + BASE == Produktion exakt (FT 0.6918 / NN 88.4381). Kanal-Maps persistiert (`channel_scores.npz`); ULIP-Query-Cache `ulip_query_cache_mi3dor.pt` geschrieben. Erster Volllauf (24.09. tags) brach korrekt am Identitaets-Waechter ab (float32-Ties, 298/300) |

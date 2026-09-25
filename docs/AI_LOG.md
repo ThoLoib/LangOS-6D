@@ -1533,3 +1533,18 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   via tools/occlusion_analysis.collect. Gegenprobe VOR dem Schreiben erzwungen
   und bestanden (mm 27.7/18.8/14.4/18.8, n 1184/2394/2992/5714). ALLE-norm:
   0.2373 / 0.1254 / 0.1182 / 0.1494.
+
+## 2026-09-25 (4) — Stage-2-Gewichts-Sweep v2: produktionsidentisch, abgeschlossen
+
+- Zweiter Volllauf (float64-Fix) sauber durch: 300/300 Identitaetsproben
+  byte-exakt gegen fusion_mod.fuse; SELFCHECK BASE trifft die Produktion
+  EXAKT (FT 0.6918, NN 88.4381). Der alte Sweep-Vorbehalt (0.6851 vs.
+  Produktion) ist damit vollstaendig aufgeloest — Abweichung 0.0000.
+- Ergebnis (66 Punkte, Schritt 0.1): Optimum FT 0.6941 bei w=(0.4,0.3,0.3),
+  Δ nur +0.0023 ueber BASE (v1 behauptete +0.0051 bei (0.45,0.35,0.2) —
+  Artefakt der eigenen Refusion + feineres Raster). NN am Optimum 88.419,
+  minimal UNTER BASE-NN 88.4381 -> BASE bleibt de facto optimal.
+- Artefakte: results_mi3dor_wsweep_v2/{weight_sweep_66.csv, manifest.json,
+  channel_scores.npz 373 MB}; CSV+Manifest nach final_results/stage2/;
+  npz im Repo-Ordner + Drive (kuenftige Sweeps = Minuten, ohne GPU).
+  ULIP-Query-Cache jetzt persistent (ulip_query_cache_mi3dor.pt).
