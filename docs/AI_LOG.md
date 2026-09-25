@@ -1698,3 +1698,18 @@ E1c_full_fusion nachgerechnet (Details in der Antwort):
   Zusammenfassung per_query_total_s war korrekt. Ab diesem Lauf _wall.
 - Ablage: final_results/stage4/query_latency_ycbv_geo_pose.json + Manifest
   (Summen, Waechter, Container-Zustand); alte Dateien unveraendert.
+
+## 2026-09-25 (12) — Referenz-Hardware dokumentiert (Pulli-Vergleichbarkeit)
+
+- Auftrag (Thesis-Agent): klaeren, ob unser Rechner dieselbe CPU hat wie
+  Pullis System ("RTX 4090 + AMD Ryzen 9 5900X"). ANTWORT: JA — Host
+  (v4r-tpulli) hat exakt "AMD Ryzen 9 5900X 12-Core Processor" (12C/24T,
+  1 Socket) und "NVIDIA GeForce RTX 4090" (24564 MiB, Treiber 555.42.06).
+  Stage-4-Latenz-/Onboarding-Vergleiche mit OSCAR sind damit auf
+  identischer Hardware.
+- Container-Gegenprobe identisch; torch 2.10.0+cu128, CUDA 12.8. Das
+  gpu_mem_gb 25.3 der Manifeste ist torchs Dezimal-GB derselben Karte
+  (nvidia-smi: 24564 MiB binaer).
+- Stage-4-Provenienz geprueft (query_latency_ycbv_geo_pose, onboarding,
+  onboarding_dgedi_warm_n59): alle Felder passen zu diesem Rechner.
+- Ablage: final_results/hardware.json; Zeilen in RUN_PROVENANCE + README.

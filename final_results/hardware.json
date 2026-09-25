@@ -1,0 +1,32 @@
+{
+ "ts": "2026-09-25T16:52:57",
+ "zweck": "Referenzsystem aller Stage-1..5-Laeufe (tessa-pc, Hostname v4r-tpulli). Vergleichbarkeit mit Pulli et al. (OSCAR, 2025): 'NVIDIA GeForce RTX 4090 GPU and an AMD Ryzen 9 5900X CPU' \u2014 IDENTISCHE CPU und GPU.",
+ "host": {
+  "cpu_modell": "AMD Ryzen 9 5900X 12-Core Processor",
+  "kerne": 12,
+  "threads": 24,
+  "sockets": 1,
+  "threads_pro_kern": 2,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_speicher": "24564 MiB (nvidia-smi; torch meldet 25.3 GB dezimal \u2014 dieselbe Karte, andere Einheit)",
+  "treiber": "555.42.06",
+  "ram": "125 GiB gesamt",
+  "os": "Ubuntu 20.04.6 LTS",
+  "kernel": "Linux v4r-tpulli 5.15.0-139-generic #149~20.04.1-Ubuntu SMP Wed Apr 16 08:29:56 UTC 2025 x86_64",
+  "docker": "Docker version 28.1.1, build 4eba377",
+  "docker_compose": "v2.35.1"
+ },
+ "oscar_container": {
+  "cpu_modell": "AMD Ryzen 9 5900X 12-Core Processor (CPU(s): 24)",
+  "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB, Treiber 555.42.06",
+  "torch": "2.10.0+cu128",
+  "cuda": "12.8",
+  "torch_device": "NVIDIA GeForce RTX 4090",
+  "befund": "identisch mit Host (Passthrough, keine Abweichung)"
+ },
+ "stage4_provenienz_geprueft": {
+  "query_latency_ycbv_geo_pose.json": "gpu RTX 4090, gpu_mem_gb 25.3, cpu_count 24, torch 2.10.0+cu128 \u2014 passt",
+  "onboarding.json": "identische Felder \u2014 passt",
+  "onboarding_dgedi_warm_n59.json": "Manifest gpu RTX 4090 \u2014 passt (Messung lief in diesem Setup)"
+ }
+}
